@@ -13,7 +13,7 @@ Ayatori 将逐步提供任务执行、虚拟机、数据库、负载均衡、对
 另一方面，在首个领域能力完成前就拆分为多个独立服务，会立即引入镜像与部署管理、服务
 间认证、版本兼容、分布式观测和故障处理成本，而这些成本尚未由真实运行需求证明。
 
-Run 是首个领域对象。它既是最初的单次任务调度 API，也用于验证领域状态机与 Kubernetes
+Job 是首个领域对象。它既是最初的单次任务调度 API，也用于验证领域状态机与 Kubernetes
 Job、OpenSandbox 和未来执行后端之间的适配边界。
 
 ## 决策
@@ -99,11 +99,11 @@ controller manager 应支持按领域或 controller 集合选择性启用。初�
 
 ## 结果
 
-- 首个 Run 实现需要同时建立 execution 状态机和 adapter 边界，不能把 Kubernetes Job
+- 首个 Job 实现需要同时建立 execution 状态机和 adapter 边界，不能把 Kubernetes Job
   细节写入领域模型。
 - 初期避免承担不必要的微服务运维成本，同时保留按权限、网络位置和故障域拆分的路径。
 - Kubernetes API 成为领域间异步协作和恢复边界，领域 controller 必须正确处理最终一致性。
 - 部分机械代码会有意保留重复，直到共享语义被至少两个真实实现证明。
 - 代码评审需要检查跨领域 import、对象写入所有权和后端类型泄漏。
-- 当 Run 同时拥有 Kubernetes Job 与 OpenSandbox adapter 后，应复审 adapter contract，确认
+- 当 Job 同时拥有 Kubernetes Job 与 OpenSandbox adapter 后，应复审 adapter contract，确认
   它来自真实后端差异而非单一实现假设。
