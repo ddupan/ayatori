@@ -35,6 +35,15 @@ k0s controller-only
 该 profile 不存在可调度 Node，不运行 Flux。它是可选的最小形态，用于 bootstrap、
 恢复、API 开发和不需要 in-cluster controller 的特殊部署。
 
+API-only 描述的是运行拓扑，而不是 API 功能子集。其他组件仍可以作为本地进程、systemd
+服务、普通容器或远程 Job，通过 kubeconfig 连接该 API。开发者可以使用一个临时的
+API-only 实例测试真实 CRD、admission、watch 和 reconcile 行为，而不必先准备 CNI、
+worker 与完整 GitOps 环境。
+
+API-only 因此可作为可选的 local development profile，但不构成独立的长期环境，也不
+替代 Dev 集成测试。Flux、in-cluster service discovery、Pod 调度和 executor 集成仍然
+必须在 managed runtime Dev 中验证。
+
 ### Managed runtime
 
 ```text
