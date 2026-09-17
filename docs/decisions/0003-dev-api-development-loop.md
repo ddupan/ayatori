@@ -27,8 +27,16 @@ developer workstation
 修改代码后只需重新编译或由 file watcher 重启本地进程。只有进入真实部署集成验证时，
 才构建不可变镜像并交给 Dev GitOps 部署。
 
-API-only profile 仍然保留，但主要用于隔离 API 实验、bootstrap 和恢复开发；它不是为了
-每位开发者复制一个长期 local environment。
+API-only profile 仍然保留，但主要用于 CI 中按 job 创建的临时集成环境，也可以服务于
+隔离 API 实验、bootstrap 和恢复开发；它不是为了每位开发者复制一个长期 local
+environment。
+
+CI 根据测试范围选择环境：
+
+- controller/API 集成测试使用临时 API-only k0s；
+- 只涉及纯逻辑的测试不启动 Kubernetes；
+- 需要 Pod、Service、CNI、Flux 或 executor 的端到端测试部署到 managed runtime Dev，
+  或在具备相应能力的临时执行环境中运行。
 
 ## 单写入者约束
 

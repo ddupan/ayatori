@@ -40,9 +40,14 @@ API-only 描述的是运行拓扑，而不是 API 功能子集。其他组件仍
 API-only 实例测试真实 CRD、admission、watch 和 reconcile 行为，而不必先准备 CNI、
 worker 与完整 GitOps 环境。
 
-API-only 可以用于隔离的 API 实验、bootstrap 与恢复开发，但不构成独立的长期环境，也
-不是日常开发的默认路径。日常开发进程可以直接连接 managed runtime Dev 的 API。Flux、
-in-cluster service discovery、Pod 调度和 executor 集成仍然必须在 Dev 中验证。
+API-only 的主要用途是 CI 中的临时集成环境：每个 job 启动独立的真实 API server，安装
+CRD，运行待测试的 controller 二进制，完成后整体销毁。由于不启动 worker、CNI 和容器
+runtime，它适合验证 API、watch、admission、reconcile、finalizer 和 status 行为，而不必
+为每个测试任务建立完整 Kubernetes workload cluster。
+
+它也可以用于隔离 API 实验、bootstrap 与恢复开发，但不构成独立的长期环境，也不是日常
+本地开发的默认路径。日常开发进程直接连接 managed runtime Dev 的 API。Flux、in-cluster
+service discovery、Pod 调度和 executor 集成仍然必须在 Dev 中验证。
 
 ### Managed runtime
 
