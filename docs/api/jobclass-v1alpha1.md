@@ -131,7 +131,11 @@ spec:
   requestMapping: AdmissionOnly
   allowSecretEnv: true
   allowImageAuth: true
+  allowInsecureHTTP: false
 ```
+
+`endpoint` 默认必须使用 HTTPS。隔离的本地开发环境可以显式设置
+`allowInsecureHTTP: true` 使用 HTTP；生产配置不得启用该开关。
 
 ## JobClass spec
 

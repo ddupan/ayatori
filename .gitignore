@@ -2,6 +2,7 @@
 /bin/
 /dist/
 /coverage/
+/cover.out
 
 # Local configuration and credentials
 .env

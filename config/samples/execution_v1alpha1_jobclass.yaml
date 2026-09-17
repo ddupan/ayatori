@@ -1,0 +1,13 @@
+apiVersion: execution.ayatori.ddupan.top/v1alpha1
+kind: JobClass
+metadata:
+  labels:
+    app.kubernetes.io/name: ayatori
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  controllerName: execution.ayatori.ddupan.top/kubernetes
+  parametersRef:
+    group: execution.ayatori.ddupan.top
+    kind: KubernetesExecutionParameters
+    name: default
