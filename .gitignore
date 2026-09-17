@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+/coverage/
+
+# Local configuration and credentials
+.env
+.env.*
+*.kubeconfig
+*.key
+*.pem
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
