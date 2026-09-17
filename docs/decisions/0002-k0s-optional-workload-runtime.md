@@ -40,9 +40,9 @@ API-only 描述的是运行拓扑，而不是 API 功能子集。其他组件仍
 API-only 实例测试真实 CRD、admission、watch 和 reconcile 行为，而不必先准备 CNI、
 worker 与完整 GitOps 环境。
 
-API-only 因此可作为可选的 local development profile，但不构成独立的长期环境，也不
-替代 Dev 集成测试。Flux、in-cluster service discovery、Pod 调度和 executor 集成仍然
-必须在 managed runtime Dev 中验证。
+API-only 可以用于隔离的 API 实验、bootstrap 与恢复开发，但不构成独立的长期环境，也
+不是日常开发的默认路径。日常开发进程可以直接连接 managed runtime Dev 的 API。Flux、
+in-cluster service discovery、Pod 调度和 executor 集成仍然必须在 Dev 中验证。
 
 ### Managed runtime
 

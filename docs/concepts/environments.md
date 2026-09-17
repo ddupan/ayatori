@@ -7,6 +7,11 @@ Dev 使用 managed runtime profile，以单台启用了 worker 的 k0s control n
 API、Flux、Ayatori controllers 和平台 operators。Job 等非控制 workload 应使用外部
 执行后端或后续加入的 execution worker，不与平台控制组件争抢资源。
 
+Dev 是允许随时部署、停止和销毁 workload 的可破坏环境。它不要求所有开发中组件始终
+由 GitOps 管理：Flux 可以只维护稳定基础组件；正在开发的 controller 可以暂停其
+in-cluster deployment，由开发机上的进程直接连接 Dev API。准备集成验证时，再将同一
+组件构建为不可变镜像并恢复完整 GitOps 部署。
+
 首个功能通过 Dev 集成测试后，创建独立 Prod，并从该制品开始执行正式 promotion 流程：
 
 ```text
