@@ -21,16 +21,6 @@ Crossplane 组件以及 Kubernetes Pod executor 也适合以 Pod 交付。因此
 Ayatori 采用 k0s 作为 Kubernetes API/control-plane 发行版，并将工作负载运行时视为
 可选部署组件，而不是 API 控制面的固有组成。
 
-控制节点始终保持 controller-only：
-
-- 不运行 kubelet；
-- 不运行容器 runtime；
-- 不注册为 Node；
-- 不承载 Flux、Ayatori controller 或用户 Job。
-
-通过向集群加入独立 worker 启用工作负载调度。加入或移除 worker 不改变 API、CRD、
-数据库和控制节点身份。
-
 定义两种受支持的运行 profile。
 
 ### API-only
@@ -42,37 +32,42 @@ k0s controller-only
 └── external controllers/processes
 ```
 
-该 profile 不存在可调度 Node，不运行 Flux。它用于最小控制面、bootstrap、恢复、API
-开发和不需要 in-cluster controller 的特殊部署。
+该 profile 不存在可调度 Node，不运行 Flux。它是可选的最小形态，用于 bootstrap、
+恢复、API 开发和不需要 in-cluster controller 的特殊部署。
 
 ### Managed runtime
 
 ```text
-k0s controller-only
-        │
-        ├── management worker pool
-        │   ├── Flux
-        │   ├── Ayatori controllers
-        │   └── platform operators
-        │
-        └── execution worker pool（可选）
-            └── Job Pod executor workloads
+k0s controller --enable-worker
+├── Kubernetes control-plane components
+├── Flux
+├── Ayatori controllers
+├── admission webhooks
+└── platform operators
+
+optional execution worker pool
+└── Job Pod executor workloads
 ```
 
-该 profile 是 Dev 与 Prod 的正常运行形态。它在 API-only 基础上加入至少一个 worker，
-从而启用完整 GitOps 和 in-cluster controllers。
+该 profile 是默认部署形态。k0s controller 使用 `--enable-worker` 同时运行 kubelet 与
+容器 runtime，并注册为带 control-plane label/taint 的 Node。Flux、Ayatori controllers、
+admission webhook 和平台 operator 本身就是管理控制面的一部分，应当调度到这些节点。
 
-management worker 使用专用 label、taint、toleration 和 resource reservation，默认不接受
-普通应用 workload。Job Pod executor 优先使用独立 execution worker pool；资源受限的
-Dev 环境可以暂时合并两类 worker，但必须保留调度约束。
+平台组件必须显式容忍 control-plane taint，并使用 affinity 或 node selector 约束到控制
+节点。控制节点不接受普通应用或 Job workload。Job Pod executor 使用独立 execution
+worker pool；只有显式修改调度策略时才能在控制节点执行短期恢复或诊断任务。
+
+启用 worker 只改变控制节点是否提供 Pod runtime，不改变 API、CRD、数据库与控制面身份。
+API-only 与 managed runtime 因而是同一架构的两种运行配置，而不是两种平台实现。
 
 ## Bootstrap 边界
 
-Flux 无法负责创建承载自身的第一个可调度 worker，因此以下部分位于 GitOps 闭环之外：
+Flux 无法负责为承载自身的控制节点启用 worker runtime，因此以下部分位于 GitOps 闭环
+之外：
 
 - k0s controller 初始安装；
 - 控制面数据库和 PKI 恢复；
-- 第一个 management worker 的加入；
+- control node 的 `--enable-worker` 安装配置；
 - Flux 首次 bootstrap。
 
 这些步骤必须由可重复执行的 bootstrap 流程管理，例如固定版本的 Ansible、安装脚本或
@@ -80,7 +75,7 @@ Flux 无法负责创建承载自身的第一个可调度 worker，因此以下�
 GitOps 管理。
 
 平台必须保留从 API-only 恢复到 managed runtime 的流程，避免 Flux 故障形成无法恢复的
-自举循环。
+自举循环。独立 execution worker 的加入与退出可以在平台正常运行后自动化。
 
 ## 工作负载范围
 
@@ -99,8 +94,9 @@ GitOps 管理。
 - 保留纯 API 控制面的简洁性与恢复价值。
 - 能够使用 Flux 完成平台组件的 GitOps 管理。
 - 能够直接复用 Kubernetes 生态中的 operator，而无需改写为 systemd 服务。
-- 控制节点不会因为加入 workload runtime 而成为可调度节点。
-- Dev 与 Prod 需要额外规划少量 management worker 容量。
+- 默认不需要为 Flux 和 Ayatori controllers 建立独立 management worker VM。
+- 控制节点同时承担平台控制 workload，需要设置资源预留、taint 和调度约束。
+- Job 等非控制 workload 仍需要独立 execution worker 或外部执行后端。
 - bootstrap 层不能完全由 Flux 自我管理，必须独立记录并验证恢复流程。
 
 ## 参考
