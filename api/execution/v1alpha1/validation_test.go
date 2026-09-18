@@ -48,7 +48,8 @@ func TestJobCRDValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	namespace := &corev1.Namespace{ObjectMeta: {Name: "api-validation"}}
+	//nolint:modernize // ObjectMeta is promoted through embedded TypeMeta; embedlit produces invalid Go here.
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "api-validation"}}
 	if err := client.Create(ctx, namespace); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,8 @@ func TestJobCRDValidation(t *testing.T) {
 			Name:  "TOKEN",
 			Value: &literal,
 			ValueFrom: &executionv1alpha1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: {Name: "token"}, Key: "value"},
+				//nolint:modernize // LocalObjectReference is an embedded Kubernetes API field.
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "token"}, Key: "value"},
 			},
 		}}
 		if err := client.Create(ctx, job); !apierrors.IsInvalid(err) {
@@ -106,8 +108,9 @@ func TestJobCRDValidation(t *testing.T) {
 }
 
 func validJob(name string) *executionv1alpha1.Job {
+	//nolint:modernize // ObjectMeta is promoted through embedded TypeMeta; embedlit produces invalid Go here.
 	return &executionv1alpha1.Job{
-		ObjectMeta: {Name: name, Namespace: "api-validation"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "api-validation"},
 		Spec: executionv1alpha1.JobSpec{
 			Task: executionv1alpha1.TaskSpec{Image: "docker.io/library/alpine:3.22"},
 		},
