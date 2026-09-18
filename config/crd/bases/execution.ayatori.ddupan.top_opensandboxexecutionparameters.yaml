@@ -1,0 +1,83 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: opensandboxexecutionparameters.execution.ayatori.ddupan.top
+spec:
+  group: execution.ayatori.ddupan.top
+  names:
+    kind: OpenSandboxExecutionParameters
+    listKind: OpenSandboxExecutionParametersList
+    plural: opensandboxexecutionparameters
+    singular: opensandboxexecutionparameters
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              allowImageAuth:
+                type: boolean
+              allowInsecureHTTP:
+                description: AllowInsecureHTTP is intended for isolated development
+                  environments only.
+                type: boolean
+              allowSecretEnv:
+                type: boolean
+              apiKeySecretRef:
+                properties:
+                  key:
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - key
+                - name
+                - namespace
+                type: object
+              endpoint:
+                minLength: 1
+                type: string
+              poolRef:
+                type: string
+              requestMapping:
+                default: AdmissionOnly
+                enum:
+                - AdmissionOnly
+                - Native
+                type: string
+            required:
+            - apiKeySecretRef
+            - endpoint
+            type: object
+            x-kubernetes-validations:
+            - message: endpoint must use HTTPS unless allowInsecureHTTP is true
+              rule: self.allowInsecureHTTP || self.endpoint.startsWith('https://')
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

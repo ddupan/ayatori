@@ -1,0 +1,14 @@
+apiVersion: execution.ayatori.ddupan.top/v1alpha1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: ayatori
+    app.kubernetes.io/managed-by: kustomize
+  name: job-sample
+spec:
+  jobClassName: default
+  task:
+    image: docker.io/library/alpine:3.22
+    command: ["/bin/sh", "-c"]
+    args: ["echo hello from Ayatori"]
+  ttlSecondsAfterFinished: 3600

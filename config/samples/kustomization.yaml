@@ -1,0 +1,7 @@
+## Append samples of your project ##
+resources:
+- execution_v1alpha1_job.yaml
+- execution_v1alpha1_jobclass.yaml
+- execution_v1alpha1_kubernetesexecutionparameters.yaml
+- execution_v1alpha1_opensandboxexecutionparameters.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
