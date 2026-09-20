@@ -50,9 +50,10 @@ type Snapshot struct {
 // Reconstitution does not establish live capability evidence, even for a Ready snapshot.
 // This initial slice deliberately exposes no operation that authorizes provisioning.
 type Instance struct {
-	target   ObservationTarget
-	snapshot Snapshot
-	deleting bool
+	target     ObservationTarget
+	snapshot   Snapshot
+	deleting   bool
+	extensions ExtensionSupport
 }
 
 func Reconstitute(target ObservationTarget, snapshot Snapshot, deleting bool) (*Instance, error) {
@@ -83,6 +84,7 @@ func (i *Instance) BeginValidation() error {
 	}
 	i.snapshot.Phase = PhaseValidating
 	i.snapshot.Readiness = Unknown
+	i.extensions = ExtensionSupport{}
 	return nil
 }
 
@@ -97,5 +99,27 @@ func (i *Instance) BeginDeletion() error {
 	}
 	i.snapshot.Phase = PhaseDeleting
 	i.snapshot.Readiness = Unknown
+	i.extensions = ExtensionSupport{}
 	return nil
+}
+
+// ObserveExtensions accepts facts only for this registration and configuration.
+// Unobserved support clears a previous list after a failed read; the application
+// reports the dependency failure separately. This does not establish readiness.
+// Same-target freshness and Secret refresh are enforced by the application.
+func (i *Instance) ObserveExtensions(target ObservationTarget, support ExtensionSupport) error {
+	if !i.target.Matches(target) {
+		return errors.New("extension observation target does not match instance")
+	}
+	if i.deleting {
+		return errors.New("cannot accept extension observations after deletion was requested")
+	}
+	i.extensions = support
+	return nil
+}
+
+// CheckExtensions checks support only; Accepted is not authorization to provision.
+// The aggregate does not perform IO, mutate its snapshot or uninstall extensions.
+func (i *Instance) CheckExtensions(requested ExtensionSet) ExtensionCheck {
+	return i.extensions.Check(requested)
 }

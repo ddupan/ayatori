@@ -20,8 +20,9 @@ Database 是 Ayatori 首批实际产品领域之一。第一个迁移切片只�
 `instance_extensions_test.go` 未进入本切片。
 
 代码被移动到 Ayatori 的 `internal/database/domain/instance`，测试 import 和文档链接相应更新；
-领域行为未在本切片中扩展。后续 Ready/observation 行为应在 Ayatori 内先更新合同与测试，再继续
-实现，不能把旧运行链路接回该模型。
+首个后续切片按已批准合同增加 Instance extension observation：观测与当前 target 绑定，进入重新
+验证或删除时失效，且支持判定不授权 Tenant provisioning。其余 Ready/observation 行为仍应先更新
+合同与测试再实现，不能把旧运行链路接回该模型。
 
 ## 边界
 
