@@ -30,8 +30,12 @@ PostgreSQL Tenant Operator 合并为 Ayatori 的 Database 领域模块。保留�
 
 当前没有可用发布版本、没有被该 operator 托管的 PostgreSQL 实例或 Tenant，也没有需要在线
 转换的已部署 CR。因此此次合并不承担旧实现兼容性：旧运行链路可以直接撤销，不保留直接读取
-OpenBao 管理凭据的路径，不兼容旧 status checkpoint、samples 或落后于规范的 CRD。API 字段若
-妨碍清晰领域模型、恢复行为或测试，可以在 `v1alpha1` 阶段修改并重新生成。
+OpenBao 管理凭据的路径，也不兼容落后于规范的旧 CRD、samples 或实现细节。
+
+没有部署兼容负担不等于重新设计已经批准的产品合同。源项目的系统规格、API 语义、Instance 与
+Tenant 领域模型、状态机、ownership registry、OpenBao/ExternalSecret 凭据交付、Retain/Delete、
+恢复与测试设计整体作为 Ayatori Database 模块的规范基线。除 API group、项目归属和装配结构外，
+迁移不得静默改变这些行为；确需改变时必须先单独修订规格并记录决定。
 
 目标结构遵守 Ayatori 的模块化单体边界：
 
@@ -53,14 +57,15 @@ Database API 直接重构为 Ayatori 统一结构：API group 使用
 domain 与 adapter 放入 Ayatori 对应 Database 模块。原 `database.ddupan.top/v1alpha1` 不保留
 别名、conversion 或兼容入口。
 
-迁移前逐项核对批准规格、领域模型与当前 Go types；冲突时以批准规格和代码质量为基线，并在
-Ayatori 中记录有意改变。无需实现在线 CRD conversion 或数据迁移。
+迁移前逐项核对批准规格、领域模型与当前 Go types；冲突时以批准规格为准。代码质量通过重写
+旧运行链路、清晰 application/adapter 边界和测试实现，不通过改变已批准行为获得。无需实现在线
+CRD conversion 或数据迁移。
 
 ## 迁移方式
 
 1. 以包含已合并 Instance 领域基础和 CI #14 的最新 `main` commit 作为 source reference；记录
-   commit，并先提取规范、领域模型和纯单元测试中仍然成立的部分。目标是保留知识与验证，不是
-   逐文件复制旧实现。
+   commit，将完整批准规格与设计文档迁入 Ayatori Database 文档，并迁移领域模型和纯单元测试。
+   设计合同直接复用；旧运行代码不逐文件复制。
 2. 保留源仓库暂停中的脏工作树，不移动、提交或复制两个 extension observation 文件。以后可以
    先在源仓库形成独立 commit，或在 Ayatori 根据批准合同重新实现，但不得把未提交内容描述为来源。
 3. 在 Ayatori multi-group 项目中用 Kubebuilder 注册 Database API，按批准规格迁移 types，重新
@@ -82,5 +87,6 @@ Ayatori 中记录有意改变。无需实现在线 CRD conversion 或数据迁�
 - 已批准的 DBaaS 设计与测试投资得到保留。
 - 单一 manager/release 不意味着领域耦合；Database 仍保持独立 package、adapter 和测试边界。
 - 可以从已合并的领域基础开始迁移；旧运行链路和未提交 extension observation 不进入首个切片。
-- 无部署兼容负担允许优先修正 API 和架构，不为尚未使用的旧代码保留技术债。
+- 无部署兼容负担允许彻底重写旧运行链路，不为尚未使用的实现技术债保留兼容层；已批准设计合同
+  仍然有效。
 - Database 使用 Ayatori 统一 API group 与目录结构，不为未投入使用的旧 group 保留入口。
