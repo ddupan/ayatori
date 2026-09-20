@@ -45,16 +45,16 @@ Ayatori 不承载或重新实现数据面。控制面故障只应阻止创建与
 
 ## 资源分层
 
-平台提供正交产品能力，例如：
+平台只为已经验证的管理缺口提供正交产品能力。当前优先资源为：
 
-- `Job`、`Sandbox`、`ManualTask`
-- `VirtualMachine`
 - `LoadBalancer`
 - `Database`
 - `Bucket`
-- `DNSRecord`
-- `Credential`
-- `KubernetesCluster`
+- `VirtualMachine`
+
+`Run`/当前实验性的 `Job`、`ManualTask` 等可以作为控制面执行原语，但不是因为底层能运行 OCI
+image 就自动成为面向使用者的计算产品。`DNSRecord`、`Credential`、`KubernetesCluster` 等只在
+出现独立生命周期和真实消费者后加入；尤其 KaaS 不是预定终点。
 
 只有具备独立领域生命周期的能力才应成为高阶资源。应用本身通过 GitOps 组合上述资源，
 重复组合可通过模板或 Composition 表达，而不是扩展中央 Application API。
@@ -66,6 +66,11 @@ Ayatori 不承载或重新实现数据面。控制面故障只应阻止创建与
 1. 直接调用成熟且可观察的后端 API。
 2. 通过固定版本的 Terraform module 或 Ansible playbook 执行。
 3. 仅在必要时使用 GitOps bridge。
+
+Proxmox 是已知例外：其远程 API 不能覆盖所需的完整 VM 生命周期。VirtualMachine adapter 可以
+按操作能力选择 Proxmox API、部署在节点上的受限强类型 Agent/CLI，或生成 `ManualTask`。Agent
+必须提供版本化操作、幂等查询、operation ID 与审计，不能暴露任意 shell，也不能把 CLI 输出
+直接当作长期稳定协议。
 
 Controller 无论采用哪种执行方式，都必须提供一致的 ownership、conditions、删除语义、
 错误分类和恢复行为。

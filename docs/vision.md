@@ -29,6 +29,20 @@ Ayatori 是具有产品质量的内部平台，而非初期即面向公众的通
 平台允许对当前环境形成明确意见：Proxmox、OpenSandbox、Envoy、GoBGP、OpenBao、
 PostgreSQL、SeaweedFS、Samba AD DNS、Cloudflare 和 Flux 都可以是已知实现。
 
+Ayatori 不以补齐传统私有云或公有云的产品目录为目标。一个资源只有同时满足以下条件，才进入
+北向 API：
+
+1. homelab 存在现实消费者和重复需求；
+2. 现有后端 API 或 IaC 无法提供足够的管理体验；
+3. 持续 observe/reconcile 明显优于一次性自动化；
+4. 统一生命周期、状态、组合或权限能产生可验证的收益；
+5. 收益足以承担长期 API 兼容、controller 和恢复测试成本。
+
+当前最明确的管理缺口是 Database、LoadBalancer 与 Bucket/Object Storage。VirtualMachine 同样
+具有明确价值：Proxmox 的 API 不能覆盖所需的全部生命周期，一部分操作必须在节点上通过 CLI
+完成，因此 Ayatori 可以提供稳定北向 API，并在南向组合 Proxmox API、受限节点 Agent 与人工
+任务。KaaS 只有在出现托管控制面的实际需求时才进入实现，不是产品路线的必达终点。
+
 ## 非目标
 
 - 不替代 hypervisor、microVM runtime、数据库、对象存储或网络协议栈。
@@ -36,3 +50,5 @@ PostgreSQL、SeaweedFS、Samba AD DNS、Cloudflare 和 Flux 都可以是已知�
 - 不以隐藏全部后端信息或制造虚假多云可移植性为目标。
 - 不创建理解所有应用需求的中央 Application controller。
 - 不要求所有人工步骤立即自动化。
+- 不因为已有 Run、OpenSandbox 或 microVM backend，就构建 FaaS、Cloud Run 或应用托管产品。
+- 不预先承诺 KaaS；它是需求驱动的候选能力。
