@@ -3,6 +3,19 @@
 - 本仓库是 ddupan.top homelab 的内部基础设施控制平面，不以通用发行版为初期目标。
 - 提交、文档和代码注释优先使用中文；公共 API 标识符和代码遵循对应语言惯例。
 - 不要重新实现已有成熟后端的核心能力；新增实现前先确认能否通过稳定 API 进行薄适配。
+- Ayatori 复用 Kubernetes 的核心目标是 API machinery：对象存储与并发控制、list/watch、
+  informer、RBAC、admission、版本化 API 和审计；不要据此推断 Ayatori 是 Kubernetes
+  workload 平台，也不要默认复用 Kubernetes 的调度与数据面语义。
+- kube-apiserver 是 Ayatori 的 API 与状态协调平面，不是领域调度器。资源的调度、生命周期、
+  故障恢复、垃圾回收和后端收敛由 Ayatori controllers 实现；新增能力前应明确其属于 API
+  machinery、Ayatori 领域控制循环还是外部 backend，避免把职责放错层。
+- Kubernetes、OpenSandbox、Proxmox 等均是 Ayatori 的可替换 backend/executor。除管理组件自身
+  的部署外，不得仅因 controller 运行在 Kubernetes 中，就把原生 Pod、Job、Service、
+  NetworkPolicy、owner reference 或同 namespace 行为作为领域 API 的隐含语义；需要这些能力时
+  必须由 adapter 契约显式表达，并考虑后端位于其他集群或完全不是 Kubernetes 的情况。
+- 不要以减少自有 controller 数量为目的引入 generic-apiserver、聚合 API Server 或自行实现
+  API Server。只有 CRD/kube-apiserver 在存储、API 语义或扩展能力上形成已验证的阻碍时，才评估
+  接管 watch、RBAC、版本兼容和存储迁移等复杂度；controller 工作本身不会因此消失。
 - 在自行设计通用控制循环、资源生命周期、调度、回收或故障恢复机制前，先调查 Kubernetes
   核心及成熟开源 controller/operator 的实现；优先复用经过验证的模式，并记录有意偏离的
   理由。

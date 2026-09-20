@@ -28,7 +28,7 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [执行模型](docs/concepts/execution-model.md)
 - [环境与发布](docs/concepts/environments.md)
 - [路线图](docs/roadmap.md)
-- [ADR-0001：采用 Kubernetes API 作为资源模型](docs/decisions/0001-kubernetes-api-machinery.md)
+- [ADR-0001：采用 Kubernetes API machinery 作为状态协调平面](docs/decisions/0001-kubernetes-api-machinery.md)
 - [ADR-0002：采用 k0s 与可选工作负载运行时](docs/decisions/0002-k0s-optional-workload-runtime.md)
 - [ADR-0003：直接连接 Dev API 的开发循环](docs/decisions/0003-dev-api-development-loop.md)
 

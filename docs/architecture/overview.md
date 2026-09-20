@@ -4,9 +4,11 @@
 Git / CLI / Backstage
           │
           ▼
- Kubernetes API + CRD
+ kube-apiserver + etcd + CRD
+   API / state coordination plane
           │
-   Ayatori controllers
+   Ayatori controller-manager
+ scheduling / lifecycle / recovery / GC
           │
    ┌──────┼──────────────┐
    │      │              │
@@ -18,6 +20,15 @@ OpenSandbox          PostgreSQL / SeaweedFS
 Terraform            OpenBao / DNS / KaaS
 Ansible
 ```
+
+Ayatori 复用 Kubernetes 的 API machinery，而不是 Kubernetes 的容器编排产品边界。
+kube-apiserver 提供版本化对象、并发控制、list/watch、RBAC、admission 和审计；Ayatori
+controller-manager 承担所有领域控制循环。Kubernetes workload 集群只是与 OpenSandbox、
+Proxmox 等并列的 executor/backend，不默认等于运行 controller 的 management environment。
+
+因此，领域 API 不得依赖“资源最终一定变成同集群原生对象”的假设。原生 Pod、Job、Service、
+NetworkPolicy、namespace 共置与 owner reference 只有在 Kubernetes adapter 内才具有原生含义；
+跨后端所需能力必须由领域模型显式定义。
 
 ## 控制面
 
@@ -58,3 +69,10 @@ Ayatori 不承载或重新实现数据面。控制面故障只应阻止创建与
 
 Controller 无论采用哪种执行方式，都必须提供一致的 ownership、conditions、删除语义、
 错误分类和恢复行为。
+
+## API Server 边界
+
+首选 kube-apiserver + CRD，持续复用其成熟的 watch、RBAC、版本化存储和 API 生态。
+generic-apiserver 或聚合 API Server 不会减少领域 controller 的数量，只会把资源服务端、
+兼容性和存储迁移责任转移给 Ayatori。只有 CRD 的限制已经形成可复现、不可通过合理领域建模
+解决的阻碍时，才重新评估自建 API Server。
