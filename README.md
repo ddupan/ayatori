@@ -32,6 +32,8 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [ADR-0002：采用 k0s 与可选工作负载运行时](docs/decisions/0002-k0s-optional-workload-runtime.md)
 - [ADR-0003：直接连接 Dev API 的开发循环](docs/decisions/0003-dev-api-development-loop.md)
 - [ADR-0006：按实际管理缺口扩展资源 API](docs/decisions/0006-demand-driven-resource-scope.md)
+- [ADR-0007：复用 Node API 建立按需实现的 Compute 能力](docs/decisions/0007-compute-node-and-vm-boundary.md)
+- [ADR-0008：将 PostgreSQL Tenant Operator 合并为 Ayatori Database 模块](docs/decisions/0008-merge-postgresql-tenant-operator.md)
 
 ## 当前状态
 

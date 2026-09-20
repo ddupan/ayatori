@@ -34,7 +34,7 @@
 
 - 建立稳定的 `VirtualMachine` 北向 API，并支持现有资源 adopt。
 - 南向按能力组合 Proxmox API、节点受限 Agent/CLI 与 `ManualTask`，不假设 Proxmox API 完整。
-- ComputeNode 加入、drain 和 `SafeToRemove`。
+- Node 加入、drain 和 `SafeToRemove`；Node API 由 Ayatori Compute Agent 实现，不依赖 kubelet。
 - StorageClass、StoragePool、Volume 与迁移计划。
 - 先支持人工磁盘迁移，再按实际收益自动化。
 
