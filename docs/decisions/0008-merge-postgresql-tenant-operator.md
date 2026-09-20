@@ -48,9 +48,13 @@ docs/database/
 最终目录可按 Kubebuilder 与现有模块约定微调，但 Database 不依赖 execution/Job 模块，也不把
 PostgreSQL、OpenBao 或 External Secrets 客户端放入共享万能 service/repository 层。
 
-首轮保留现有 `database.ddupan.top/v1alpha1` API group，避免仅为仓库归属制造无收益的名称变化；
-这不是对旧字段或行为的兼容承诺。迁移前逐项核对批准规格、领域模型与当前 Go types；冲突时以
-批准规格和代码质量为基线，并在 Ayatori 中记录有意改变。无需实现在线 CRD conversion 或数据迁移。
+Database API 直接重构为 Ayatori 统一结构：API group 使用
+`database.ayatori.ddupan.top/v1alpha1`，Go package 使用 `api/database/v1alpha1`，controller、
+domain 与 adapter 放入 Ayatori 对应 Database 模块。原 `database.ddupan.top/v1alpha1` 不保留
+别名、conversion 或兼容入口。
+
+迁移前逐项核对批准规格、领域模型与当前 Go types；冲突时以批准规格和代码质量为基线，并在
+Ayatori 中记录有意改变。无需实现在线 CRD conversion 或数据迁移。
 
 ## 迁移方式
 
@@ -60,7 +64,7 @@ PostgreSQL、OpenBao 或 External Secrets 客户端放入共享万能 service/re
 2. 保留源仓库暂停中的脏工作树，不移动、提交或复制两个 extension observation 文件。以后可以
    先在源仓库形成独立 commit，或在 Ayatori 根据批准合同重新实现，但不得把未提交内容描述为来源。
 3. 在 Ayatori multi-group 项目中用 Kubebuilder 注册 Database API，按批准规格迁移 types，重新
-   生成 CRD、DeepCopy 与 RBAC；不直接复制旧生成文件或旧 `PROJECT`。
+   生成 `database.ayatori.ddupan.top` CRD、DeepCopy 与 RBAC；不直接复制旧生成文件或旧 `PROJECT`。
 4. 删除旧运行链路假设，以 Ayatori 当前 Go、Kubernetes 与 controller-runtime 版本重新建立
    application ports 和 adapter contract；先恢复 PostgreSQL registry/adapter contract tests。
 5. 逐片实现 Instance observe、Kubernetes Secret 管理凭据与连接刷新、Tenant provisioning、
@@ -79,3 +83,4 @@ PostgreSQL、OpenBao 或 External Secrets 客户端放入共享万能 service/re
 - 单一 manager/release 不意味着领域耦合；Database 仍保持独立 package、adapter 和测试边界。
 - 可以从已合并的领域基础开始迁移；旧运行链路和未提交 extension observation 不进入首个切片。
 - 无部署兼容负担允许优先修正 API 和架构，不为尚未使用的旧代码保留技术债。
+- Database 使用 Ayatori 统一 API group 与目录结构，不为未投入使用的旧 group 保留入口。
