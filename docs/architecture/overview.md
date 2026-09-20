@@ -30,6 +30,11 @@ Proxmox 等并列的 executor/backend，不默认等于运行 controller 的 man
 NetworkPolicy、namespace 共置与 owner reference 只有在 Kubernetes adapter 内才具有原生含义；
 跨后端所需能力必须由领域模型显式定义。
 
+内置 API 类型也按相同原则选择性复用。采用 `core/v1 Node` 作为计算节点 API 时，可以由
+Ayatori Compute Agent 写入状态、由 Ayatori 自有调度 controller 消费；这不会引入 kubelet、
+Pod 或 kube-scheduler。API contract、负责实现它的 controller/agent 和数据面是三个独立决策，
+不得从其中一个自动推导另外两个。
+
 ## 控制面
 
 Dev 与 Prod 使用独立的 Kubernetes API、数据库、身份和 controller 实例。两者可以

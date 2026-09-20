@@ -12,6 +12,11 @@
 - Ayatori 复用 Kubernetes 的核心目标是 API machinery：对象存储与并发控制、list/watch、
   informer、RBAC、admission、版本化 API 和审计；不要据此推断 Ayatori 是 Kubernetes
   workload 平台，也不要默认复用 Kubernetes 的调度与数据面语义。
+- 复用 Kubernetes 内置资源只表示采用其 API contract，不表示必须运行或模拟上游实现组件。
+  例如 Ayatori Compute Agent 可以直接实现 `core/v1 Node` 与 Lease 的状态语义，Ayatori
+  controller 可以自行消费 Node；不得仅因使用 Node 推导必须引入 kubelet、Pod、CRI、
+  kube-scheduler 或 kube-controller-manager。对每个复用资源分别明确 producer、consumer、
+  ownership 与实际采用的字段语义。
 - kube-apiserver 是 Ayatori 的 API 与状态协调平面，不是领域调度器。资源的调度、生命周期、
   故障恢复、垃圾回收和后端收敛由 Ayatori controllers 实现；新增能力前应明确其属于 API
   machinery、Ayatori 领域控制循环还是外部 backend，避免把职责放错层。
