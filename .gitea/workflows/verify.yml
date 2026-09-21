@@ -45,7 +45,10 @@ jobs:
           make lint-database-integration
 
   database-integration:
-    runs-on: [self-hosted, vm]
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 30
+    env:
+      DOCKER_HOST: unix:///var/run/docker.sock
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -58,5 +61,27 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test Database credentials with real backends
+      # 复用 dynamic runner 的 pod-smoke：daemon 与数据只属于本次 Pod job。
+      - name: Start job-local Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker
+          command -v dockerd
+          findmnt /var/lib/docker
+          sudo -n nohup dockerd \
+            --host=unix:///var/run/docker.sock \
+            --storage-driver=overlay2 \
+            >/tmp/ayatori-dockerd.log 2>&1 &
+          for _ in {1..60}; do
+            if docker info >/dev/null 2>&1; then
+              docker version
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/ayatori-dockerd.log
+          exit 1
+
+      - name: Test Database integration with real backends
         run: make test-database-integration

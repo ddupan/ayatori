@@ -21,7 +21,11 @@ TLS 测试在临时目录生成一次性证书与私钥，不使用生产 CA。
 
 当前覆盖固定 namespace 的 Secret 读取与 RBAC、缺失/无效凭据恢复、有效凭据变化后的重连、
 无关字段更新不重连、中途轮换时丢弃观察、会话重建、并发读取、本地连接释放和 TLS 验证。
-默认 Pod runner 跑快速测试与 lint，VM runner 跑带 Docker 的 Database 集成测试。
+快速测试、lint 和 Database 集成测试均使用 Pod runner。集成 job 按 dynamic runner 的
+`pod-smoke.yml` 显式启动 Pod 内独占的 Docker daemon（overlay2），预检成功后再运行测试，
+不依赖 VM、共享宿主 Docker 或生产数据库。daemon 与数据随 job Pod 销毁。
+daemon 启动失败会打印启动日志；fixture 启动失败会保留退出错误与 stderr，并遮蔽测试密码，
+以区分缺少命令、daemon 不可达、权限和镜像拉取失败。
 
 这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、registry、
 权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。

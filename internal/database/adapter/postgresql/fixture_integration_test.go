@@ -20,6 +20,7 @@ package postgresql_test
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -55,7 +56,7 @@ func postgresFixture(t *testing.T, ctx context.Context) (string, int) {
 	output, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-d", "-p", "127.0.0.1::5432",
 		"-e", "POSTGRES_PASSWORD="+fixturePassword, fixtureImage).Output()
 	if err != nil {
-		t.Fatal("cannot start isolated PostgreSQL fixture")
+		t.Fatalf("cannot start isolated PostgreSQL fixture: %s", fixtureCommandError(err))
 	}
 	id := strings.TrimSpace(string(output))
 	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(id) {
@@ -70,7 +71,7 @@ func postgresFixture(t *testing.T, ctx context.Context) (string, int) {
 	})
 	output, err = exec.CommandContext(ctx, "docker", "inspect", "--format", `{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}`, id).Output()
 	if err != nil {
-		t.Fatal("cannot inspect fixture port")
+		t.Fatalf("cannot inspect fixture port: %s", fixtureCommandError(err))
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(string(output)))
 	if err != nil {
@@ -85,6 +86,59 @@ func postgresFixture(t *testing.T, ctx context.Context) (string, int) {
 		}
 	}
 	return id, port
+}
+
+// Output 将 stderr 保存在 ExitError 中；保留诊断，但不打印命令参数和测试密码。
+func fixtureCommandError(err error) string {
+	detail := err.Error()
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		detail += ": " + strings.TrimSpace(string(exitErr.Stderr))
+	}
+	redactor := strings.NewReplacer(
+		fixturePassword, "[REDACTED]",
+		rotatedPassword, "[REDACTED]",
+	)
+	return redactor.Replace(detail)
+}
+
+func TestFixtureCommandErrorPreservesDiagnosticsAndRedactsPasswords(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "missing docker executable",
+			err:  &exec.Error{Name: "docker", Err: exec.ErrNotFound},
+			want: "executable file not found",
+		},
+		{
+			name: "daemon failure from stderr",
+			err:  &exec.ExitError{Stderr: []byte("Cannot connect to the Docker daemon")},
+			want: "Cannot connect to the Docker daemon",
+		},
+		{
+			name: "passwords in stderr",
+			err:  &exec.ExitError{Stderr: []byte("failure: " + fixturePassword + " " + rotatedPassword)},
+			want: "failure: [REDACTED] [REDACTED]",
+		},
+		{
+			name: "password in error text",
+			err:  errors.New("failure: " + fixturePassword),
+			want: "failure: [REDACTED]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detail := fixtureCommandError(tt.err)
+			if !strings.Contains(detail, tt.want) {
+				t.Fatalf("diagnostic lost expected information: %q", tt.want)
+			}
+			if strings.Contains(detail, fixturePassword) || strings.Contains(detail, rotatedPassword) {
+				t.Fatal("diagnostic exposed a fixture password")
+			}
+		})
+	}
 }
 
 func target(t *testing.T, port int, mode instance.TLSMode) instance.ObservationTarget {
