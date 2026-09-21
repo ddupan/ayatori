@@ -28,11 +28,15 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [执行模型](docs/concepts/execution-model.md)
 - [环境与发布](docs/concepts/environments.md)
 - [路线图](docs/roadmap.md)
-- [ADR-0001：采用 Kubernetes API 作为资源模型](docs/decisions/0001-kubernetes-api-machinery.md)
+- [ADR-0001：采用 Kubernetes API machinery 作为状态协调平面](docs/decisions/0001-kubernetes-api-machinery.md)
 - [ADR-0002：采用 k0s 与可选工作负载运行时](docs/decisions/0002-k0s-optional-workload-runtime.md)
 - [ADR-0003：直接连接 Dev API 的开发循环](docs/decisions/0003-dev-api-development-loop.md)
+- [ADR-0006：按实际管理缺口扩展资源 API](docs/decisions/0006-demand-driven-resource-scope.md)
+- [ADR-0007：复用 Node API 建立按需实现的 Compute 能力](docs/decisions/0007-compute-node-and-vm-boundary.md)
+- [ADR-0008：将 PostgreSQL Tenant Operator 合并为 Ayatori Database 模块](docs/decisions/0008-merge-postgresql-tenant-operator.md)
 
 ## 当前状态
 
-Ayatori 处于设计与早期实现阶段。第一个纵向切片计划是统一 Job API 与 Kubernetes
-Pod executor，随后接入 OpenSandbox executor。
+Ayatori 处于设计与早期实现阶段。当前使用 Job controller 验证第一个完整控制循环与 adapter
+边界；它不是通用 Job Service 或 FaaS 产品承诺。首批实际产品方向是 Database、LoadBalancer
+和 Bucket/Object Storage，具体顺序按纵向价值决定。
