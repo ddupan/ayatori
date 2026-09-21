@@ -38,22 +38,22 @@ const (
 )
 
 // Snapshot contains persisted observations only, without credentials or live evidence.
-// Failure detail mapping will be added with capability assessment, not intent transitions.
 type Snapshot struct {
 	Phase            Phase
 	ObservedRevision int64
 	Readiness        Readiness
 	ReportedVersion  string
+	Failure          Failure
 }
 
 // Instance protects registration state and pure lifecycle transitions.
 // Reconstitution does not establish live capability evidence, even for a Ready snapshot.
-// This initial slice deliberately exposes no operation that authorizes provisioning.
 type Instance struct {
 	target     ObservationTarget
 	snapshot   Snapshot
 	deleting   bool
 	extensions ExtensionSupport
+	evidence   *CapabilityObservation
 }
 
 func Reconstitute(target ObservationTarget, snapshot Snapshot, deleting bool) (*Instance, error) {
@@ -85,6 +85,8 @@ func (i *Instance) BeginValidation() error {
 	i.snapshot.Phase = PhaseValidating
 	i.snapshot.Readiness = Unknown
 	i.extensions = ExtensionSupport{}
+	i.evidence = nil
+	i.snapshot.Failure = NoFailure
 	return nil
 }
 
@@ -100,6 +102,8 @@ func (i *Instance) BeginDeletion() error {
 	i.snapshot.Phase = PhaseDeleting
 	i.snapshot.Readiness = Unknown
 	i.extensions = ExtensionSupport{}
+	i.evidence = nil
+	i.snapshot.Failure = NoFailure
 	return nil
 }
 

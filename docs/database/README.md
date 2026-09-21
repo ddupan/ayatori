@@ -21,15 +21,17 @@ Database 是 Ayatori 首批实际产品领域之一。第一个迁移切片只�
 
 代码被移动到 Ayatori 的 `internal/database/domain/instance`，测试 import 和文档链接相应更新；
 首个后续切片按已批准合同增加 Instance extension observation：观测与当前 target 绑定，进入重新
-验证或删除时失效，且支持判定不授权 Tenant provisioning。其余 Ready/observation 行为仍应先更新
-合同与测试再实现，不能把旧运行链路接回该模型。
+验证或删除时失效，且支持判定不授权 Tenant provisioning。后续 Ready 切片实现管理能力判定、
+registry 准备决策与完整回读、Ready 重验及本轮 evidence 前置检查；沿用已批准合同，不能把旧运行
+链路接回该模型。各层验证边界见 [Instance 领域规格](domain-instance.md)。
 
 ## 边界
 
 - 领域层不依赖 Kubernetes types、数据库 driver 或凭据 provider。
 - CredentialReference 只携带管理 Secret 的名称与字段映射，不包含 Secret 内容或 OpenBao path。
 - Instance checkpoint 不是外部事实；实际能力必须由 application/adapter 观察后交给领域对象判断。
-- 当前代码不授权 Tenant provisioning，也不表示 Database API 已经可用。
+- 当前代码只检查 Instance 供应前置条件，不授予 Tenant 所有权或外部写入权限，也不表示
+  Database API 已经可用。
 
 ## 设计入口
 

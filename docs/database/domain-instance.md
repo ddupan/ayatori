@@ -2,7 +2,7 @@
 
 状态：Draft，含已确认决策。日期：2026-09-13。
 
-上层合并边界见 [ADR-0008](../decisions/0008-merge-Ayatori Database controller.md)。本文只展开 Instance，不包含 Tenant 的供应
+上层合并边界见 [ADR-0008](../decisions/0008-merge-postgresql-tenant-operator.md)。本文只展开 Instance，不包含 Tenant 的供应
 实现，也不新增 CRD 字段。设计签名用于评审职责与行为，不是待复制的 Go 接口代码。
 
 ## 1. 对象职责与生命周期
@@ -228,3 +228,26 @@ Ready --registry 需修复/保存--> InitializingRegistry
 均已确认。其他决策及未决项见总体草案，不增加后台清扫器或状态字段。
 
 批准本对象结构不等于批准这些未决行为，也不意味着立刻实现完整供应链路。
+
+## 8. 领域实现与验证边界（2026-09-21）
+
+`internal/database/domain/instance` 按上述方法合同实现 Ready 纯判定。输入分别表达连接、
+metadata、role、database、grant、extension 管理能力，以及 registry 的未观察、缺失、需迁移、
+可用、不兼容和不可访问状态。检查零值或未知值按证据不足处理；操作失败只使用封闭的安全
+类别，不接收驱动错误。`Snapshot.Failure` 是 Condition 映射的领域输入，不新增 CRD/status 字段。
+
+管理能力分别指目标连接可用、服务器 metadata 可读，以及执行规格 §7 所要求的角色、数据库、
+授权和扩展管理操作的能力；不是仅凭版本查询或扩展可用列表判定权限。具体 SQL 权限探测矩阵、
+最小权限角色和扩展权限例外仍须在 PostgreSQL adapter 切片定义并用真实后端验证。
+registry 不兼容独立保留为领域失败类别，不将其误报为权限不足；公开 Condition Reason 的映射
+留待 API/application 切片按原合同评审。
+
+领域测试验证完整回读、缺少检查项、状态重建、重复判定、目标不匹配、配置变化、依赖失败、
+registry 丢失／不兼容、操作结果不确定和删除限制。只有本轮完整能力判定通过后，Instance
+前置条件检查才通过；这不授予 Tenant 所有权，也不替代实际写入前的并发校验。
+
+本切片不新增 controller、adapter、Secret 读取或外部生命周期操作。checkpoint 保存失败、
+resourceVersion 冲突、watch 与 finalizer 事件链需由后续 application/envtest 验证；SQL 探测、
+registry 初始化／迁移、超时后的真实状态回读和并发幂等由 PostgreSQL 集成测试验证；Secret
+变化后的连接刷新由 Kubernetes API 加真实 PostgreSQL 的集成测试验证。纯领域测试不能证明
+Database 已可运行或这些集成合同已完成。
