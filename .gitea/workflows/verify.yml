@@ -68,7 +68,6 @@ jobs:
           set -euo pipefail
           command -v docker
           command -v dockerd
-          findmnt /var/lib/docker
           sudo -n nohup dockerd \
             --host=unix:///var/run/docker.sock \
             --storage-driver=overlay2 \
