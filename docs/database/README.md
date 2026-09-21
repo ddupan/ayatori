@@ -53,8 +53,8 @@ controller 接入、Secret watch、finalizer、registry 与真实权限检查仍
 运行 `make test-database-integration` 验证真实 API server + 一次性 PostgreSQL；fixture 不接受外部
 DSN，镜像固定摘要，使用随机本机回环端口并在退出时删除测试容器。覆盖缺失/错误凭据、RBAC、
 namespace 边界、有效值轮换、metadata 无关变化、中途轮换、重建/重试、并发读取、Forget/Close
-与 TLS DNS/IP SAN、错误 CA/主机名和禁止明文降级。CI 使用 Pod runner 执行，workflow 显式启动
-本 job 独占的 Docker daemon，随 Pod 销毁；不依赖 VM 或共享宿主 Docker。普通 lint 之外还检查
+与 TLS DNS/IP SAN、错误 CA/主机名和禁止明文降级。CI 使用 Pod runner 执行，由 runner 提供
+可用的 Docker，workflow 只做预检、不自行启动 daemon；不依赖 VM。普通 lint 之外还检查
 integration 标签代码。领域单测、真实 API 行为与真实 PostgreSQL 行为分别验收，不以本切片
 替代整个 Instance controller 的集成验收。
 
