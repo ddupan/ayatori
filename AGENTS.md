@@ -34,6 +34,16 @@
 - Proxmox VM 的北向管理不能假定单一 API 覆盖完整生命周期。允许按能力组合 Proxmox API、节点
   上的受限强类型 Agent/CLI 操作和 ManualTask；节点 Agent 不得退化为无版本契约的任意远程 shell。
 - 所有 controller 必须考虑幂等、observe、finalizer、conditions、删除策略和恢复行为。
+- Ayatori 会联动 Kubernetes API、虚拟化、存储、网络及其他外部控制面；集成测试是功能完成
+  标准的一部分，不得仅凭 fake client 或 mock 测试宣告 controller、adapter 或生命周期变更完成。
+- 测试应按风险分层：纯领域规则使用快速单元测试；API schema、CEL、status subresource、
+  watch/cache、owner reference 和 reconcile 事件链使用 envtest；需要 scheduler、kubelet、网络、
+  存储或真实后端行为的路径在 Dev 集群或对应后端环境执行端到端测试。
+- fake client 适合穷举状态机和错误分支，但它不会完整执行 API server defaulting、validation、
+  resourceVersion、garbage collection 或新版 Kubernetes 约束；涉及这些语义时必须增加真实 API
+  server 测试。跨 adapter 的共同契约应使用同一套 contract tests，避免各实现产生语义漂移。
+- 集成测试必须覆盖正常路径以及幂等重试、controller 重启、依赖稍后出现、删除/finalizer、
+  后端结果不确定和并发竞态等恢复路径；无法在当前层测试的部分要明确记录由哪一层验证。
 - Secret、token、kubeconfig 及具体生产凭据不得提交到仓库。
 - `deploy/dev/` 与 `deploy/prod/` 使用相同制品；生产版本只通过 promotion 更新。
 - 内部专用不构成降低测试、版本、恢复、安全和可审计要求的理由。

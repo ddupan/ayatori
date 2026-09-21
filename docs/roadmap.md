@@ -51,9 +51,10 @@
 - 用户集群只暴露 worker node，控制面完全由平台托管。
 - 本节记录候选实现边界，不构成路线图承诺。
 
-## 首个业务里程碑
+## 后续 Compute 验收场景
 
-完成 Laptop Rebuild Readiness：
+Database 等首批资源优先落地。Compute 开始实施后，以 Laptop Rebuild Readiness 验证节点
+生命周期与恢复能力；该场景不作为首批 Database、LoadBalancer 或 Bucket 的交付前置条件：
 
 1. 临时节点加入。
 2. laptop 上的 workload 被重建、迁移或形成可执行人工任务。
