@@ -29,10 +29,10 @@ func TestInstanceAcceptsExtensionObservationForCurrentTarget(t *testing.T) {
 	target := value.Target()
 	snapshot := value.Snapshot()
 
-	if err := value.ObserveExtensions(target, instance.ObserveExtensionSupport([]string{"pg_trgm"})); err != nil {
+	if err := value.ObserveExtensions(target, instance.ObserveExtensionSupport([]string{testTrigram})); err != nil {
 		t.Fatal(err)
 	}
-	if got := value.CheckExtensions(instance.NewExtensionSet([]string{"pg_trgm"})); got.Decision != instance.ExtensionsAccepted {
+	if got := value.CheckExtensions(instance.NewExtensionSet([]string{testTrigram})); got.Decision != instance.ExtensionsAccepted {
 		t.Fatalf("CheckExtensions() = %v, want accepted", got)
 	}
 	if value.Snapshot() != snapshot {
@@ -52,20 +52,20 @@ func TestInstanceRejectsExtensionObservationForDifferentTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := value.ObserveExtensions(different, instance.ObserveExtensionSupport([]string{"pg_trgm"})); err == nil {
+	if err := value.ObserveExtensions(different, instance.ObserveExtensionSupport([]string{testTrigram})); err == nil {
 		t.Fatal("observation for a different target was accepted")
 	}
-	if got := value.CheckExtensions(instance.NewExtensionSet([]string{"pg_trgm"})); got.Decision != instance.ExtensionSupportUnobserved {
+	if got := value.CheckExtensions(instance.NewExtensionSet([]string{testTrigram})); got.Decision != instance.ExtensionSupportUnobserved {
 		t.Fatalf("rejected observation changed support: %v", got)
 	}
 }
 
 func TestInstanceClearsExtensionObservationAcrossLifecycleBoundaries(t *testing.T) {
-	requested := instance.NewExtensionSet([]string{"pg_trgm"})
+	requested := instance.NewExtensionSet([]string{testTrigram})
 
 	t.Run("validation", func(t *testing.T) {
 		value := lifecycleInstance(t, instance.Snapshot{Phase: instance.PhaseReady}, false)
-		if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{"pg_trgm"})); err != nil {
+		if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{testTrigram})); err != nil {
 			t.Fatal(err)
 		}
 		if err := value.BeginValidation(); err != nil {
@@ -78,7 +78,7 @@ func TestInstanceClearsExtensionObservationAcrossLifecycleBoundaries(t *testing.
 
 	t.Run("deletion", func(t *testing.T) {
 		value := lifecycleInstance(t, instance.Snapshot{Phase: instance.PhaseReady}, true)
-		if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{"pg_trgm"})); err == nil {
+		if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{testTrigram})); err == nil {
 			t.Fatal("deleting instance accepted a new observation")
 		}
 		if err := value.BeginDeletion(); err != nil {
@@ -92,8 +92,8 @@ func TestInstanceClearsExtensionObservationAcrossLifecycleBoundaries(t *testing.
 
 func TestInstanceCanExplicitlyInvalidateExtensionObservation(t *testing.T) {
 	value := lifecycleInstance(t, instance.Snapshot{Phase: instance.PhaseValidating}, false)
-	requested := instance.NewExtensionSet([]string{"pg_trgm"})
-	if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{"pg_trgm"})); err != nil {
+	requested := instance.NewExtensionSet([]string{testTrigram})
+	if err := value.ObserveExtensions(value.Target(), instance.ObserveExtensionSupport([]string{testTrigram})); err != nil {
 		t.Fatal(err)
 	}
 	if err := value.ObserveExtensions(value.Target(), instance.ExtensionSupport{}); err != nil {
