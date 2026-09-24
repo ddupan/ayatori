@@ -2,7 +2,7 @@
 
 日期：2026-09-24。资源模型修订依据
 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，行为以
-[系统规格](specification.md) 为准。本页替代原 registry 准备与恢复合同，不表示代码已改完。
+[系统规格](specification.md) 为准。本页替代原 registry 准备与恢复合同；领域依赖已撤除，完整应用/controller 链路尚未接入。
 
 ## 职责
 
@@ -83,6 +83,6 @@ finalizer 不阻止并发申请 CR 创建；新请求见 Instance 删除中/不�
 真实 API server 验证 Secret、resourceVersion、watch、finalizer；真实 PostgreSQL 验证
 权限、TLS、凭据更新和查询失败，不以领域布尔值或 server_version 查询代替管理权限验收。
 
-现有 Instance 领域代码仍含 registry 判定，现有 registry adapter 和测试也尚未撤除。
-本轮只修订文档；后续代码重构必须删除 registry 依赖并重写对应测试，不能因旧测试通过
-就声称新 Instance Ready 或三资源生命周期已完成。
+Instance 领域代码、adapter 与测试的 registry 依赖已撤除。AssessManagement 根据完整观察
+直接完成验证；AssessReadiness 失败进入 Validating，依赖恢复后重新验证。领域测试覆盖各检查项
+在这两个入口的失败与恢复，但完整权限探测、Instance controller 和三资源生命周期尚未完成。

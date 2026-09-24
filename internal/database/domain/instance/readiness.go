@@ -27,8 +27,6 @@ const (
 	DependencyUnavailable
 	AuthenticationFailed
 	InsufficientPrivileges
-	RegistryIncompatible
-	RegistryNotUsable
 )
 
 // CheckResult 的零值表示未观察，不能视为成功。
@@ -70,32 +68,22 @@ func (c ManagementChecks) failure() Failure {
 	return NoFailure
 }
 
-type RegistryState uint8
-
-const (
-	RegistryUnobserved RegistryState = iota
-	RegistryAbsent
-	RegistryNeedsMigration
-	RegistryUsable
-	RegistryUnsupported
-	RegistryUnavailable
-)
-
 // CapabilityObservation 是值对象，不包含连接、凭据或可变集合。
 type CapabilityObservation struct {
-	target   ObservationTarget
-	version  string
-	checks   ManagementChecks
-	registry RegistryState
+	target  ObservationTarget
+	version string
+	checks  ManagementChecks
 }
 
-func NewCapabilityObservation(target ObservationTarget, version string,
-	checks ManagementChecks, registry RegistryState,
+func NewCapabilityObservation(
+	target ObservationTarget,
+	version string,
+	checks ManagementChecks,
 ) (CapabilityObservation, error) {
 	if err := target.Validate(); err != nil {
 		return CapabilityObservation{}, err
 	}
-	return CapabilityObservation{target: target, version: version, checks: checks, registry: registry}, nil
+	return CapabilityObservation{target: target, version: version, checks: checks}, nil
 }
 
 func (o CapabilityObservation) managementFailure() Failure {
@@ -107,29 +95,6 @@ func (o CapabilityObservation) managementFailure() Failure {
 	}
 	return NoFailure
 }
-
-func (o CapabilityObservation) registryFailure() Failure {
-	switch o.registry {
-	case RegistryUsable:
-		return NoFailure
-	case RegistryAbsent, RegistryNeedsMigration:
-		return RegistryNotUsable
-	case RegistryUnsupported:
-		return RegistryIncompatible
-	case RegistryUnavailable:
-		return DependencyUnavailable
-	default:
-		return ObservationIncomplete
-	}
-}
-
-type PreparationDecision uint8
-
-const (
-	PreparationDenied PreparationDecision = iota
-	PreparationAllowed
-	AlreadyUsable
-)
 
 func (i *Instance) acceptObservation(o CapabilityObservation, phase Phase) error {
 	if !i.target.Matches(o.target) {
@@ -149,74 +114,10 @@ func (i *Instance) fail(failure Failure) {
 	i.snapshot.ObservedRevision = i.target.Revision().Value()
 }
 
-// AssessManagement 只推进意图，不执行 registry 写入，也不完成 observedRevision。
+// AssessManagement 根据本轮完整能力观察完成验证，不执行外部写入。
 func (i *Instance) AssessManagement(o CapabilityObservation) error {
 	if err := i.acceptObservation(o, PhaseValidating); err != nil {
 		return err
-	}
-	if failure := o.managementFailure(); failure != NoFailure {
-		i.fail(failure)
-		return nil
-	}
-	if failure := o.registryFailure(); failure != NoFailure && failure != RegistryNotUsable {
-		i.fail(failure)
-		return nil
-	}
-	i.snapshot.Phase = PhaseInitializingRegistry
-	i.snapshot.Readiness = Unknown
-	i.snapshot.Failure = NoFailure
-	i.evidence = nil
-	return nil
-}
-
-// PlanRegistryPreparation 不证明 checkpoint 已落盘；应用层必须先保存意图再执行写入。
-func (i *Instance) PlanRegistryPreparation(o CapabilityObservation) (PreparationDecision, error) {
-	if err := i.acceptObservation(o, PhaseInitializingRegistry); err != nil {
-		return PreparationDenied, err
-	}
-	if failure := o.managementFailure(); failure != NoFailure {
-		i.fail(failure)
-		return PreparationDenied, nil
-	}
-	switch o.registry {
-	case RegistryUsable:
-		return AlreadyUsable, nil
-	case RegistryAbsent, RegistryNeedsMigration:
-		return PreparationAllowed, nil
-	default:
-		i.fail(o.registryFailure())
-		return PreparationDenied, nil
-	}
-}
-
-// RegistryPreparationResult 只能是安全失败或完整回读，不能表达裸操作成功。
-type RegistryPreparationResult struct {
-	observation CapabilityObservation
-	failure     Failure
-}
-
-func RegistryReadBack(o CapabilityObservation) RegistryPreparationResult {
-	return RegistryPreparationResult{observation: o}
-}
-
-func RegistryPreparationFailed(target ObservationTarget, failure Failure) (RegistryPreparationResult, error) {
-	if err := target.Validate(); err != nil {
-		return RegistryPreparationResult{}, err
-	}
-	if failure < ObservationIncomplete || failure > RegistryNotUsable {
-		return RegistryPreparationResult{}, errors.New("registry preparation requires a known failure category")
-	}
-	return RegistryPreparationResult{observation: CapabilityObservation{target: target}, failure: failure}, nil
-}
-
-func (i *Instance) AssessRegistryResult(result RegistryPreparationResult) error {
-	o := result.observation
-	if err := i.acceptObservation(o, PhaseInitializingRegistry); err != nil {
-		return err
-	}
-	if result.failure != NoFailure {
-		i.fail(result.failure)
-		return nil
 	}
 	i.assessComplete(o)
 	return nil
@@ -227,12 +128,12 @@ func (i *Instance) assessComplete(o CapabilityObservation) {
 		i.fail(failure)
 		return
 	}
-	if failure := o.registryFailure(); failure != NoFailure {
-		i.fail(failure)
-		return
+	i.snapshot = Snapshot{
+		Phase:            PhaseReady,
+		ObservedRevision: i.target.Revision().Value(),
+		Readiness:        Ready,
+		ReportedVersion:  o.version,
 	}
-	i.snapshot = Snapshot{Phase: PhaseReady, ObservedRevision: i.target.Revision().Value(),
-		Readiness: Ready, ReportedVersion: o.version}
 	i.evidence = &o
 }
 
@@ -244,10 +145,8 @@ func (i *Instance) AssessReadiness(o CapabilityObservation) error {
 	if i.snapshot.ObservedRevision != i.target.Revision().Value() {
 		return i.BeginValidation()
 	}
-	if o.managementFailure() != NoFailure || o.registry == RegistryUnavailable {
+	if o.managementFailure() != NoFailure {
 		i.snapshot.Phase = PhaseValidating
-	} else if o.registryFailure() != NoFailure {
-		i.snapshot.Phase = PhaseInitializingRegistry
 	}
 	i.assessComplete(o)
 	return nil

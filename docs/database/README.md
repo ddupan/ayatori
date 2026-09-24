@@ -11,8 +11,8 @@ Retain 后人工重新绑定与资源侧 Delete。撤销 PostgreSQL ownership re
 
 依据 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，当前合同见
 [系统规格](specification.md)。下面的迁移来源与已存在代码不反向约束新设计。
-本轮只有文档修订，registry adapter、旧 Instance 判定与测试仍待代码重构撤除；新增 Database
-资源、绑定、导入、角色/凭据管理边界与回收链路尚未实现。wiki 同步位置见
+registry adapter、专属迁移/测试及 Instance 的 registry 判定现已撤除；Instance 根据完整管理
+能力观察直接判定 Ready。新增 Database 资源、绑定、导入、角色/凭据管理边界与回收链路尚未实现。wiki 同步位置见
 `homelab-wiki/services/postgresql-tenant-operator.md`，跨仓库发布状态由 wiki 的同步记录维护。
 
 ## 来源基线
@@ -35,7 +35,7 @@ Retain 后人工重新绑定与资源侧 Delete。撤销 PostgreSQL ownership re
 代码被移动到 Ayatori 的 `internal/database/domain/instance`，测试 import 和文档链接相应更新；
 首个后续切片按已批准合同增加 Instance extension observation：观测与当前 target 绑定，进入重新
 验证或删除时失效，且支持判定不授权 Tenant provisioning。已有 Ready 切片曾按原合同加入
-registry 准备决策；这一依赖现已撤销，后续须从代码移除，不能把旧运行链路接回模型。
+registry 准备决策；这一依赖现已从代码移除，不能把旧运行链路接回模型。
 各层验证边界见 [Instance 领域规格](domain-instance.md)。
 
 ## 边界
@@ -97,15 +97,16 @@ checkpoint/status/finalizer 链路仍是后续切片。
 单元测试补充成功空列表、查询附带部分数据时丢弃、结果与可变 slice 隔离、每轮重新读取和
 generation 变化时的目标绑定；原凭据/TLS/超时/并发测试沿同一 metadata 路径继续运行。
 
-## 待撤换的 registry 实现
+## Registry 撤除
 
-`adapter/postgresql/registry` 曾从固定来源基线迁入，使用调用方提供的 pgx 连接和 tern
-迁移；已有测试覆盖唯一约束、Retain 墓碑和事务结果不确定的恢复。这是旧实现状态，
-不再是新领域需求，也未装配到 InstanceService。
+原 `adapter/postgresql/registry`、SQL 迁移、registry 专属集成测试及 tern 依赖已删除；
+未提交的 inspection 实验也已撤除。来源仍可在 Git 历史追溯，没有删除外部 PostgreSQL 对象。
+Instance 不再具有 InitializingRegistry 阶段、RegistryState、准备决策或回读方法；
+首次完整管理能力观察即可完成验证，重验失败则撤销本轮就绪证据。
 
-工作树中另有未提交的 registry inspection 实验及测试，本轮保留，不继续接入或宣称完成。
-后续代码变更撤除 registry adapter、Instance 相关状态/方法和仅服务旧合同的测试与依赖，
-保留凭据、TLS、metadata 与真实权限验证的有效部分。不操作现有 PostgreSQL 服务或旧仓库工作树。
+保留凭据读取与连接刷新、TLS、metadata/扩展观察及其真实后端测试。领域测试覆盖每项能力
+在初次验证和 Ready 重验时失败、依赖恢复、重启后重新取证、错误目标/阶段及删除保护。
+这不等于管理权限探测矩阵或三资源 controller 已实现。
 
 ## 设计入口
 

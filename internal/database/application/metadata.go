@@ -18,7 +18,7 @@ package application
 
 import "git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 
-// DatabaseMetadata 是一次只读查询的事实，不包含管理权限或 registry 就绪结论。
+// DatabaseMetadata 是一次只读查询的事实，不包含管理权限或完整就绪结论。
 // AvailableExtensions 是服务器提供的可用列表，不是已安装列表或安装授权。
 type DatabaseMetadata struct {
 	Version             string

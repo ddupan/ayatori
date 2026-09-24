@@ -39,7 +39,7 @@ func lifecycleInstance(t *testing.T, snapshot instance.Snapshot, deleting bool) 
 // Acceptance: docs/database/domain-instance.md §3, checkpoint reconstruction and intent-only transitions.
 func TestReconstituteCheckpoints(t *testing.T) {
 	for _, phase := range []instance.Phase{
-		instance.PhasePending, instance.PhaseValidating, instance.PhaseInitializingRegistry,
+		instance.PhasePending, instance.PhaseValidating,
 		instance.PhaseReady, instance.PhaseDeleting,
 	} {
 		snapshot := instance.Snapshot{Phase: phase, ObservedRevision: 1, Readiness: instance.Ready, ReportedVersion: "17"}
@@ -97,7 +97,7 @@ func TestDeletionRequiresRequestAndPreventsValidation(t *testing.T) {
 		t.Fatal("rejected deletion mutated state")
 	}
 	for _, phase := range []instance.Phase{
-		instance.PhasePending, instance.PhaseValidating, instance.PhaseInitializingRegistry,
+		instance.PhasePending, instance.PhaseValidating,
 		instance.PhaseReady, instance.PhaseDeleting,
 	} {
 		snapshot.Phase = phase

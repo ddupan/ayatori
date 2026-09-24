@@ -6,8 +6,7 @@
 ## 当前设计验收（2026-09-24）
 
 [ADR-0009](../decisions/0009-database-resource-and-claim.md) 将资源生命周期从 Tenant 中分离。
-新增验收矩阵见 [系统规格](specification.md#11-验收)。旧 registry 测试仅说明历史代码行为，
-不再是完成标准；代码重构时撤除，不继续 schema 审计或自动所有权恢复切片。
+新增验收矩阵见 [系统规格](specification.md#11-验收)。registry 实现、专属测试与迁移依赖已撤除，不继续 schema 审计或自动所有权恢复切片。
 
 | 层次 | 本次设计要求 |
 | --- | --- |
@@ -21,7 +20,7 @@ Instance 删除与 Released 引用。冲突必须给出可操作而不泄密的�
 envtest 不运行 GC 或 ESO；这些行为必须由测试集群验证。
 新增资源 API 尚未实现，本轮没有完成或运行这些新增行为测试。
 
-## Ayatori 已接入的凭据、metadata 与历史 registry 切片测试
+## Ayatori 已接入的凭据与 metadata 切片测试
 
 本节命令已在 Ayatori 接入；以下历史 Compose/Kind 操作仍属于迁入的目标合同。
 
@@ -51,12 +50,8 @@ metadata 测试验证版本与可用扩展的只读查询，包括未安装扩�
 权限撤回只修改每个场景自建 PostgreSQL 容器的 ACL；不连接现有服务。
 可用列表不等于安装权限，这些检查不替代后续的完整管理权限矩阵或 Instance Ready 验收。
 
-registry 测试独立使用一次性 PostgreSQL，不启动 Kubernetes API server。覆盖重复和并发迁移、
-所有权唯一约束、并发占用、Retain 墓碑与 Delete 幂等、连接重建、取消恢复、未知 schema 与
-超前版本拒绝。通过在真实 COMMIT 成功后注入客户端错误，验证结果不确定时的重试；这不替代
-真实网络故障测试，也不覆盖跨后端的删除步骤。
-
-工作树中未提交的 registry 回读实验不再继续；本轮保留其文件，不把实验测试作为新设计验收。
+Instance 领域测试不再提供 registry 状态，初次验证与 Ready 重验分别覆盖所有管理检查项的
+未观察、不可用、认证失败、权限不足及未知值，并验证依赖恢复；完整管理观察可直接 Ready。
 
 这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。
 
@@ -175,8 +170,8 @@ make test-integration
 ```
 
 该 target 会启动一次性 Compose 依赖，并通过 `POSTGRES_TEST_DSN` 把测试指向开发
-PostgreSQL。registry 测试会删除并重建固定的测试 schema，因此禁止将该变量指向真实
-homelab database。测试后运行 `make dev-down` 清理依赖。
+PostgreSQL。这是旧环境设计，不是当前 Ayatori 入口；当前 fixture 不接受外部 DSN，
+使用本页前部的 `make test-database-integration`，禁止把测试指向真实 homelab database。
 
 Gitea Actions 的 job 本身运行在 Docker container 中，不能通过 `127.0.0.1` 访问
 Docker host 上发布的 Compose 端口。CI 会暂时将 job container 加入 Compose 网络，
