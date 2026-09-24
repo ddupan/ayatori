@@ -3,7 +3,7 @@
 > 本页迁入作为 Database 模块的测试分层与 fixture 合同。旧项目的 Make target、devcontainer
 > 和脚手架版本尚未适配 Ayatori；实现时应复用 Ayatori 现有工具链，并保持这里定义的测试边界。
 
-## Ayatori 已接入的凭据切片测试
+## Ayatori 已接入的凭据与 registry 切片测试
 
 本节命令已在 Ayatori 接入；以下历史 Compose/Kind 操作仍属于迁入的目标合同。
 
@@ -28,7 +28,12 @@ runner 后端修复上线，不能从本地测试通过推断远端已经可用�
 fixture 启动失败会保留退出错误与 stderr，并遮蔽测试密码，
 以区分缺少命令、daemon 不可达、权限和镜像拉取失败。
 
-这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、registry、
+registry 测试独立使用一次性 PostgreSQL，不启动 Kubernetes API server。覆盖重复和并发迁移、
+所有权唯一约束、并发占用、Retain 墓碑与 Delete 幂等、连接重建、取消恢复、未知 schema 与
+超前版本拒绝。通过在真实 COMMIT 成功后注入客户端错误，验证结果不确定时的重试；这不替代
+真实网络故障测试，也不覆盖跨后端的删除步骤。
+
+这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、registry 观测装配、
 权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。
 
 本项目同时依赖 Kubernetes API、PostgreSQL、OpenBao 和 ESO。日常开发不连接 homelab

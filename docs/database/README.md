@@ -47,7 +47,7 @@ Secret metadata 和无关字段变化不重建连接。观测后再次读取 Sec
 Instance UID、endpoint 或凭据引用变化也会释放旧连接；Forget/Close 只释放本地资源。
 
 当前只有 `ObserveVersion` 版本查询用例，不能产生完整 CapabilityObservation 或 Ready。
-controller 接入、Secret watch、finalizer、registry 与真实权限检查仍待后续切片；并发 CR 更新
+controller 接入、Secret watch、finalizer、registry 观测装配与真实权限检查仍待后续切片；并发 CR 更新
 必须由调用者通过 resourceVersion 校验。应用层沿用源实现的串行处理，本阶段未引入新的调度框架。
 
 运行 `make test-database-integration` 验证真实 API server + 一次性 PostgreSQL；fixture 不接受外部
@@ -57,6 +57,24 @@ namespace 边界、有效值轮换、metadata 无关变化、中途轮换、重�
 可用的 Docker，workflow 只做预检、不自行启动 daemon；不依赖 VM。普通 lint 之外还检查
 integration 标签代码。领域单测、真实 API 行为与真实 PostgreSQL 行为分别验收，不以本切片
 替代整个 Instance controller 的集成验收。
+
+## Registry 所有权存储切片
+
+`adapter/postgresql/registry` 直接迁入上述固定基线的 `internal/postgresql/registry`，
+保留原 schema、版本表和唯一约束，不接回旧 controller。Store 使用调用方提供的 pgx 连接或
+连接池，不创建连接池、不读取凭据、不管理重连。迁移复用 tern v2.4.3 的事务和 advisory lock，
+所有权变更复用 PostgreSQL 唯一约束与行锁，没有新增迁移或锁框架。
+
+Claim 支持相同归属的幂等重试；Retain 保留不可重新占用的墓碑；Delete 仅删除匹配归属的
+managed 记录，且只应在调用方确认外部资源已删除后调用。Store 本身不删除 database、role
+或凭据，也不授予 Tenant provisioning 权限。驱动错误仅供内部调用方分类，接入 controller 时
+仍须按安全合同转换为脱敏的 Condition/Event，不能直接发布原始错误。
+
+真实 PostgreSQL 测试覆盖重复/并发初始化、唯一约束冲突、并发 Claim、归属不匹配、Retain
+与 Delete 重试、连接重建、取消恢复、未知 schema/超前版本拒绝，以及真实事务提交后注入
+客户端失败的恢复分支。后者确定性模拟“提交成功但调用方不知道”，不声称覆盖真实网络分区。
+registry 尚未装配到 InstanceService；初始化成功不能当作完整 registry 回读或 Instance Ready。
+controller 重启、Secret watch、finalizer 与跨后端删除仍由后续 envtest/端到端切片验收。
 
 ## 设计入口
 
