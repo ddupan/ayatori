@@ -33,6 +33,31 @@ registry 准备决策与完整回读、Ready 重验及本轮 evidence 前置检�
 - 当前代码只检查 Instance 供应前置条件，不授予 Tenant 所有权或外部写入权限，也不表示
   Database API 已经可用。
 
+## 管理凭据与连接切片
+
+`application.InstanceService` 适配自原项目固定基线
+[`internal/instance/service.go`](https://git.ddupan.top/panxiao81/postgresql-tenant-operator/src/commit/dae546e58efa1be81e930861c87f7fb13bb12113/internal/instance/service.go)，
+保留 CredentialReader、Connector、Database 的装配边界及串行操作/释放规则。
+具体连接池完全由 pgxpool v5.11.0 提供，PostgreSQL adapter 不拥有凭据缓存、轮换流程或任意观测回调。
+
+相对源基线有两项按已批准合同作出的必要修改：管理凭据从固定 controller namespace 的
+Kubernetes Secret 直接读取；每轮比较有效用户名、密码，检测到变化即关闭旧连接并重新装配。
+Secret metadata 和无关字段变化不重建连接。观测后再次读取 Secret，中途有效值变化则丢弃结果，
+不把旧连接的成功作为新凭据有效的证据；这不构成跨 Kubernetes/PostgreSQL 的原子事务。
+Instance UID、endpoint 或凭据引用变化也会释放旧连接；Forget/Close 只释放本地资源。
+
+当前只有 `ObserveVersion` 版本查询用例，不能产生完整 CapabilityObservation 或 Ready。
+controller 接入、Secret watch、finalizer、registry 与真实权限检查仍待后续切片；并发 CR 更新
+必须由调用者通过 resourceVersion 校验。应用层沿用源实现的串行处理，本阶段未引入新的调度框架。
+
+运行 `make test-database-integration` 验证真实 API server + 一次性 PostgreSQL；fixture 不接受外部
+DSN，镜像固定摘要，使用随机本机回环端口并在退出时删除测试容器。覆盖缺失/错误凭据、RBAC、
+namespace 边界、有效值轮换、metadata 无关变化、中途轮换、重建/重试、并发读取、Forget/Close
+与 TLS DNS/IP SAN、错误 CA/主机名和禁止明文降级。CI 使用 Pod runner 执行，由 runner 提供
+可用的 Docker，workflow 只做预检、不自行启动 daemon；不依赖 VM。普通 lint 之外还检查
+integration 标签代码。领域单测、真实 API 行为与真实 PostgreSQL 行为分别验收，不以本切片
+替代整个 Instance controller 的集成验收。
+
 ## 设计入口
 
 - [系统规格](specification.md)：规范性行为与验收标准；
