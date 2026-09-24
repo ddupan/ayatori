@@ -46,7 +46,8 @@ Secret metadata 和无关字段变化不重建连接。观测后再次读取 Sec
 不把旧连接的成功作为新凭据有效的证据；这不构成跨 Kubernetes/PostgreSQL 的原子事务。
 Instance UID、endpoint 或凭据引用变化也会释放旧连接；Forget/Close 只释放本地资源。
 
-当前只有 `ObserveVersion` 版本查询用例，不能产生完整 CapabilityObservation 或 Ready。
+当前通过 `ObserveMetadata` 读取服务器版本和可用扩展，`ObserveVersion` 只是其版本读取便捷入口，
+不能产生完整 CapabilityObservation 或 Ready。
 controller 接入、Secret watch、finalizer、registry 观测装配与真实权限检查仍待后续切片；并发 CR 更新
 必须由调用者通过 resourceVersion 校验。应用层沿用源实现的串行处理，本阶段未引入新的调度框架。
 
@@ -57,6 +58,31 @@ namespace 边界、有效值轮换、metadata 无关变化、中途轮换、重�
 可用的 Docker，workflow 只做预检、不自行启动 daemon；不依赖 VM。普通 lint 之外还检查
 integration 标签代码。领域单测、真实 API 行为与真实 PostgreSQL 行为分别验收，不以本切片
 替代整个 Instance controller 的集成验收。
+
+## 服务器 metadata 与扩展观测
+
+SQL adapter 通过一条只读语句读取 `pg_catalog.current_setting('server_version')` 和
+`pg_catalog.pg_available_extensions`，避免从已安装列表推断可用列表，且不依赖可修改的
+`search_path`。查询失败丢弃整份结果；成功返回空列表与尚未观察严格区分。
+参考 PostgreSQL 的 [pg_available_extensions](https://www.postgresql.org/docs/18/view-pg-available-extensions.html)
+与 [CREATE EXTENSION](https://www.postgresql.org/docs/18/sql-createextension.html) 合同：可用列表
+表示服务器提供的扩展，不证明管理账号有安装权限，也不保证依赖和其他安装前提满足。
+
+`InstanceService` 保留原有 CredentialReader → Connector → Database 边界，复用同一个
+凭据读取、连接刷新和串行释放流程，不新增连接池封装或任意查询回调。每次重新查询 metadata，
+并在 Secret 有效值回读一致后生成不可变的 `MetadataObservation`，绑定本次 target（含当前
+generation），不绑定建池时的旧 target。结果不包含凭据，扩展集合不与 driver 的可变 slice 共享。
+凭据中途变化、读取失败或查询失败时，返回零值观察并释放连接，不复用旧的扩展列表。
+
+调用方可将 `Target()` 与 `Extensions()` 交给 Instance 的 `ObserveExtensions`；应用调用链
+仍负责同轮次使用，不能持久化或跨轮缓存这份证据。metadata 读取不安装扩展、不初始化 registry、
+不设置 Ready，也不授予 Tenant 写权限。管理权限矩阵、registry 完整回读及 controller 的
+checkpoint/status/finalizer 链路仍是后续切片。
+
+真实 API server + PostgreSQL 测试验证未安装扩展可被观察、名称保持大小写、search_path 遮蔽
+不改变查询来源、低权限账号读取、权限撤回失败与恢复、Secret 中途变化丢弃扩展结果。
+单元测试补充成功空列表、查询附带部分数据时丢弃、结果与可变 slice 隔离、每轮重新读取和
+generation 变化时的目标绑定；原凭据/TLS/超时/并发测试沿同一 metadata 路径继续运行。
 
 ## Registry 所有权存储切片
 

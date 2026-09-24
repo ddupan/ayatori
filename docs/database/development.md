@@ -3,7 +3,7 @@
 > 本页迁入作为 Database 模块的测试分层与 fixture 合同。旧项目的 Make target、devcontainer
 > 和脚手架版本尚未适配 Ayatori；实现时应复用 Ayatori 现有工具链，并保持这里定义的测试边界。
 
-## Ayatori 已接入的凭据与 registry 切片测试
+## Ayatori 已接入的凭据、metadata 与 registry 切片测试
 
 本节命令已在 Ayatori 接入；以下历史 Compose/Kind 操作仍属于迁入的目标合同。
 
@@ -27,6 +27,11 @@ TLS 测试在临时目录生成一次性证书与私钥，不使用生产 CA。
 runner 后端修复上线，不能从本地测试通过推断远端已经可用。
 fixture 启动失败会保留退出错误与 stderr，并遮蔽测试密码，
 以区分缺少命令、daemon 不可达、权限和镜像拉取失败。
+
+metadata 测试验证版本与可用扩展的只读查询，包括未安装扩展、大小写保持、search_path 遮蔽、
+低权限账号读取、catalog 访问被撤回后的失败与恢复，以及凭据中途变化时同时丢弃版本和扩展。
+权限撤回只修改每个场景自建 PostgreSQL 容器的 ACL；不连接现有服务。
+可用列表不等于安装权限，这些检查不替代后续的完整管理权限矩阵或 Instance Ready 验收。
 
 registry 测试独立使用一次性 PostgreSQL，不启动 Kubernetes API server。覆盖重复和并发迁移、
 所有权唯一约束、并发占用、Retain 墓碑与 Delete 幂等、连接重建、取消恢复、未知 schema 与

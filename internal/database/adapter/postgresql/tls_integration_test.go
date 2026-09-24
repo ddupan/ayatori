@@ -107,7 +107,7 @@ func TestPostgreSQLTLSHostIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal("trusted DNS SAN connection failed", err)
 	}
-	if version, err := db.Version(ctx); err != nil || version == "" {
+	if metadata, err := db.InspectMetadata(ctx); err != nil || metadata.Version == "" {
 		db.Close()
 		t.Fatal("TLS metadata read failed", err)
 	}

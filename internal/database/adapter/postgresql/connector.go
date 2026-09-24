@@ -47,14 +47,6 @@ func (d *database) Close() {
 	d.pool.Close()
 }
 
-func (d *database) Version(ctx context.Context) (string, error) {
-	var version string
-	if err := d.pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {
-		return "", safeError(err, application.ErrObservation)
-	}
-	return version, nil
-}
-
 func (c Connector) Connect(ctx context.Context, endpoint instance.Endpoint, credentials application.Credentials) (application.Database, error) {
 	if err := endpoint.Validate(); err != nil {
 		return nil, err

@@ -131,12 +131,16 @@ func TestObservationDiscardsResultWhenCredentialsChange(t *testing.T) {
 		}
 	}
 
-	version, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target)
+	observation, err := fixture.service.ObserveMetadata(fixture.ctx, fixture.target)
 	if !errors.Is(err, application.ErrCredentialsChanged) {
 		t.Fatal("in-flight rotation was not detected")
 	}
-	if version != "" {
+	if observation.Version() != "" {
 		t.Fatal("observation returned data obtained with stale credentials")
+	}
+	requested := instance.NewExtensionSet([]string{fixtureExtension})
+	if observation.Extensions().Check(requested).Decision != instance.ExtensionSupportUnobserved {
+		t.Fatal("observation returned extension support obtained with stale credentials")
 	}
 	if fixture.backendIDs(t) != "" {
 		t.Fatal("stale connection was retained after rotation")

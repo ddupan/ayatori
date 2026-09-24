@@ -42,6 +42,7 @@ import (
 const (
 	fixtureHost         = "fixture.invalid"
 	fixtureUser         = "postgres"
+	fixtureExtension    = "plpgsql"
 	dockerExec          = "exec"
 	fixtureImage        = "postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
 	fixturePassword     = "AYATORI-TEST-ONLY-initial-password"
