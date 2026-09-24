@@ -1,76 +1,67 @@
 # 运维与故障处理
 
-| 项目 | 内容 |
-| --- | --- |
-| 状态 | Review；命令待实现后演练 |
-| 最后更新 | 2026-09-10 |
+状态：设计合同，操作入口待 API 实现与隔离环境演练。日期：2026-09-24。
+依据 [系统规格](specification.md)，不再查询或维护 PostgreSQL registry。
 
 ## 日常检查
 
-先看 API 合同，而不是从日志猜状态：
+先看 Instance、Database、Tenant 的 Ready Condition、绑定 UID、阶段与 observedGeneration，
+再核对 PostgreSQL catalog、OpenBao metadata、ExternalSecret 与 Secret 投射状态。
+具体 kubectl 资源名、finalizer 名称与人工确认字段在 API 实现后补齐，不提供猜测的 patch 命令。
+不得把 Secret data、密码或带 Token 的请求粘贴到 issue/日志。
 
-```sh
-kubectl get postgresqlinstances
-kubectl get postgresqltenants -A
-kubectl get postgresqltenant -n <namespace> <name> -o yaml
-kubectl describe postgresqltenant -n <namespace> <name>
-```
+## 故障分类
 
-随后检查 controller 日志、ExternalSecret/Secret、OpenBao metadata、registry 和
-PostgreSQL catalog。排障时不得把 Secret data 或带 Token 的请求粘贴到 issue/日志。
-`status.phase` 是 controller 状态机 checkpoint，也用于定位当前步骤；`Ready`
-Condition/Reason 用于判断对外结果。phase 不能替代外部事实，清空或不一致时应由
-controller 自动重建/纠正。
-
-## 常见 Reason
-
-| Reason | 首要检查 |
+| Reason/状态 | 首要检查 |
 | --- | --- |
-| `InvalidSpec` / `ImmutableField` | API 字段、identifier、不可变/只追加约束 |
-| `DependencyUnavailable` | 网络、DNS、服务状态和超时 |
-| `AuthenticationFailed` | 管理凭据、CA、DNS/IP SAN、OpenBao auth |
-| `InsufficientPrivileges` | PostgreSQL grants、OpenBao policy、Kubernetes RBAC |
-| `InstanceNotReady` | 先恢复所引用 Instance |
-| `Conflict` | registry UID、同名 DB/role、OpenBao metadata；禁止直接覆盖 |
-| `CredentialProjectionFailed` | ClusterSecretStore、ExternalSecret Condition、目标 Secret |
-| `ProvisioningFailed` | `status.phase` 及对应外部资源的回读结果 |
+| InvalidSpec / ImmutableField | 请求、名称、不可变目标与只追加扩展约束 |
+| DependencyUnavailable | 网络、DNS、服务状态和超时；恢复后退避重试 |
+| AuthenticationFailed | 管理 Secret、TLS、OpenBao auth |
+| InsufficientPrivileges | PostgreSQL/OpenBao 权限与 Kubernetes RBAC |
+| InstanceNotReady | 当前目标的管理能力，不检查 registry |
+| Conflict | 绑定 UID、未知同名资源、失败步骤与外部结果确定性 |
+| CredentialProjectionFailed | 授权的凭据位置、Store、ESO 与目标 Secret |
+| Released | 资源已保留，不代表可直接交给另一个 Tenant |
 
-修复依赖后让正常 reconcile 自动重试。不要通过删除/重建 CR 规避 Conflict；新 UID 只会
-使已有保留资源继续冲突。
+## 创建不确定或同名冲突
 
-## Retain 后的资源
+1. 保留 CR、绑定与安全诊断，不清空 status、不反复删除重建申请。
+2. 核对确切 Instance/database/role 和凭据位置；区分已确认完成与结果不确定的操作。
+3. 使用只读检查确认资源内容、使用者和权限，不通过重设密码来“验证归属”。
+4. 管理员决定清理确定的残留后重试，或显式导入保留资源；涉及删除需另有明确授权。
+5. 记录处理依据，再按 API 的受控入口恢复协调。
 
-Retain 删除完成后，database、role、OpenBao record 和 registry 所有权记录仍存在但标记
-unmanaged。v1alpha1 不支持重新关联。需要恢复管理时，使用 [`migration.md`](migration.md)
-把数据迁移到一个全新受管名称；不要手工把 registry UID 改成新 CR UID。
+普通依赖故障可以自动继续，未知归属不得因后端恢复就自动认领。
+controller 重启保留 Kubernetes 中的记录，不需要恢复第二套 registry。
+
+## Retain 与重新绑定
+
+Tenant 删除后 Database 及实际资源保留，进入 Released，保存旧绑定身份。
+不要删除 Database 对象来“释放名称”，也不要只修改 UID 或 Ready 强行交付。
+
+管理员先确认数据是否允许交给新使用者、旧角色是否共享、旧账号访问如何撤销或保留、
+新使用者如何获得凭据，以及原 ExternalSecret/Secret 的处置。删除 Secret 不会撤销已持有密码
+的 PostgreSQL 访问。完成这些处置后，才通过显式授权重新绑定；不自动回到可分配状态。
+具体凭据关联与解除绑定字段尚待 API 评审，当前不能宣称已有可执行恢复命令。
 
 ## Delete 卡住
 
-1. 暂停应用写入并记录 Tenant UID、Instance UID、database、role 和 Bao path。
-2. 从 registry 和 OpenBao metadata 独立确认所有权。
-3. 检查删除阶段，修复 PostgreSQL/OpenBao/ESO 依赖，让 controller 继续。
-4. 若依赖永久丢失，列出每个可能残留的 database、role、KV metadata 和 Secret。
-5. 只有确认接受这些残留后，才人工移除 finalizer。
+核对 Database/Instance/绑定身份、资源侧 Delete 授权及实际管理范围，修复相关依赖，
+让 controller 从已确认的步骤继续。不要删除共享角色或未纳管凭据，不使用扩大范围的 CASCADE。
 
-最终 finalizer 名称由 API 实现固定后补入命令。人工移除 finalizer不会执行剩余清理，
-也不会把外部资源变成可由新 CR 接管的资源。
+依赖永久丢失时列出每个可能残留的数据库、角色、凭据与投射。只有管理员接受残留与后续处置
+责任后才人工移除确切对象的 finalizer。该操作不会完成清理，也不会授权新申请使用残留资源。
 
 ## 备份与恢复
 
-- PostgreSQL VM/磁盘备份必须与数据库一致性策略配套；仅复制在线磁盘不自动等于有效
-  PostgreSQL 备份。
-- PostgreSQL 备份必须包含管理 database 中的 controller registry。
-- OpenBao 使用独立的受支持备份/快照流程，且恢复点应与 PostgreSQL 尽量接近。
-- Kubernetes 侧备份 CR、controller 配置、ClusterSecretStore 和公开 CA bundle，不备份
-  明文 Secret 作为凭据事实来源。
-- 定期在隔离环境执行恢复演练，验证 registry、KV metadata、应用登录及 Retain/Delete。
+分别备份 PostgreSQL 数据、Kubernetes 资源与绑定记录、OpenBao 数据及必要配置。
+不再要求备份专用 registry。只复制在线磁盘不等于有效数据库备份；秘密备份必须加密并限制访问。
 
-恢复后先停止 controller，核对 PostgreSQL/OpenBao 时间点与 UID 映射，再启动单副本
-controller 观察；出现一侧存在、一侧缺失时不得手工生成新密码或改 registry，应先按
-Conflict 处理并决定恢复哪一侧。
+灾难恢复先暂停 controller，核对三者恢复点、UID、外部目标与凭据的一致性，再恢复协调。
+不一致时按 Conflict 人工处理，不承诺仅凭外部同名数据库重建丢失绑定。
+在隔离环境演练登录、导入、Retain、重新绑定与 Delete 后才能标记验证通过。
 
-## 升级与紧急停止
+## 紧急停止
 
-有疑似越权删除或凭据泄漏时，先把 controller Deployment scale 到 0，保留 CR、registry
-和日志证据，再撤销 OpenBao token/role 并限制 PostgreSQL 管理 role。恢复前在隔离环境
-复现并确认不会扩大破坏。一般依赖故障无需 scale down，最终一致性会自动重试。
+疑似越权删除或秘密泄漏时暂停 controller，保留 CR 与脱敏证据，限制相关管理身份权限，
+在隔离环境复现并确认修复后恢复。一般依赖失败不需要停机。

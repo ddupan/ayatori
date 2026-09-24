@@ -3,6 +3,10 @@
 - 状态：Accepted
 - 日期：2026-09-20
 
+2026-09-24 修订：[ADR-0009](0009-database-resource-and-claim.md) 已明确替代本文对 ownership
+registry、任意 status 丢失自动恢复及原 Retain 合同的沿用要求。Database 合并归属、来源保护、
+无旧部署兼容负担及其他仍适用的安全边界继续有效；以下保留当时迁移决策的历史背景。
+
 ## 背景
 
 独立仓库 `postgresql-tenant-operator` 已经为 homelab 共享 PostgreSQL 设计了

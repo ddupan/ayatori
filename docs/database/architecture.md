@@ -1,99 +1,58 @@
-# 系统架构
+# Database 系统架构
 
-本文是已批准 [`specification.md`](specification.md) 的架构视图。规范定义外部行为，
-本文解释组件边界；二者冲突时以规范为准。Ayatori Database 模块目前只有首批领域模型，尚未
-注册 API 或接入运行链路。
+本页解释 [系统规格](specification.md) 的组件边界；资源与申请分离的依据见
+[ADR-0009](../decisions/0009-database-resource-and-claim.md)。设计已确认，运行链路尚未完成。
 
-## 组件与数据流
-
-```text
-GitOps / kubectl / Terraform / Backstage
-                    |
-                    v
-          Kubernetes API (CRD)
-                    |
-                    v
-       Ayatori Database controller
-          |          |          |
-          v          v          v
- PostgreSQL DBMS  OpenBao KV  ExternalSecret
- catalog+registry              |
-                               v
-                         Kubernetes Secret
-```
-
-- Kubernetes `spec` 保存期望状态；`status.phase` 保存 controller 状态机 checkpoint，
-  其他 status 字段保存可重建的观察结果。整个 status 都必须能由外部事实保守恢复。
-- PostgreSQL catalog 保存 database、role、grant 和 extension 的实际状态。
-- 两个 CR 的 `status.phase` 是 controller 状态机的权威 checkpoint。
-- PostgreSQL 管理 database 中的 controller registry 只负责所有权、安装身份和保留标记。
-- OpenBao KV v2 是应用凭据的事实来源。
-- External Secrets Operator（ESO）读取 OpenBao，并创建应用使用的 Kubernetes Secret。
-
-controller 不运行 PostgreSQL/OpenBao，不管理 VM、存储、备份或 OpenBao PKI，也不直接
-把明文凭据写入 Kubernetes API。
-
-## 资源模型
-
-`PostgreSQLInstance` 是 cluster-scoped，由平台管理员创建，描述外部 PostgreSQL 的
-DNS host、IP host address、端口、管理 database、TLS 模式和管理 Secret 引用。
-实际可安装扩展由应用层查询后交给领域对象判定，v1alpha1 不实现管理员 allowlist。
-
-管理连接使用管理员维护的 ExternalSecret 经 ESO 同步到 controller namespace 的
-Secret；Instance 只选择 Secret 名称与字段，controller 只读，不直接从 Bao 获取
-管理凭据。Tenant 凭据的创建、读取与销毁仍由 controller 直接访问 Bao。
-
-`PostgreSQLTenant` 是 namespaced。一个 Tenant 对应一个 database、一个同时作为 owner
-的 login role、一组只允许追加的 extension、一个由 controller 推导的 OpenBao KV
-记录，以及同 namespace 的 ExternalSecret 和目标 Secret。
-
-Tenant namespace 只提供 Kubernetes RBAC 和身份边界。database 与 role 名称在一个
-Instance 内仍然全局唯一。
-
-## Reconcile 与所有权
-
-系统采用最终一致性，不在 Kubernetes、PostgreSQL、OpenBao 和 ESO 之间假装存在分布式
-事务。每个外部写入前在 CR status 记录阶段，执行幂等操作，回读验证，再推进阶段：
+## 资源与后端
 
 ```text
-Planned -> CredentialCreated -> RoleCreated -> DatabaseCreated
-        -> ExternalSecretCreated -> CredentialProjected -> Ready
+Kubernetes API
+  Instance ──引用── Database ──排他绑定── Tenant
+                         |
+              Ayatori Database controllers
+                   |          |          |
+              PostgreSQL   OpenBao   ExternalSecret
+                catalog                  |
+                                        ESO → Secret
 ```
 
-controller 每轮同时读取 CR、registry、PostgreSQL catalog、OpenBao metadata 和 ESO
-投射状态。`status.phase` 是状态机 checkpoint，但不能替代外部回读；丢失或与事实冲突
-时必须保守重建/纠正。`metadata.generation` 只表示 spec 修改；Condition 的
-`observedGeneration` 表示该版本是否已经完成一次有结论的协调。
+Kubernetes 保存声明、绑定与操作进度；PostgreSQL 保存实际数据库状态；OpenBao 保存应用凭据。
+不在 PostgreSQL 中再建立管理 registry。Instance 是管理入口而非 CSI 协议实现，adapter 是薄访问层。
 
-所有权使用 Instance UID、Tenant UID 与 namespace/name 验证。database/role COMMENT
-可以辅助排障，但不能代替 registry。未知资源只报告 `Conflict`，不得修改、接管或
-删除。Retain 后用相同名称重建 CR 会获得新 UID，因此仍然冲突。
+Instance 验证当前目标的管理能力，不供应 Tenant 数据库，不因 registry 缺失初始化任何 schema。
+Database 用例负责独立资源的供应、显式导入、保留与回收；Tenant 用例负责申请、绑定与凭据交付。
+这是用例职责，不要求为每一步新增一个 controller 或通用控制循环。
 
-## 创建与删除边界
+## 协调与恢复
 
-创建时先校验全部输入和冲突，再生成一次密码并写入 OpenBao，随后创建 role、database、
-extension 和 ExternalSecret。只有 ESO 已投射 Secret 且应用凭据实际登录成功，Tenant
-才可 Ready。
+通过 Kubernetes API 的 resourceVersion 保护并发更新，watch 推动依赖恢复；外部操作前保存
+资源与意图，执行后观察并记录结果。数据库实际操作仍须处理后端竞态，列表检查不是唯一约束。
 
-`Retain` 是默认删除策略，只移除 Kubernetes 管理关系并保留外部资源。显式 `Delete`
-使用 finalizer，在重新验证所有权后依次删除 ExternalSecret/Secret、连接、database、
-role、OpenBao KV 历史和 registry。详细恢复与逃生步骤见
-[`operations.md`](operations.md)。
+可靠确认的步骤允许幂等继续；外部创建与进度写入之间的失败若导致归属不确定，则停止写入并
+报告 Conflict。不创建第二套所有权存储，不承诺跨系统事务或任意 status 丢失自动认领。
+错误必须提供人工可用的步骤、资源与结果确定性信息，但不泄漏秘密。
 
-## 网络与 TLS
+## 绑定、导入与回收
 
-Instance 同时公布 DNS `host` 和 IP `hostaddr`。PostgreSQL server 证书必须包含对应的
-DNS SAN 和 IP SAN，消费者自行选择可达目标，并可使用 `verify-full` 验证。OpenBao PKI
-持有 CA 私钥并签发服务端证书；controller 只挂载公开 CA bundle。
+Database 独立于 Tenant 存在，不能以会导致级联删除的 ownerReference 连接两者。
+Instance 删除检查 Database 引用，包括 Released 资源，不直接清理数据库。
 
-OpenBao 的 controller 内部地址和外部消费者地址可以不同。Tenant status 同时提供目标
-Kubernetes Secret reference 和不含认证信息的 OpenBao KV v2 API URL。
+动态供应和管理员导入使用同一种资源记录。导入验证初始只读；未知同名数据库仍为冲突。
+Retain 保留资源及旧绑定身份；重新绑定必须经过人工数据和访问权限处置，不自动分配。
+Delete 由资源侧明确授权，在 finalizer 保护下按管理范围清理并逐步回读。
 
-## 文档入口
+角色、凭据与投射的具体管理字段和清理顺序仍需 API 评审，不能用 PV 类比代替数据库权限设计。
 
-- API 字段与 Condition：[`api-reference.md`](api-reference.md)
-- 安装、依赖和配置：[`deployment.md`](deployment.md)
-- 本地与 CI 测试：[`development.md`](development.md)
-- 安全模型与最小权限：[`security.md`](security.md)
-- 现有数据库迁移：[`migration.md`](migration.md)
-- 日常排障和删除逃生：[`operations.md`](operations.md)
+## 保持的访问边界
+
+管理 Secret 固定在 controller namespace，管理员维护其 ExternalSecret；controller 只读。
+有效值变化刷新管理连接，不直接访问 Bao 获取管理凭据，不自行实现连接池。
+应用凭据写 OpenBao，由 ESO 投射；controller 不直接写明文 Secret。
+TLS、DNS/IP SAN、七键凭据输出和最小权限合同继续适用。
+
+## 导航
+
+- [API 合同与待细化字段](api-reference.md)
+- [领域模型](domain-model.md)与[Instance 规格](domain-instance.md)
+- [部署](deployment.md)、[安全](security.md)、[开发测试](development.md)
+- [导入与迁移](migration.md)、[运维](operations.md)

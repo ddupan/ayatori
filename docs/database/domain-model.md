@@ -1,149 +1,76 @@
-# 领域模型设计草案
+# Database 领域模型
 
-状态：Draft，含已确认决策。日期：2026-09-13。
+状态：资源模型已确认，字段与绑定协议待细化。日期：2026-09-24。
+行为以 [系统规格](specification.md) 为准；决策依据见
+[ADR-0009](../decisions/0009-database-resource-and-claim.md)。
 
-本文定义领域职责、身份与一致性边界，并用对象规格细化字段和方法合同；方法使用
-设计签名，不固定 Go 目录、SDK 或框架，也不批准实现。外部行为以
-[系统规格](specification.md) 为准；下列未决问题不能由实现自行决定。
-PR #6 的代码和已有 registry 表结构是可评估的实现素材，不反向决定领域模型。
+## 统一语言与关系
 
-## 1. 领域与统一语言
+| 术语 | 含义 |
+| --- | --- |
+| Instance | 平台登记的 PostgreSQL 资源来源与管理入口 |
+| Database | 独立存在的数据库资源，保存目标、管理范围、绑定与回收策略 |
+| Tenant | 用户对数据库的申请与使用合同 |
+| Binding | Database 与 Tenant 的排他关联，不是独立 Claim 或 registry |
+| LoginRole | 当前单数据库场景中兼任 owner 的登录角色 |
+| CredentialLocation | 与资源生命周期一致的凭据定位，不是密码 |
+| CredentialProjection | 面向当前使用者的凭据投射要求与观察 |
 
-本系统的领域是“在共享 PostgreSQL 上供应并管理应用租户”，不是数据库服务器运维。
-v1alpha1 先采用一个限界上下文，不把 PostgreSQL、Bao、Kubernetes 各自当成业务上下文。
+Instance 一对多 Database；每个 Database 同时零或一个 Tenant，Tenant 最多一个 Database。
+Instance 不持有全部资源的内存集合。三者以引用关联，操作一个资源无需加载整个实例集合。
 
-| 术语 | 含义 | 不是什么 |
-| --- | --- | --- |
-| Instance | 平台登记的外部 PostgreSQL 管理对象及其供应策略 | 连接池、VM 或 controller 单例 |
-| Tenant | 一个应用的数据库使用合同及受管资源生命周期 | PostgreSQL database 的别名 |
-| Database | 租户数据库的名称、owner、扩展等期望描述与实际观察 | 包含 Bao 登录与连接关闭的操作接口 |
-| LoginRole | 同时作为 database owner 和应用登录身份的角色 | 额外的 NOLOGIN owner |
-| OwnershipClaim | 某个 Tenant 身份对一组资源名称与凭据位置的所有权声明 | 工作流阶段或仅凭名称推断的归属 |
-| CredentialLocation | 固定推导的凭据位置及所有权关联 | 密码本身或用户可任意选择的 KV path |
-| CredentialProjection | 把既定凭据交付到目标 Secret 的要求与观察结果 | controller 直接写入明文 Secret |
+Database 的 instanceRef 表达资源归属，手工登记时也必须提供，不从 Tenant 反推。
+Tenant 动态申请才选择 Instance；引用已有 Database 时使用资源声明的 Instance。
+释放使用绑定不改变 Database 的实例归属，修改引用不能实现外部数据库迁移。
 
-UID 表示一次 Kubernetes 对象身份；namespace/name 用于定位，不足以证明归属。
-database OID 是诊断观察值，不充当本系统的租户身份。
+Database 不再是 Tenant 内的无独立生命周期描述。原 OwnershipClaim 不再作为独立领域能力：
+排他绑定是资源自身的不变量，Kubernetes 保存记录，不另建 PostgreSQL 所有权存储。
 
-## 2. 候选聚合边界
+## 职责
 
-### Instance：实例能力与供应策略
+Instance 只接收观察并判断当前连接、metadata、管理权限和扩展支持，不访问 IO、不初始化
+registry。管理凭据来源和连接刷新由应用层协调，连接池由 pgxpool 实现。见
+[Instance 规格](domain-instance.md)。
 
-Instance 是候选聚合根，持有自身身份、endpoint、管理凭据引用、实际可用扩展观察，
-以及用于判断当前能力的观察结果。它不持有所有 Tenant 对象的集合。
+Database 保护目标和管理范围、排他绑定、导入验证与 Retain/Delete 规则。资源首次外部操作前
+必须已有持久记录；完成记录与外部存在性分别检查。数据库名称不是归属证明。
 
-其行为包括：
+Tenant 表达申请与交付要求；显式选择已有资源不自动授权使用。绑定后检查数据库满足要求、
+应用凭据可登录且 ESO 投射完成，才可 Ready。Tenant 删除意味着释放使用关系。
 
-- 判断租户申请的 extension 是否在本实例实际可安装列表中；v1alpha1 暂不实现 allowlist。
-- 根据管理连接、服务器信息、registry 和权限检查结果判断是否具备供应能力。
-- 判断配置变化使哪些能力观察过期，禁止以旧 generation 的 Ready 证明新配置可用。
-- 在 registry 初始化完成并回读验证后，接受新的就绪结果。
+LoginRole 与 CredentialLocation 的生命周期必须随独立资源保留，不能因为 Tenant 消失就
+失去定位或未经授权被删除；具体字段归属及导入时的管理范围需继续评审。不要因此新增 Role、
+Credential 或 Claim CRD。当前首版仍是单 database + 单 login owner。
 
-“探测实例”“准备管理 registry”是应用用例协调的外部操作，不是 Instance 的 IO 方法。
-领域对象只接收观察值，负责前提、规则和状态决策；应用层调用适配器获取事实与执行
-获准操作。领域对象不持有或调用外部访问端口、客户端或回调。具体选择见
-[Instance 字段与行为](domain-instance.md)，仍处于待评审状态。
+## 生命周期与恢复
 
-### Tenant：供应合同与资源生命周期
+- 动态创建与显式导入最终形成同一种 Database 资源，但导入本身不允许改密、改 owner 或删除。
+- Retain 后 Database 保持 Released 与旧绑定身份，人工确认数据、权限和凭据后才可重新绑定。
+- 回收策略属于资源侧；Tenant 与 Database 不是可随申请级联 GC 的父子关系。
+- 绑定 UID 防止同名新申请继承权限。双向记录的单边写入不代表绑定完成。
+- 普通失败按 reconcile 重试；可靠确认的步骤幂等继续；不确定创建/未知同名对象报告 Conflict。
+- Kubernetes status 是持久进度和观察，不是外部事实，也不是 controller 内存。
+  不引入“status 任意丢失后自动恢复所有权”的附加要求。
 
-Tenant 是另一个候选聚合根，通过身份引用 Instance，而不是 Instance 的聚合成员。
-操作一个 Tenant 不应要求装载、锁定或保存整个实例的租户集合。
+## 分层
 
-Tenant 持有有效的 database/role 名称、请求的扩展、凭据交付目标、删除策略，以及
-已建立的资源绑定。它负责：
+| 层 | 责任 |
+| --- | --- |
+| 领域 | 值、身份、允许动作、不变量、完成与冲突判定；不做 IO |
+| 应用 | 装载记录与事实、协调 API 更新和 adapter、回读、交回领域判定 |
+| controller | watch/调度、映射、conditions/status/finalizer；不重写领域规则 |
+| adapter | Kubernetes、PostgreSQL、OpenBao、ESO 的具体访问与安全错误分类 |
+| 装配 | 客户端与成熟连接池的生命周期，不是领域状态 |
 
-- 检查绑定后的不可变字段、extension 只追加规则。
-- 判断外部部分状态属于本 Tenant、尚不存在，还是与未知资源冲突。
-- 决定是否允许继续供应、何时达到 Ready、是否允许释放受管资源。
-- 按 Retain/Delete 合同限制行为，禁止把保留资源自动认领给同名新 UID。
+不引入通用 Repository CRUD、跨系统 Unit of Work、事务队列或第二套 phase 存储。
+resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kubernetes 原子提交。
 
-Database、LoginRole 和 CredentialProjection 暂不设独立聚合根或独立 CRUD 用例。
-它们可作为 Tenant 内的资源描述与观察值；有规则才增加行为，不为了“充血”添加方法。
-真实 PostgreSQL database/role 的存在不意味着内存中必须各有一个有身份的实体。
+## API 切片前需明确
 
-聚合边界是业务规则的保护边界，不表示 Tenant 对应的 PostgreSQL、Bao、ESO 资源
-能够一次事务提交。跨系统供应必须允许部分完成。
+- Database 的 scope、引用格式、谁可以预留/绑定/释放，以及绑定字段和更新顺序。
+- 资源侧回收策略与 Tenant/Database finalizer 配合。
+- 导入时角色/凭据的管理范围，稳定凭据定位、旧使用者撤权及新投射授权。
+- 绑定/导入同一实际目标的重复声明如何拒绝，且不引入 registry。
+- 管理员确认冲突、解除旧绑定的具体可审计操作入口。
 
-### OwnershipClaim：跨租户唯一性与持久证据
-
-名称唯一性不可能只靠某个 Tenant 的内存检查保证。需要一项领域能力，在持久化边界
-原子认领资源；已有 registry 是其适配器候选，仍需结合 catalog 和 Bao metadata 检查。
-
-Claim 与 Tenant 关联，但不随 Tenant CR 消失：Retain 后证据必须继续存在。因此不能
-把它仅视为 CR 的附属 status。是否作为独立的小聚合，先以“可独立持久化、保留并保护
-归属不变量的声明”建模；不因此引入新的 CRD。
-
-- 同一身份、同一绑定的重复认领可以成功；不同 UID 或不同绑定不能覆盖。
-- Claim 预留名称不等于证明同名外部资源由本 controller 创建。
-- 实际写入仍须核对所有权，不能把先查后建当成并发安全保证。
-- 当前 registry 的数据库事务不能覆盖 Bao；跨实例的凭据路径竞争也不能靠单个
-  registry 的唯一约束解决。写入前提与条件创建协议需单独设计和验收。
-
-## 3. 领域、用例与适配器的分工
-
-| 层 | 承担的职责 | 禁止承揽的职责 |
-| --- | --- | --- |
-| 领域对象／策略 | 身份、有效合同、归属判断、允许的动作、完成条件 | 外部 IO（包括通过接口间接调用）、解析 CLI、生成 Kubernetes Condition |
-| 应用用例 | 装载模型与事实、持久化意图、调用能力、回读、提交结果 | 另写一套绕过领域规则的判断流程 |
-| controller 入口 | CR 映射、调度、watch、重试、status/finalizer 写入 | 在 reconcile 中重新定义业务规则 |
-| 基础设施适配器 | PostgreSQL、registry、Bao、ESO 的实际读写与并发保障 | 自行决定接管、改密码或扩大删除范围 |
-| 启动装配 | 校验部署配置，创建共享客户端、连接管理器及用例依赖 | 把连接生命周期当成 Instance 的业务状态 |
-
-领域可使用独立的身份、endpoint、identifier、extension 集合等值对象，不依赖 CRD
-类型、pgx pool 或 Bao SDK。Kubernetes 对象的存取与 registry 的存取不是一个通用
-`Save(Tenant)` 可以原子完成的事情；不虚构跨系统 Unit of Work。
-
-暂不引入事件总线、事件溯源、通用聚合框架或全套 Repository CRUD。领域建模的依据
-是业务规则，而不是接口和目录数量。
-
-## 4. 状态与恢复
-
-CR `status.phase` 仍是已批准的工作流 checkpoint，不在内存对象或 registry 再建一套
-权威 phase。领域对象可以由 CR 的期望状态、checkpoint 和外部观察重新构造。
-
-phase 只决定候选步骤，外部证据决定该步骤是否允许执行、是否已经完成。应用层在
-写操作前保存意图，调用幂等操作后回读，再保存下一 checkpoint。status 写入失败时，
-下次从外部事实识别完成结果；不能重发密码，也不能相信伪造的 Ready。
-
-业务失败区分 InvalidSpec、ImmutableField、Conflict 等；依赖故障由适配器转换成
-安全的能力失败，应用层决定重试并映射 Condition。凭据不进入模型序列化、status、
-事件或错误明细；只能在实际需要它的执行边界短暂传递。
-
-## 5. 用例走查与验收方向
-
-| 场景 | 领域判定 | 应用与适配器执行／恢复 |
-| --- | --- | --- |
-| 登记 Instance | 当前配置的能力要求是否满足 | 读取管理凭据，验证连接与权限，准备并回读 registry；完成后才 Ready |
-| 供应 Tenant | Instance 策略、绑定与归属允许供应 | 保存意图，认领资源，先写并回读 Bao 凭据，再创建 role/database，登录验证和 ESO 投射 |
-| Bao 写入后进程中断 | 同一身份的部分状态可继续 | 回读原凭据继续，不生成第二份密码 |
-| 两个 Tenant 竞争名称 | 只有匹配所有权的一方可继续 | 持久化认领和条件写入裁决竞争，失败方 Conflict，不覆盖资源 |
-| Delete 中断 | 已消失资源可视为完成；剩余资源仍须归属正确 | 按规格顺序继续删除，全部回读不存在后才清 registry 和 finalizer |
-| Retain 后同名 CR 重建 | 新 UID 不等于原所有者 | Conflict，不恢复管理、不改密码 |
-
-领域测试验证规则与决策；adapter 测试验证锁、条件写入、SQL 与协议行为；controller
-测试验证 checkpoint 持久化和重启恢复；E2E 验证最终合同。不能只验证一串 mock 调用
-就声称实现了最终一致性。
-
-## 6. 决策记录与待细化边界
-
-1. **Instance 身份与物理目标（已确认）**：以管理员声明为准，endpoint 变更不验证
-   物理服务器／registry 连续性，不增加安装身份绑定检查；旧观察失效，重验新配置
-   的连接与管理能力。新 CR 视为新 Instance，不自动接管旧 UID 资源或迁移数据。
-2. **Retain 完成条件**：外部依赖不可用不能永久阻止 CR 删除，但 registry 又需标记
-   unmanaged。需定义 CR 消失后的补偿／清扫入口及所需身份依据，不能承诺同时原子
-   完成两者，也不能在没有回读时声称已写入保留标记。
-3. **管理凭据来源与 Ready（已确认）**：Instance 引用 controller namespace 内的
-   管理 Secret 名称和字段；管理员维护 ExternalSecret，ESO 同步。controller 不直接
-   从 Bao 读取管理凭据。已有凭据仍可访问 PG 时，Bao／ESO 故障不撤销 Instance Ready；
-   首次装配无有效 Secret 则失败。Secret 的有效用户名／密码变化时重建管理连接池并
-   重验，不因无关字段变化重建；controller 不修改 PG 密码，不回写 Secret 或 Bao。
-4. **绑定时机**：系统规格写“首次成功后不可变”，API 文档写“首次创建外部状态后
-   不可变”。应明确绑定在认领、首次外部写入还是 Ready 时固定，及如何在 status 丢失
-   后恢复；否则供应中途改名称可能产生无人管理的资源。
-
-5. **Instance 删除（已确认）**：开始受管即添加 finalizer；删除期间停止新供应，
-   有 Tenant 引用就等待，无引用才解除，不级联删除外部资源。首版采用 finalizer
-   与引用检查，不引入跨对象锁／准入控制；不保证并发创建与删除的原子性。
-
-Tenant 的 Retain 等待决行为留到 Tenant 设计，不属于本轮 Instance 设计范围。
-相关用例在决策批准前不进入实现，不同时实现整套模型。
+这些细节不阻止已确认的三资源设计，但必须先于对应 API 与生命周期实现获得评审。

@@ -1,13 +1,33 @@
-# 现有数据库迁移 Runbook
+# 现有数据库导入与迁移 Runbook
 
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | Review；尚未在临时 PostgreSQL 演练 |
-| 适用范围 | 任意既有数据库迁移为新建 v1alpha1 Tenant |
-| 最后更新 | 2026-09-10 |
+| 适用范围 | 管理员显式导入，或通过 dump/restore 迁移到新资源 |
+| 最后更新 | 2026-09-24 |
 
-v1alpha1 不接管现有 database、role 或 OpenBao record。本流程通过逻辑 dump/restore 把
-数据迁移到 controller 创建的新资源，保留旧资源作为限时回滚点。
+当前设计支持管理员显式登记已有 Database；未知同名资源仍不得自动认领。
+导入不要求移动数据，不隐含改密码、owner、授权或删除权限。API 尚未实现，以下导入步骤
+是验收要求而非可直接执行的命令。
+
+## 显式导入与保留资源复用
+
+1. 核对 Instance、数据库、owner、角色权限、扩展、使用者与备份，确定允许管理的范围。
+2. 由管理员声明 Database，指定已有目标，回收策略默认 Retain；导入验证初始只读。
+3. 安全关联现有应用凭据；具体 API 待定，不把密码写入 CR，不因验证失败重置密码。
+4. 管理员授权目标 Tenant；controller 验证资源与申请符合要求并建立排他绑定。
+5. 验证实际登录与 ESO 交付；不满足时停止，不以修改原数据库作为默认修复。
+
+Released 资源复用前另需核实旧使用者的访问权限、数据交接与投射处置。保留旧绑定身份直到
+人工处理完成，不仅靠清空 claimRef 或修改 UID 授予新使用权。
+
+导入失败时原数据库应保持不变；撤回登记不得触发 Delete。绑定后的回退按 Retain 释放，
+检查新投射与访问授权的影响，不能承诺撤回 CR 自动恢复此前所有外部访问状态。
+
+## 可选的 dump/restore 路径
+
+不适合直接导入、需要改变 owner/权限模型或移动数据时，可使用下述逻辑迁移流程。
+它不是纳管现有数据库的唯一路径；保留旧资源作为限时回滚点。
 
 以下命令是顺序模板，不可原样复制到真实环境。先把尖括号变量解析成明确值，确认当前
 连接目标，再逐条执行。dump 可能包含敏感业务数据，必须放在加密临时存储且不得提交 Git。
@@ -67,8 +87,8 @@ identifier 必须由管理员工具安全引用，不能把未经校验的值直
 
 应用 `PostgreSQLTenant`，使用未被占用的 database/loginRole，等待 Ready。确认：
 
-- registry 记录 UID 正确；
-- OpenBao metadata 属于该 Tenant；
+- Database/Instance 身份及 Tenant 排他绑定正确；
+- OpenBao 凭据位置与 Database 管理范围及当前交付授权一致；
 - ExternalSecret Ready 且目标 Secret 已投射；
 - 新凭据可以通过 DNS host 和 IP hostaddr 分别登录空 database。
 
@@ -96,7 +116,7 @@ extension 应由 Tenant spec 创建。若 dump 仍包含 extension 定义，预�
 ### 7. 收尾
 
 回滚窗口结束后，按独立变更删除旧 database/role/旧凭据；它们不属于 controller，禁止
-通过 Tenant `Delete` 清理。安全删除 dump 和临时凭据材料，并记录验证结果。
+通过新 Database 的 `Delete` 清理。安全删除 dump 和临时凭据材料，并记录验证结果。
 
 ## 回滚
 
@@ -105,9 +125,9 @@ extension 应由 Tenant spec 创建。若 dump 仍包含 extension 定义，预�
 1. 立即停止新目标写入。
 2. 评估切换后是否产生新数据；若有，先决定反向迁移或接受丢弃，不能盲目切回。
 3. 将应用连接切回 retained database/role；若必须恢复原名称，先确保新受管目标已用
-   `Delete` 完整清理或改用不同名称，再安全地反向执行 rename。
+   资源侧 `Delete` 完整清理或改用不同名称，再安全地反向执行 rename。
 4. 恢复旧凭据（MD5 环境可能需要重设），验证旧服务。
-5. 保留失败 Tenant 供排障；选择 Retain 或 Delete 前明确其外部资源后果。
+5. 保留失败 Tenant 供排障；修改 Database 的 Retain/Delete 策略前明确其外部资源后果。
 
 若已经删除旧资源，则只能使用已验证备份恢复，不再属于本 runbook 的快速回滚。
 
@@ -115,6 +135,7 @@ extension 应由 Tenant spec 创建。若 dump 仍包含 extension 定义，预�
 
 发布首个可用版本前，必须在临时 PostgreSQL/OpenBao/Kind 环境执行本文并记录：
 
+- 显式导入与 Released 重新绑定的授权、旧访问处置和失败不修改原资源；
 - 使用的 PostgreSQL major version 和命令版本；
 - dump/restore 返回码和对象差异；
 - DNS/IP TLS 登录结果；

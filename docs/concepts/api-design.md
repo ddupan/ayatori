@@ -26,6 +26,11 @@ cloud-init 设备、bridge/VLAN 映射和默认 placement 由平台维护。
 
 ## 生命周期基线
 
+新增资源、绑定、回收或恢复语义前，先引用 Kubernetes 官方对应资源设计与成熟 controller
+模式，说明采用部分及有意偏离的原因。不要仅沿用字段名称而忽略生命周期与权限边界。
+例如 Database 借鉴 PV/PVC 的资源与申请分离、排他绑定和 Retain，但不引入 CSI 协议、
+存储调度或额外 registry；见 [ADR-0009](../decisions/0009-database-resource-and-claim.md)。
+
 所有受管资源必须定义：
 
 - `observedGeneration`

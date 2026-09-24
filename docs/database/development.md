@@ -3,7 +3,25 @@
 > 本页迁入作为 Database 模块的测试分层与 fixture 合同。旧项目的 Make target、devcontainer
 > 和脚手架版本尚未适配 Ayatori；实现时应复用 Ayatori 现有工具链，并保持这里定义的测试边界。
 
-## Ayatori 已接入的凭据、metadata 与 registry 切片测试
+## 当前设计验收（2026-09-24）
+
+[ADR-0009](../decisions/0009-database-resource-and-claim.md) 将资源生命周期从 Tenant 中分离。
+新增验收矩阵见 [系统规格](specification.md#11-验收)。旧 registry 测试仅说明历史代码行为，
+不再是完成标准；代码重构时撤除，不继续 schema 审计或自动所有权恢复切片。
+
+| 层次 | 本次设计要求 |
+| --- | --- |
+| 纯领域 | Instance 无 registry 就绪判定、排他绑定、Released 不自动复用、管理范围与冲突规则 |
+| envtest | 三资源 schema/status、RBAC、resourceVersion 并发、绑定单边更新/重启、依赖 watch、finalizer |
+| 真实 PostgreSQL/OpenBao | 同名不修改、显式导入只读验证、创建不确定报冲突、可靠步骤幂等、Delete 故障重试 |
+| 测试集群 | Tenant/namespace 删除不 GC Database、ESO 交付/释放、人工重新绑定前的旧访问处置 |
+
+需故障注入外部成功而 API 写入失败、后端响应丢失、双 Tenant 竞争、同名新 UID、依赖稍后出现、
+Instance 删除与 Released 引用。冲突必须给出可操作而不泄密的诊断；不要求自动认领不确定结果。
+envtest 不运行 GC 或 ESO；这些行为必须由测试集群验证。
+新增资源 API 尚未实现，本轮没有完成或运行这些新增行为测试。
+
+## Ayatori 已接入的凭据、metadata 与历史 registry 切片测试
 
 本节命令已在 Ayatori 接入；以下历史 Compose/Kind 操作仍属于迁入的目标合同。
 
@@ -38,8 +56,9 @@ registry 测试独立使用一次性 PostgreSQL，不启动 Kubernetes API serve
 超前版本拒绝。通过在真实 COMMIT 成功后注入客户端错误，验证结果不确定时的重试；这不替代
 真实网络故障测试，也不覆盖跨后端的删除步骤。
 
-这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、registry 观测装配、
-权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。
+工作树中未提交的 registry 回读实验不再继续；本轮保留其文件，不把实验测试作为新设计验收。
+
+这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。
 
 本项目同时依赖 Kubernetes API、PostgreSQL、OpenBao 和 ESO。日常开发不连接 homelab
 中的真实服务：Kubernetes 使用 envtest 或一次性 Kind，另外两个依赖使用一次性
@@ -105,8 +124,8 @@ make lint
 `make test` 会下载与 `go.mod` 中 Kubernetes minor 版本匹配的 envtest 二进制，
 启动临时 API server/etcd，测试结束后自动关闭。
 
-规格实现后，快速测试必须覆盖默认值/校验、Condition `observedGeneration`、两个 CR 的
-status 状态机、不可变字段、extension 只追加、registry 所有权和外部错误分类。envtest 只断言 controller 创建了正确
+规格实现后，快速测试必须覆盖默认值/校验、Condition `observedGeneration`、三资源的
+状态与绑定、不可变字段、extension 只追加、冲突和外部错误分类。envtest 只断言 controller 创建了正确
 的 ExternalSecret；它不能证明 ESO 已生成 Secret。
 
 ### 2. 启动 PostgreSQL/OpenBao adapter 依赖
@@ -206,24 +225,22 @@ E2E fixture 必须把测试 PostgreSQL、OpenBao 和 ESO 部署进 Kind，并等
   -> 等待 Instance Ready
   -> 创建 Tenant
   -> 等待 Tenant Ready
-  -> 验证 registry、PostgreSQL catalog、OpenBao KV、ExternalSecret 和 Secret
+  -> 验证 Database 绑定、PostgreSQL catalog、OpenBao KV、ExternalSecret 和 Secret
   -> 分别使用 DNS host 与 IP hostaddr 登录
   -> 删除 Tenant 并分别验证 Retain 与 Delete（含故障点重试）
   -> 删除 Kind
 ```
 
-当前 controller 已实现第一条 Instance Ready 纵向链路：E2E fixture 在 Kind 内启动
-PostgreSQL/OpenBao，配置 Kubernetes auth，验证管理凭据读取、PostgreSQL 登录、registry
-migration 和 Instance Ready。Tenant provisioning、ESO、TLS DNS/IP SAN 与删除路径仍需
-后续纵向切片覆盖，不能从 Instance Ready 推断这些合同已经通过。
+以上 Compose/Kind 流程来自旧项目的环境设计，不是 Ayatori 已实现的运行状态。
+Ayatori 尚未完成 Instance/Database/Tenant controller 链路；当前可执行的切片命令以本页
+前部为准，不能从旧脚手架或 adapter 测试推断完整生命周期已经通过。
 
 ## 测试数据与泄漏检查
 
 - 只使用显眼的固定 canary 测试密码，测试后扫描日志、Event、Condition、metrics 和
   CR dump，出现 canary 即失败。
-- 每个最终一致性阶段都注入一次中断，重启后验证密码不变且阶段只向前推进。
-- 清空、落后或伪造超前的 `status.phase` 后验证它能从外部事实保守恢复/纠正，且不会
-  跳过任何回读。
+- 每个写入阶段注入中断：已确认步骤继续且密码不变；结果不确定则停止并明确报告 Conflict。
+- 缺少绑定/进度记录时不得凭同名外部对象恢复所有权；过期 phase 不得绕过实际观察。
 - 为未知同名 database、role、Bao record 和伪造 COMMENT 分别构造 Conflict。
 - Delete 在每个外部删除步骤失败后重试，确认未误删非当前 UID 资源。
 - 迁移测试按 [`migration.md`](migration.md) 完整执行，不以单纯 `pg_restore` 成功代替

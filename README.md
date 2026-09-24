@@ -34,6 +34,7 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [ADR-0006：按实际管理缺口扩展资源 API](docs/decisions/0006-demand-driven-resource-scope.md)
 - [ADR-0007：复用 Node API 建立按需实现的 Compute 能力](docs/decisions/0007-compute-node-and-vm-boundary.md)
 - [ADR-0008：将 PostgreSQL Tenant Operator 合并为 Ayatori Database 模块](docs/decisions/0008-merge-postgresql-tenant-operator.md)
+- [ADR-0009：分离 Database 资源与 Tenant 申请](docs/decisions/0009-database-resource-and-claim.md)
 
 ## 当前状态
 
