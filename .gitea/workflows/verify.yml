@@ -1,9 +1,9 @@
 name: Verify
 
 on:
+  # 合并前完成全量验证，合并到 main 后不重复运行同一套检查。
   pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
