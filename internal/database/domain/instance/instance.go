@@ -22,11 +22,10 @@ import "errors"
 type Phase string
 
 const (
-	PhasePending              Phase = "Pending"
-	PhaseValidating           Phase = "Validating"
-	PhaseInitializingRegistry Phase = "InitializingRegistry"
-	PhaseReady                Phase = "Ready"
-	PhaseDeleting             Phase = "Deleting"
+	PhasePending    Phase = "Pending"
+	PhaseValidating Phase = "Validating"
+	PhaseReady      Phase = "Ready"
+	PhaseDeleting   Phase = "Deleting"
 )
 
 type Readiness string
@@ -61,7 +60,7 @@ func Reconstitute(target ObservationTarget, snapshot Snapshot, deleting bool) (*
 		return nil, err
 	}
 	switch snapshot.Phase {
-	case PhasePending, PhaseValidating, PhaseInitializingRegistry, PhaseReady, PhaseDeleting:
+	case PhasePending, PhaseValidating, PhaseReady, PhaseDeleting:
 	default:
 		snapshot.Phase = PhasePending
 		snapshot.Readiness = Unknown

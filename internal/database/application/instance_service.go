@@ -161,7 +161,7 @@ func credentialError(err error) error {
 	return ErrCredentialsUnavailable
 }
 
-// Forget 只释放本地连接；不删除数据库或 registry，不替代 Instance finalizer。
+// Forget 只释放本地连接；不删除数据库，不替代 Instance finalizer。
 func (s *InstanceService) Forget(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

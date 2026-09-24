@@ -37,6 +37,7 @@ func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 	// 提供同名遮蔽对象，验证 adapter 不依赖管理账号可修改的 search_path。
 	f.queryPostgres(t, "CREATE VIEW public.pg_available_extensions AS SELECT 'fake_extension'::name AS name")
 	f.queryPostgres(t, "ALTER ROLE postgres SET search_path = public, pg_catalog")
+	schemasBefore := f.queryPostgres(t, "SELECT string_agg(nspname, ',' ORDER BY nspname) FROM pg_catalog.pg_namespace")
 	observed, err := f.service.ObserveMetadata(f.ctx, f.target)
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +57,8 @@ func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 	if installed := f.queryPostgres(t, "SELECT count(*) FROM pg_catalog.pg_extension WHERE extname = 'hstore'"); installed != "0" {
 		t.Fatal("metadata observation installed an extension")
 	}
-	if schemas := f.queryPostgres(t, "SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname = 'postgresql_tenant_operator'"); schemas != "0" {
-		t.Fatal("metadata observation initialized the registry")
+	if schemas := f.queryPostgres(t, "SELECT string_agg(nspname, ',' ORDER BY nspname) FROM pg_catalog.pg_namespace"); schemas != schemasBefore {
+		t.Fatal("metadata observation changed database schemas")
 	}
 
 	aggregate, err := instance.Reconstitute(f.target, instance.Snapshot{}, false)

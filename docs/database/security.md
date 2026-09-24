@@ -3,13 +3,13 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | Review |
-| 最后更新 | 2026-09-10 |
+| 最后更新 | 2026-09-24 |
 
 ## 保护目标
 
 - 应用密码只存在于 OpenBao、ESO 投射的目标 Secret 和需要使用它的进程内存中。
-- controller 只能修改其 registry 能证明归属当前 Tenant UID 的资源。
-- namespace 租户不能越权管理 Instance、其他 namespace 或 controller 配置。
+- controller 只能在 Database 已确认的管理范围和当前绑定/操作授权内修改资源；未知同名对象报冲突。
+- namespace 租户不能越权管理 Instance、Database 导入/回收、其他 namespace 或 controller 配置。
 - PostgreSQL 和 OpenBao 的网络身份使用受信 CA 验证，不因 DNS 不可用而降级 TLS。
 
 ## 信任边界
@@ -18,15 +18,15 @@ Kubernetes 管理员、OpenBao 管理员和 PostgreSQL 管理员是平台信任�
 目标 Secret 或对应 OpenBao path 的主体等同于持有数据库账号。database owner 可以
 改变自己 database 内的对象，因此 COMMENT 不能作为 controller 所有权依据。
 
-VM/磁盘备份会包含 PostgreSQL registry 和租户数据，但不应包含 OpenBao 中的密码；完整
-灾难恢复必须同时保护 PostgreSQL 与 OpenBao，并控制两份备份的访问权限。
+数据库备份包含业务数据；Kubernetes 保存资源与绑定记录；OpenBao 保存应用凭据。
+完整灾难恢复必须分别保护三者并核对恢复点，不依靠数据库内 registry 重建绑定。
 
 ## 凭据处理
 
 - controller 使用 Kubernetes auth 获取短期 OpenBao token，不配置长期静态 token。
 - 管理凭据只从 Instance 引用的 controller namespace Secret 读取，不复制到
   CR/status/Event/metric/trace；管理员维护 ExternalSecret，由 ESO 同步该 Secret。
-- 租户密码使用密码学安全随机源生成一次；中断恢复必须复用 OpenBao 现值。
+- 动态供应密码使用密码学安全随机源；已有可靠关联时复用 OpenBao 现值，结果不确定时停止并报冲突。
 - controller 创建 ExternalSecret，不直接创建含 data/stringData 的 Secret。
 - 日志字段允许 namespace/name、UID、generation、阶段和错误类别；禁止记录请求/响应体、
   DSN、Authorization header、密码或完整 OpenBao URL path 作为 metric label。
@@ -51,13 +51,15 @@ PostgreSQL 管理 role 不应是 superuser。若平台选择 SECURITY DEFINER �
 删除操作，函数必须固定 `search_path`、严格校验 identifier、拒绝任意 SQL，并仅向
 controller role 授予 EXECUTE。controller 不调用 shell 或 `psql` 拼接用户输入。
 
-Kubernetes RBAC 应把 cluster-scoped Instance 管理限制给平台管理员。Tenant editor
+Kubernetes RBAC 应把 Instance 管理、Database 导入、预留、重新绑定授权和回收限制给平台管理员。
+知道 Database 名称不等于有权使用；Tenant editor
 不自动获得 Secret read；是否读取目标 Secret 由 namespace 内独立 RBAC 决定。
 
 ## 删除保护
 
-Delete 是明确的数据销毁授权，但仍必须在每一步校验 Instance UID、Tenant UID、名称和
-OpenBao metadata。禁止对未知对象使用 `CASCADE`。删除 finalizer 卡住时只能按
+资源侧 Delete 是明确的数据销毁授权，但仍必须在每一步校验 Instance/Database UID、
+绑定、实际目标及角色/凭据管理范围；CR 中记录了意图不等于外部对象由本系统创建。
+禁止对未知对象使用 `CASCADE`。删除 finalizer 卡住时只能按
 [`operations.md`](operations.md) 核实外部状态后人工移除；该操作可能遗留资源。
 
 ## 发布前安全验收
@@ -68,4 +70,6 @@ OpenBao metadata。禁止对未知对象使用 `CASCADE`。删除 finalizer 卡�
 - 应用 login 不能创建 role/database，也不能连接其他租户 database。
 - 日志、Event、Condition、metrics、CR 导出和测试 artifact 不含 canary password/token。
 - 伪造 COMMENT、同名 database/role 或错误 UID metadata 均不能绕过 Conflict。
-- Delete 只销毁 registry 可证明归属当前 Tenant 的资源。
+- Delete 只销毁 Database 已确认管理范围内且获得删除授权的资源。
+- 导入检查不改密码/owner，Released 不自动授权新使用者；旧访问处理后才能重新交付。
+- 导入默认 Retain；角色/凭据的管理与删除范围未明确时不得扩大操作范围。
