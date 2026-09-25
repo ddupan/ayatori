@@ -3,6 +3,15 @@
 状态：设计合同，操作入口待 API 实现与隔离环境演练。日期：2026-09-24。
 依据 [系统规格](specification.md)，不再查询或维护 PostgreSQL registry。
 
+## 当前绑定切片的限制
+
+源码已接入绑定 controller，未接入 PostgreSQL 供应、OpenBao/ESO 交付或删除清理。
+Bound/BindingComplete 只表示 Kubernetes 双向记录一致，Ready 仍为 False。
+Tenant 删除会保留 `database.ayatori.ddupan.top/tenant-protection` 并报告 DeletionPending；
+Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理后移除路径。
+这是未完成能力的明确边界，不是已经实现的 Retain/Delete 恢复逻辑。不要将此切片部署为
+业务 DBaaS，也不要为了消除等待状态直接移除 finalizer；后续必须补齐清理与验收。
+
 ## 日常检查
 
 先看 Instance、Database、Tenant 的 Ready Condition、绑定 UID、阶段与 observedGeneration，

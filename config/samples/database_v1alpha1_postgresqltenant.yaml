@@ -1,0 +1,25 @@
+# 二选一：动态申请或显式引用已有 Database；当前只有绑定协调，没有供应/交付 controller。
+apiVersion: database.ayatori.ddupan.top/v1alpha1
+kind: PostgreSQLTenant
+metadata:
+  name: new-app
+  namespace: default
+spec:
+  provision:
+    instanceRef:
+      name: shared-postgres
+    database: new_app
+    loginRole: new_app
+  extensions:
+    - pgcrypto
+  secretName: new-app-postgresql
+---
+apiVersion: database.ayatori.ddupan.top/v1alpha1
+kind: PostgreSQLTenant
+metadata:
+  name: existing-app
+  namespace: default
+spec:
+  databaseRef:
+    name: imported-app
+  secretName: existing-app-postgresql

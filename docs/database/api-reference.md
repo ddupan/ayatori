@@ -2,17 +2,70 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 三资源模型已批准；新增字段与绑定协议待评审 |
+| 状态 | API schema 与绑定 controller 已实现；供应、交付与删除清理未接入 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
-| 最后更新 | 2026-09-24 |
+| 最后更新 | 2026-09-25 |
 
 以 [系统规格](specification.md) 与
-[ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。尚未实现新 API，
-本页不提供可直接 apply 的三资源 YAML，以免把工作名称和未决字段当作已发布合同。
+[ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。类型与生成的 CRD 已纳入源码，
+尚未发布为可用 DBaaS。示例可进入绑定协调，但不代表创建对象后会供应数据库或交付凭据。
+
+## 当前 API 切片
+
+Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 已注册 Scheme 和
+`internal/database/controller` 的绑定 controller。以下字段是本切片的具体实现：
+
+| 资源 | 字段 | 含义 |
+| --- | --- | --- |
+| Database | `spec.instanceRef.name` | 所属集群级 Instance |
+| Database | `spec.database`、`spec.loginRole` | 实际数据库与唯一登录 owner，必填 |
+| Database | `spec.source` | 必填 `Provision` 或 `Import`，不隐式认领 |
+| Database | `spec.credentialRef.mount/path` | Import 必填的已有 KV v2 凭据位置；Provision 禁止指定 |
+| Database | `spec.reclaimPolicy` | Retain 默认或 Delete |
+| Database | `spec.tenantRef.namespace/name/uid` | controller 写入的完整绑定身份，不是允许名单 |
+| Database | `status.instanceUID` | 观察时的 Instance 身份 |
+| Tenant | `spec.provision.instanceRef.name` | 动态申请来源，与 `spec.databaseRef` 互斥且必须二选一 |
+| Tenant | `spec.provision.database/loginRole` | 可省略，语义默认值由 controller 解析，不由 CRD 推导 |
+| Tenant | `spec.databaseRef.name` | 显式申请已有 Database，不额外指定 Instance |
+| Tenant | `spec.extensions`、`spec.secretName` | 扩展集合与同 namespace 的交付目标 |
+| Tenant | `status.databaseRef.name/uid` | 资源侧绑定成功后写入 |
+| Tenant | `status.secretName`、`status.credentialURL` | 交付观察，不包含密码或认证信息 |
+
+三资源均有 status subresource、observedGeneration 和按 type 唯一的 Conditions。
+Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应子阶段枚举。
+`credentialRef.path` 是 mount 内逻辑路径，不包含 KV v2 的 `data/` 前缀。
+其部署允许范围、实际凭据读取和 URL 安全构造仍由后续 adapter/controller 验证。
+
+示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、
+[导入 Database](../../config/samples/database_v1alpha1_postgresqldatabase.yaml)、
+[动态/已有资源申请](../../config/samples/database_v1alpha1_postgresqltenant.yaml)。
+
+当前 schema 验证名称、端口、IP、TLS 枚举、申请互斥、导入凭据要求和绑定 UID 完整性。
+API 接受两个 Tenant 引用同一 Database 不表示允许双重绑定；排他绑定由 controller 协调。
+绑定 controller 解析动态 database/loginRole 的 Tenant 名称默认值；动态资源 CR 名称为
+`tenant-<Tenant UID>`，首次创建即包含资源侧绑定与 finalizer，不带 Tenant ownerReference。
+已有资源必须有当前版本 Ready 观察、匹配的 Instance UID，并处于未绑定的 Available 状态。
+同一 Tenant 的资源侧记录已写入时，允许回读后补齐申请侧，不重新争抢资源。
+
+Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database 有实例身份观察或
+绑定后固定实际 database、loginRole、来源和凭据引用，回收策略仍可修改。
+读取绑定判断使用 APIReader，写入依靠 resourceVersion；watch/cache 负责触发协调。
+绑定顺序由 application service 协调，纯资格规则在领域层；Kubernetes adapter 负责快照
+映射、finalizer 和状态呈现。呈现前若资源版本已变化，返回冲突供下一轮重读，不覆盖其他修改。
+双向记录完成后 Tenant 为 Bound，Ready=False/BindingComplete，明确尚未供应或交付。
+生成的 manager RBAC 仅授予绑定所需资源读写，不包含 Secret 读取或后端凭据权限。
+
+当前有 Tenant/Database finalizer 保护，但**删除清理尚未实现**：Tenant 删除报告
+Ready=False/DeletionPending 并保留绑定与 finalizer，Database 的保护也不会被自动移除。
+还未实现删除流程开始后的回收策略固定、Retain 释放、Released 重新开放、外部清理、
+扩展只追加、Secret 默认名称解析与凭据交付。在后续清理协议和真实后端验收完成前，
+不能作为可用 DBaaS 部署，也不能通过强行移除 finalizer 把它视为已完成清理。
 
 ## 通用约定
 
-- Instance 是 cluster-scoped；Tenant 是 namespaced；Database scope 待字段评审。
+- Instance 与 Database 是 cluster-scoped；Tenant 是 namespaced。
+- Tenant 按名称引用 Database，不提供 Database namespace；Database 绑定记录包含
+  Tenant namespace/name/UID。字段见当前 API 切片；绑定采用下述资源侧先写顺序。
 - 每类资源提供唯一的 Ready Condition、observedGeneration；phase 用于进度展示，
   不能单独作为写权限或所有权证明。
 - 引用必须区分定位名称与已绑定 UID；同名新对象不继承绑定。
@@ -57,21 +110,30 @@ Tenant 引用。无引用才解除，不级联删除资源；查询失败不能�
 
 ## Database 资源（工作 Kind：PostgreSQLDatabase）
 
-以下是字段职责，不是已批准的 JSON schema：
+v1alpha1 以一个 database、一个兼任 owner 的 login role 及其应用凭据作为 Database 的
+生命周期边界；不提供多账号字段或独立 Role/Credential CRD。多账号需求留待后续 API 版本。
+此决定不改变导入只读验证和显式管理授权的要求。
+
+Database 是平台管理的集群级资源，不归属于应用 namespace，也不需要资源专用 namespace。
+普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放；
+这些资源管理操作由平台管理员授权。controller 的绑定协调权限与用户申请权限分别配置。
+
+以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；后端行为尚未实现：
 
 | 内容 | 合同 |
 | --- | --- |
 | `instanceRef` | Database 自身必填；定位来源并记录绑定的 Instance UID，不依赖 Tenant 补齐 |
 | 外部目标 | 实际 database 名称及已确认的管理范围；操作开始后不可隐式改目标 |
 | 来源 | 区分动态供应与管理员显式导入；不能从同名存在推断导入授权 |
-| 申请预留/绑定 | 至多一个 Tenant，含 namespace/name/UID；Released 保留旧身份 |
+| 绑定 | 至多一个 Tenant，含 namespace/name/UID；Released 保留旧身份；无允许绑定名单 |
 | 回收策略 | 资源侧 Retain（默认）或显式 Delete；普通 Tenant editor 不得扩大授权 |
 | 观察与进度 | 实际目标、当前阶段、条件和安全诊断，不保存秘密 |
 
 概念生命周期包含供应/验证、可绑定、已绑定、Released 和删除；最终 phase 枚举待协议评审。
 Released 不自动变成可绑定。Database 不以 Tenant 为 GC owner；使用中的资源受删除保护。
 
-导入的初始检查只读；存在不等于 Ready，也不等于有权交付给任意 Tenant。
+导入的初始检查只读；存在不等于 Ready。未绑定且可用的资源允许 Tenant 显式申请，
+不要求管理员逐 Tenant 授权；已占用或 Released 的资源不能直接绑定。
 默认保留不隐含密码、owner、授权或删除的变更许可。
 
 ## PostgreSQLTenant
@@ -90,16 +152,34 @@ Released 不自动变成可绑定。Database 不以 Tenant 为 GC owner；使用
 仅按 Tenant namespace/name 派生凭据路径的规则不再是实现合同。已有代码没有兼容负担，
 不保留两套相互覆盖的策略字段。
 
-## 绑定协议评审要求
+## 已确认的绑定顺序
+
+1. 动态申请按 Tenant UID 确定 Database 名称并创建记录；已有资源申请使用指定的 Database，
+   检查资源未绑定且可用，不增加反向授权名单。动态创建重试遇到同名记录时需核对身份与目标。
+2. 使用 resourceVersion 并发控制，先在 Database 记录 Tenant namespace/name/UID。
+   已绑定其他 Tenant 时报告 Conflict，不抢占；版本冲突后重新读取、重新判断。
+3. 在 Tenant status 记录 Database name/UID。若上一步成功、本步失败，后续 reconcile
+   核对身份后补齐，不回滚已经成功的资源侧绑定。
+4. 双向记录一致才允许动态供应或凭据交付；实际数据库与凭据验证通过后才可 Ready。
+
+此顺序借鉴 PV/PVC 的资源侧先写模式，行为依据见
+[系统规格](specification.md#5-动态供应与排他绑定)。Retain 释放时保留旧绑定身份并进入
+Released，不自动清空后重新分配。API 记录部分写入由 reconcile 重试；外部创建结果
+无法确认时仍报告 Conflict，交给人工，不新增事务队列或 registry。
+
+## 绑定协议剩余评审要求
 
 实现前必须明确：
 
-1. 资源 scope 与 typed reference 格式，管理员预留/导入与普通申请者的 RBAC 边界。
-2. 资源侧排他记录的写入点、双向绑定顺序、API 冲突重试与单边完成恢复。
+1. 引用字段的最终格式，以及落实管理员资源管理、controller 协调与普通申请权限的 RBAC 规则。
+2. 绑定记录的最终字段及校验规则，落实上述写入顺序与恢复行为。
 3. Tenant UID 变化、对象删除、Released 旧引用与管理员重新授权的判断。
 4. 同一物理数据库重复登记的冲突处理；列表查询不是原子认领。
-5. Database 的 role/凭据管理范围、稳定凭据定位、旧访问处置与投射清理顺序。
-6. 删除开始后的策略固定点和 Tenant/Database finalizer 配合。
+5. 已有凭据关联字段、旧访问处置与投射清理顺序；动态凭据路径已确定按 Database UID 定位。
+6. Tenant/Database finalizer 配合；回收策略默认 Retain，删除流程前可改，进入后固定。
+
+资源管理者设置 Delete 即表示删除授权，不增加额外审批字段。导入显式关联已有凭据；
+Released 不自动改密，管理员处理旧访问后才重新开放。Tenant 不得自选任意 OpenBao 路径。
 
 该协议使用 Kubernetes API 持久化，不为它新增 PostgreSQL registry。
 未完成一致绑定不得供应或交付；外部创建结果不确定按 Conflict 人工处理。

@@ -1,5 +1,8 @@
 ## Append samples of your project ##
 resources:
+- database_v1alpha1_postgresqlinstance.yaml
+- database_v1alpha1_postgresqldatabase.yaml
+- database_v1alpha1_postgresqltenant.yaml
 - execution_v1alpha1_job.yaml
 - execution_v1alpha1_jobclass.yaml
 - execution_v1alpha1_kubernetesexecutionparameters.yaml

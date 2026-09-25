@@ -1,11 +1,51 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  labels:
-    app.kubernetes.io/name: ayatori
-    app.kubernetes.io/managed-by: kustomize
   name: manager-role
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - database.ayatori.ddupan.top
+  resources:
+  - postgresqldatabases
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - database.ayatori.ddupan.top
+  resources:
+  - postgresqldatabases/finalizers
+  - postgresqltenants/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - database.ayatori.ddupan.top
+  resources:
+  - postgresqldatabases/status
+  - postgresqltenants/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - database.ayatori.ddupan.top
+  resources:
+  - postgresqlinstances
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - database.ayatori.ddupan.top
+  resources:
+  - postgresqltenants
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch

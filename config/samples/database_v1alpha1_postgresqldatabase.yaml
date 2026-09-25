@@ -1,0 +1,15 @@
+# 管理员登记已有数据库；不会因创建 CR 就修改数据库或凭据。
+apiVersion: database.ayatori.ddupan.top/v1alpha1
+kind: PostgreSQLDatabase
+metadata:
+  name: imported-app
+spec:
+  instanceRef:
+    name: shared-postgres
+  database: existing_app
+  loginRole: existing_app
+  source: Import
+  credentialRef:
+    mount: secret
+    path: existing/app/postgresql
+  reclaimPolicy: Retain

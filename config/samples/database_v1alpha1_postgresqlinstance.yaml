@@ -1,0 +1,11 @@
+# Instance 观察 controller 尚未接入；管理 Secret 由管理员在 controller namespace 提供。
+apiVersion: database.ayatori.ddupan.top/v1alpha1
+kind: PostgreSQLInstance
+metadata:
+  name: shared-postgres
+spec:
+  endpoint:
+    host: postgres.example.test
+    hostaddr: 192.0.2.10
+  adminCredentialRef:
+    name: shared-postgres-admin

@@ -1,0 +1,223 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: postgresqltenants.database.ayatori.ddupan.top
+spec:
+  group: database.ayatori.ddupan.top
+  names:
+    kind: PostgreSQLTenant
+    listKind: PostgreSQLTenantList
+    plural: postgresqltenants
+    singular: postgresqltenant
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.databaseRef.name
+      name: Database
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgreSQLTenantSpec 显式选择动态申请或已有 Database，不重复声明来源。
+            properties:
+              databaseRef:
+                description: DatabaseReference 是 Tenant 对已有集群级 PostgreSQLDatabase
+                  的选择。
+                properties:
+                  name:
+                    description: ObjectName 定位集群级资源，不携带 namespace 或隐式跨 API group 引用。
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+              extensions:
+                description: Extensions 保留后端扩展名称的原样拼写，不按 SQL identifier 限制。
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              provision:
+                description: DatabaseProvisionRequest 仅用于动态申请，省略名称时由 controller 按
+                  Tenant 名称解析。
+                properties:
+                  database:
+                    description: PostgreSQLIdentifier 是第一版受管 database 与 login role
+                      使用的名称。
+                    maxLength: 63
+                    pattern: ^[a-z][a-z0-9_]{0,62}$
+                    type: string
+                  instanceRef:
+                    description: InstanceReference 仅引用同 API group 的集群级 PostgreSQLInstance。
+                    properties:
+                      name:
+                        description: ObjectName 定位集群级资源，不携带 namespace 或隐式跨 API group
+                          引用。
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  loginRole:
+                    description: PostgreSQLIdentifier 是第一版受管 database 与 login role
+                      使用的名称。
+                    maxLength: 63
+                    pattern: ^[a-z][a-z0-9_]{0,62}$
+                    type: string
+                required:
+                - instanceRef
+                type: object
+              secretName:
+                description: SecretName 指定 Tenant namespace 内的投射目标，省略时使用合同约定的默认名称。
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                type: string
+            type: object
+            x-kubernetes-validations:
+            - message: exactly one of provision and databaseRef is required
+              rule: has(self.provision) != has(self.databaseRef)
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              credentialURL:
+                description: CredentialURL 只含 OpenBao API 位置，禁止嵌入认证信息。
+                type: string
+              databaseRef:
+                description: DatabaseRef 只有在资源侧确认绑定后才写入。
+                properties:
+                  name:
+                    description: ObjectName 定位集群级资源，不携带 namespace 或隐式跨 API group 引用。
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              secretName:
+                description: SecretName 是已观察到的同 namespace 投射目标，不包含凭据值。
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: binding target cannot change after binding starts
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.phase) || !(oldSelf.status.phase
+            in [''Binding'', ''Bound'', ''Deleting'']) || ((has(self.spec.provision)
+            == has(oldSelf.spec.provision)) && (!has(oldSelf.spec.provision) || self.spec.provision
+            == oldSelf.spec.provision) && (has(self.spec.databaseRef) == has(oldSelf.spec.databaseRef))
+            && (!has(oldSelf.spec.databaseRef) || self.spec.databaseRef == oldSelf.spec.databaseRef))'
+        - message: binding progress cannot return to an unbound state
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.phase) || !(oldSelf.status.phase
+            in [''Binding'', ''Bound'', ''Deleting'']) || (has(self.status) && has(self.status.phase)
+            && self.status.phase in [''Binding'', ''Bound'', ''Deleting''])'
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -19,7 +20,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	executionv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1"
+	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -32,6 +35,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(executionv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(databasev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -166,6 +170,10 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+	if err := (&databasecontroller.BindingReconciler{}).SetupWithManager(context.Background(), mgr); err != nil {
+		setupLog.Error(err, "Failed to set up Database binding controller")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")
