@@ -151,6 +151,27 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 轮换、删除、跨 namespace 拒绝和 watch。API 测试另覆盖写入版本冲突、幂等、新 reconciler
 恢复与引用删除保护。完整 DBaaS 仍需供应/导入、OpenBao/ESO、Retain/Delete 集成验收。
 
+## 应用凭据存储切片
+
+`adapter/openbao` 使用官方 Go SDK `api/v2 v2.7.0` 的 KV v2 API，只有创建和读取，
+不维护 registry、不覆盖已有密码。动态路径由固定前缀与 Database UID 组成；所有访问都校验
+配置前缀，已有导入位置也不能绕过 controller 的凭据权限范围。
+
+创建使用 CAS=0，随后回读七键和版本 1；已有值或软删除历史报冲突。关闭 SDK 自动重试，
+写入响应丢失、回读失败或内容变化均返回不确定结果，上层不得生成第二份密码或自动认领。
+`Read` 只适用于调用方已确认关联的路径，读取成功本身不是管理权证据。错误不传播 SDK
+响应体；内存凭据的普通格式化及 JSON 输出均脱敏，明确的 `SecretData` 才返回明文七键。
+
+依据官方 [KV v2 CAS 合同](https://github.com/openbao/openbao/blob/main/internal/builtin/logical/kv/path_data.go)
+与 [Go SDK](https://github.com/openbao/openbao/tree/main/api)。`make test-database-integration`
+现包含独立 OpenBao dev 容器，固定摘要、随机回环端口、无持久卷，不接受外部地址。
+真实后端覆盖创建/回读、并发唯一创建、重建适配器读取、软删除冲突、固定前缀 token
+拒绝管理路径，以及成功写入后丢失响应；HTTP 故障测试补充不重试和错误脱敏。
+
+这一切片尚未接入 manager：Kubernetes auth/token 生命周期、Database 状态中的稳定位置和
+已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
+测试 token 只用于临时 fixture，不是生产静态 token 配置接口。现有绑定不会触发外部写入。
+
 ## 设计入口
 
 - [系统规格](specification.md)：规范性行为与验收标准；
