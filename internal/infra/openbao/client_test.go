@@ -14,35 +14,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package openbao_test
 
 import (
-	"flag"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
 )
 
 func TestOpenBaoClientDoesNotUseEnvironmentIdentityOrAddress(t *testing.T) {
 	t.Setenv("BAO_TOKEN", "TEST-ONLY-unwanted-static-token")
 	t.Setenv("BAO_ADDR", "http://unwanted.invalid")
 	t.Setenv("BAO_SKIP_VERIFY", "true")
-	var options openBaoOptions
-	options.bindFlags(flag.NewFlagSet("test", flag.ContinueOnError))
-	options.address = "https://bao.example/"
-	client, err := options.client()
+	client, err := openbao.NewClient("https://bao.example/", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if client.Address() != "https://bao.example" || client.Token() != "" {
 		t.Fatal("ambient environment replaced the explicit connection or identity")
 	}
+	if client.MaxRetries() != 0 {
+		t.Fatal("shared client must not automatically retry uncertain writes")
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	options.address = server.URL
-	untrusted, err := options.client()
+	untrusted, err := openbao.NewClient(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +57,11 @@ func TestOpenBaoClientRejectsUnsafeConfiguration(t *testing.T) {
 		"", "http://bao.example", "https://user:secret@bao.example",
 		"https://bao.example/?token=secret", "https://bao.example/#secret", "https://bao.example/path",
 	} {
-		if _, err := (openBaoOptions{address: address}).client(); err == nil {
+		if _, err := openbao.NewClient(address, ""); err == nil {
 			t.Fatal("accepted unsafe OpenBao address")
 		}
 	}
-	if _, err := (openBaoOptions{address: "https://bao.example", caCert: "/nonexistent/fixture-ca"}).client(); err == nil {
+	if _, err := openbao.NewClient("https://bao.example", "/nonexistent/fixture-ca"); err == nil {
 		t.Fatal("accepted missing explicit CA")
 	}
 }

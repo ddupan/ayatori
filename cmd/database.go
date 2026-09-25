@@ -9,7 +9,7 @@ import (
 )
 
 func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) (*application.InstanceService, error) {
-	credentials, err := kubernetes.NewSecretCredentials(manager.GetConfig(), namespace)
+	credentials, err := kubernetes.NewSecretCredentials(manager.GetAPIReader(), namespace)
 	if err != nil {
 		return nil, err
 	}

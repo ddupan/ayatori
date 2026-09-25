@@ -49,12 +49,11 @@ type Credentials struct {
 }
 
 // NewCredentials 不登录、不读取环境 token。调用方必须提供专用的已认证 client。
-// 禁用 SDK 写入重试，防止第一次结果丢失后被 CAS 错误掩盖。
+// client 由公共 infra 禁用自动重试，防止第一次结果丢失后被 CAS 错误掩盖。
 func NewCredentials(client *bao.Client, mount, basePath string) (*Credentials, error) {
 	if client == nil || !validPath(mount) || !validPath(basePath) {
 		return nil, ErrInvalidLocation
 	}
-	client.SetMaxRetries(0)
 	return &Credentials{kv: client.KVv2(mount), basePath: basePath}, nil
 }
 

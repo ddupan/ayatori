@@ -19,6 +19,7 @@ package openbao
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,17 @@ import (
 
 var ErrAuthenticationConfiguration = errors.New("invalid OpenBao Kubernetes authentication configuration")
 
+var authPathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validAuthMount(mount string) bool {
+	for segment := range strings.SplitSeq(mount, "/") {
+		if !authPathSegment.MatchString(segment) {
+			return false
+		}
+	}
+	return true
+}
+
 // KubernetesSession 为专用 SDK client 维护短期登录，不持久化或对外返回 token。
 // 每次登录通过 manager 的 Kubernetes 身份申请新的 SA JWT，不依赖 controller 的部署位置。
 // 续期调度由官方 LifetimeWatcher 负责，不实现自己的 lease 算法。
@@ -47,7 +59,7 @@ type KubernetesSession struct {
 	ready      atomic.Bool
 }
 
-// KubernetesIdentity 是部署固定的登录目标，不由 Tenant 选择。
+// KubernetesIdentity 是部署固定的登录目标，不由业务请求选择。
 type KubernetesIdentity struct {
 	Namespace      string
 	ServiceAccount string
@@ -60,7 +72,7 @@ func NewKubernetesSession(
 	mount, role string,
 	identity KubernetesIdentity,
 ) (*KubernetesSession, error) {
-	if client == nil || kubernetes == nil || !validPath(mount) || !pathSegment.MatchString(role) ||
+	if client == nil || kubernetes == nil || !validAuthMount(mount) || !authPathSegment.MatchString(role) ||
 		len(validation.IsDNS1123Label(identity.Namespace)) != 0 ||
 		len(validation.IsDNS1123Subdomain(identity.ServiceAccount)) != 0 || strings.TrimSpace(identity.Audience) == "" {
 		return nil, ErrAuthenticationConfiguration

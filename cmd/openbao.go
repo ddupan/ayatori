@@ -20,13 +20,10 @@ import (
 	"errors"
 	"flag"
 	"net/http"
-	"net/url"
-	"strings"
 
-	bao "github.com/openbao/openbao/api/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
 )
 
 type openBaoOptions struct {
@@ -48,31 +45,11 @@ func (o *openBaoOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.identity.Audience, "openbao-token-audience", "openbao", "SA JWT audience，须匹配 OpenBao role")
 }
 
-func (o openBaoOptions) client() (*bao.Client, error) {
-	address, err := url.Parse(o.address)
-	if err != nil || address.Scheme != "https" || address.Host == "" || address.User != nil ||
-		address.RawQuery != "" || address.ForceQuery || address.Fragment != "" ||
-		(address.Path != "" && address.Path != "/") {
-		return nil, errors.New("OpenBao address must be an absolute HTTPS URL without credentials, query, fragment or path")
-	}
-	// NewConfig 不读取 BAO_TOKEN/BAO_SKIP_VERIFY 等环境配置，不允许旁路 Kubernetes 身份或 TLS。
-	config := bao.NewConfig()
-	config.Address = strings.TrimSuffix(o.address, "/")
-	if config.Error != nil || config.ConfigureTLS(&bao.TLSConfig{CACert: o.caCert}) != nil {
-		return nil, errors.New("cannot configure OpenBao TLS trust")
-	}
-	client, err := bao.NewClient(config)
-	if err != nil {
-		return nil, errors.New("cannot construct OpenBao client")
-	}
-	return client, nil
-}
-
 func setupOpenBaoAuthentication(manager ctrl.Manager, options openBaoOptions) error {
 	if options.address == "" {
 		return nil
 	}
-	client, err := options.client()
+	client, err := openbao.NewClient(options.address, options.caCert)
 	if err != nil {
 		return err
 	}

@@ -174,7 +174,7 @@ Database 状态中的稳定位置和已确认步骤、供应 service/controller�
 
 ## OpenBao Kubernetes 认证会话
 
-`adapter/openbao.KubernetesSession` 复用官方 Kubernetes auth helper 和 `LifetimeWatcher`
+公共 `internal/infra/openbao.KubernetesSession` 复用官方 Kubernetes auth helper 和 `LifetimeWatcher`
 （均为 v2.7.0）。认证直接注入 `manager.GetClient()`，与 reconcile 共用已装配的 Kubernetes
 client，不从配置另建客户端。标准 `--kubeconfig` /
 `KUBECONFIG` 支持 systemd 或其他集群外运行方式，集群内使用 in-cluster 配置，不要求存在 Pod。
@@ -201,11 +201,23 @@ HTTPS 和显式 CA/系统信任根不可通过 BAO 环境变量降级，参数�
 依据官方 [Kubernetes auth](https://openbao.org/docs/auth/kubernetes/) 与
 [token 生命周期](https://openbao.org/docs/concepts/auth/)。真实测试使用 envtest 签发 SA token，
 OpenBao 通过专用 reviewer 调用真实 TokenReview；集群外受限 kubeconfig 启动实际 manager，
-验证同一配置申请 JWT、短 TTL 续期、RBAC 撤回/恢复与重新登录、跨 namespace/其他 SA 拒绝、
+验证共享 client 申请 JWT、短 TTL 续期、RBAC 撤回/恢复与重新登录、跨 namespace/其他 SA 拒绝、
 错误 OpenBao audience 拒绝以及凭据访问恢复。临时 TokenReview 入口仅允许对应 POST，
 两段连接均验证 TLS；其 Docker bridge 入口仅为隔离测试，不修改生产 OpenBao 或 Kubernetes。
 单元测试补充 TokenRequest 失败/空 token 无回退、重新申请 JWT、无期限 lease 拒绝、
 并发生命周期、退出清理及 manager 显式参数不受 BAO 环境身份覆盖。
+
+## 公共基础设施与领域适配
+
+Bao client/TLS 与认证生命周期已移至 `internal/infra/openbao`，与任何产品领域无关。
+Kubernetes 读写客户端由 manager 管理，Secret 凭据适配器只接收直连的 `client.Reader`。
+`adapter/openbao.Credentials` 仍属于 Database：它直接使用官方 KV v2 API，实现七键凭据、
+UID 路径、CAS=0 与回读确认的领域合同，不把这些规则推广为公共存储语义。
+后续供应用例需要的 repository 接口由领域侧按实际操作定义，不提前增加通用仓储抽象。
+分层约定见[总体架构](../architecture/overview.md#进程内依赖边界)。
+
+认证单元测试归公共 infra；真实认证与 Database 凭据读写的组合测试仍在 Database adapter。
+Database 集成测试和 lint 入口同时覆盖 `internal/infra/...`，避免拆包导致 CI 漏测。
 
 ## 设计入口
 

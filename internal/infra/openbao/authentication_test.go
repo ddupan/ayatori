@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	bao "github.com/openbao/openbao/api/v2"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,12 +34,25 @@ import (
 	"k8s.io/client-go/rest"
 	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
 )
 
 const (
-	authRole = "controller"
+	authRole     = "controller"
+	fixtureToken = "AYATORI-TEST-ONLY-bao-token"
 )
+
+func fixtureClient(t *testing.T, address string) *bao.Client {
+	t.Helper()
+	config := bao.NewConfig()
+	config.Address = address
+	client, err := bao.NewClient(config)
+	if err != nil {
+		t.Fatal("cannot construct fixture client")
+	}
+	client.SetToken(fixtureToken)
+	return client
+}
 
 var testIdentity = openbao.KubernetesIdentity{Namespace: "bao-controller", ServiceAccount: authRole, Audience: "openbao"}
 

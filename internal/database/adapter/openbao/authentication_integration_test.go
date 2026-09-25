@@ -51,7 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
 )
 
 const (
@@ -232,6 +232,40 @@ func newKubernetesAuthFixture(t *testing.T) *kubernetesAuthFixture {
 	}
 }
 
+const authRole = "controller"
+
+var testIdentity = openbao.KubernetesIdentity{Namespace: authNamespace, ServiceAccount: authRole, Audience: authAudience}
+
+func waitForAuthentication(t *testing.T, check func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	for !check() {
+		select {
+		case <-deadline.C:
+			t.Fatal("authentication condition timed out")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func startSession(t *testing.T, session interface{ Start(context.Context) error }) context.CancelFunc {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- session.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(20 * time.Second):
+			t.Error("authentication did not stop")
+		}
+	})
+	return cancel
+}
+
+// 此处验证公共认证会话与 Database 凭据适配器的跨层集成。
 func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 	api := newKubernetesAuthFixture(t)
 	ctx := t.Context()

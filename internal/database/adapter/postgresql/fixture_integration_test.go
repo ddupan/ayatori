@@ -32,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	secretadapter "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
@@ -244,7 +245,11 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 		}
 	}
 
-	reader, err := secretadapter.NewSecretCredentials(config, controllerNamespace)
+	apiReader, err := kubeclient.New(config, kubeclient.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := secretadapter.NewSecretCredentials(apiReader, controllerNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +257,11 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deniedReader, err := secretadapter.NewSecretCredentials(user.Config(), controllerNamespace)
+	deniedAPIReader, err := kubeclient.New(user.Config(), kubeclient.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deniedReader, err := secretadapter.NewSecretCredentials(deniedAPIReader, controllerNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
