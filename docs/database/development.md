@@ -18,7 +18,20 @@
 需故障注入外部成功而 API 写入失败、后端响应丢失、双 Tenant 竞争、同名新 UID、依赖稍后出现、
 Instance 删除与 Released 引用。冲突必须给出可操作而不泄密的诊断；不要求自动认领不确定结果。
 envtest 不运行 GC 或 ESO；这些行为必须由测试集群验证。
-新增资源 API 尚未实现，本轮没有完成或运行这些新增行为测试。
+三资源 API 类型与 CRD 已实现，`make test` 包含真实 API server 验证：作用域、
+静态默认值、非法声明、status 写入隔离、Condition 唯一性、resourceVersion 冲突与绑定记录回读。
+另有绑定 controller 的真实 API server 测试：动态记录幂等、资源侧写入后故障注入、
+新 reconciler 回读补齐、双 Tenant 竞争、Released/旧 UID 拒绝、目标固定、陈旧观察、
+删除期间 finalizer 保留。实际 manager 在生成的 RBAC 角色下通过 watch/cache 处理依赖
+稍后出现，绑定角色不具备 Secret 读取权限。没有 PostgreSQL/OpenBao 写入；后端 Ready
+在测试中由 fixture 提供，不能把它当成完整 Instance/Database 观察验证。
+
+Retain 释放和 Delete 清理仍未实现，当前删除会保持 DeletionPending 与 finalizer。
+真实后端供应、凭据交付与上述完整删除矩阵仍待后续切片验收。
+
+绑定规则另有不依赖 Kubernetes 的单元测试；service 测试只验证操作顺序、失败停止与最终
+身份回读，不模拟 API server。原真实 API controller 测试覆盖完整分层调用，另验证 service
+返回后发生并发修改时，资源呈现拒绝过期结果，重试完成绑定且保留其他字段。
 
 ## Ayatori 已接入的凭据与 metadata 切片测试
 
@@ -53,7 +66,8 @@ metadata 测试验证版本与可用扩展的只读查询，包括未安装扩�
 Instance 领域测试不再提供 registry 状态，初次验证与 Ready 重验分别覆盖所有管理检查项的
 未观察、不可用、认证失败、权限不足及未知值，并验证依赖恢复；完整管理观察可直接 Ready。
 
-这些测试尚不包含 Instance CRD/controller、Secret watch、status/finalizer 事件链、权限探测矩阵、ESO 或 Tenant 供应。版本查询成功不意味着 Instance Ready。
+PostgreSQL adapter 测试不包含 controller、Secret watch、status/finalizer 事件链、权限探测矩阵、ESO 或 Tenant 供应。
+CRD 基础语义由前述 API 测试覆盖；版本查询成功不意味着 Instance Ready。
 
 本项目同时依赖 Kubernetes API、PostgreSQL、OpenBao 和 ESO。日常开发不连接 homelab
 中的真实服务：Kubernetes 使用 envtest 或一次性 Kind，另外两个依赖使用一次性

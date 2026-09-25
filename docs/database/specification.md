@@ -4,7 +4,7 @@
 | --- | --- |
 | 状态 | 资源模型与生命周期已批准；字段协议待 API 评审 |
 | 目标 API | `database.ayatori.ddupan.top/v1alpha1` |
-| 最后更新 | 2026-09-24 |
+| 最后更新 | 2026-09-25 |
 | 决策 | [ADR-0009](../decisions/0009-database-resource-and-claim.md) |
 
 本文是当前行为合同，替代旧的 Tenant 同时承担申请与资源生命周期、PostgreSQL registry
@@ -34,9 +34,16 @@ Instance
 | Database | 描述外部数据库、管理范围、绑定与回收策略 | 充当第二套 registry 或通用资源框架 |
 | Tenant | 声明需求或显式选择资源，申请使用并交付凭据 | 删除时隐式销毁独立资源记录 |
 
-Instance 保持 cluster-scoped，Tenant 保持 namespaced。Database 的工作名称是
-PostgreSQLDatabase；scope、字段拼写和管理角色/凭据的具体边界待 API 评审。
-单 database + 单 login owner 的首版使用场景不变，不新增独立 Role 或 Claim CRD。
+Instance 与 Database 为 cluster-scoped，Tenant 为 namespaced。Database 的工作名称是
+PostgreSQLDatabase；字段拼写与导入授权细节待 API 评审。
+Database 由平台管理员管理，不属于应用 namespace，不引入资源专用 namespace。
+Tenant 按名称引用 Database；Database 绑定记录包含 Tenant 的 namespace/name/UID。
+普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放。
+
+2026-09-25 确认：第一版以一个 database、一个兼任 owner 的 login role 及其应用凭据
+作为 Database 的生命周期边界，Tenant 负责申请与交付，不单独拥有账号或凭据生命周期。
+不预留多账号字段，不新增独立 Role、Credential 或 Claim CRD。一库多账号若出现实际需求，
+通过后续 API 版本演进处理，不纳入 v1alpha1。此边界不扩大导入资源的管理授权。
 
 Database 自身必须声明 `instanceRef`，手工登记时同时指定实际数据库名；无需先存在 Tenant，
 即可通过 Instance 验证目标。动态申请由 Tenant 选择 Instance，供应时把该引用写入 Database；
@@ -81,15 +88,25 @@ endpoint 变更由管理员负责评估，不验证物理服务器连续性，�
 ## 5. 动态供应与排他绑定
 
 1. 校验 Tenant 请求、Instance 能力、名称和扩展要求。
+   绑定 controller 在触及资源侧绑定前将 Tenant 进度记为 Binding，固定申请目标，
+   避免两次绑定写入之间修改引用占用第二个资源；该进度不是已绑定的声明。
 2. 在首次外部写入前持久化独立 Database 记录、确定目标与管理范围。
-3. 建立带 UID 的排他预留/绑定，避免两个 Tenant 同时使用同一 Database。
+   动态创建的 Database 名称由 Tenant UID 确定；重试复用同一记录，不重复创建。
+3. 先在 Database 写入 Tenant namespace/name/UID，再在 Tenant status 写入 Database
+   name/UID；双向记录一致后才允许供应或交付。
 4. 按已确认步骤建立凭据、role、database、授权和扩展，逐步回读。
 5. 验证应用登录与 ESO 投射后，Tenant 才可 Ready。
 
 绑定前固定有效目标；绑定或开始外部供应后不得通过修改名称或引用实施隐式迁移。
 每个 Database 最多一个使用者，每个 Tenant 最多一个 Database。
 绑定 API 写入采用 resourceVersion 并发控制；双向记录不原子，单边完成不得授予使用权限。
-具体字段、写入顺序与重启恢复协议须在 API 切片定义，并由真实 API server 验证。
+采用 Kubernetes PV/PVC 的资源侧先写模式，参考
+[官方 bind 实现](https://github.com/kubernetes/kubernetes/blob/master/pkg/controller/volume/persistentvolume/pv_controller.go)。
+Database 已绑定其他 Tenant 时报告 Conflict，不抢占；API 更新版本冲突时重新读取并判断，
+不能盲目覆盖。资源侧成功而 Tenant status 写入失败时，下一次 reconcile 核对双方身份后
+补写，不因单次失败撤销资源侧绑定。普通 controller 重启沿用这些持久记录继续协调。
+这只处理 Kubernetes 绑定记录的部分完成，不提供外部数据库不确定创建结果的自动认领。
+绑定成功不代表 Ready，具体字段及并发、重启、单边写入恢复必须由真实 API server 测试验证。
 
 不同 Database 记录请求同一外部名称仍可能竞争，不能仅靠 Kubernetes 中的列表检查保证
 PostgreSQL 名称唯一。后端创建时的重名失败报告 Conflict，失败方不得接管胜方资源。
@@ -102,12 +119,16 @@ PostgreSQL 名称唯一。后端创建时的重名失败报告 Conflict，失败
 不得通过重置密码、改变 owner 或撤销现有访问来“完成导入”。
 
 未显式导入的同名数据库一律 Conflict。导入资源默认 Retain，不隐含 Delete 授权。
-Tenant 显式引用已登记资源仍需通过绑定资格与授权检查；知道资源名称不等于有权使用。
-资源侧预留/授权的具体 API 和已有凭据的安全关联入口待细化，完成前不能宣称可用。
+有权创建 Tenant 的申请者可以显式引用已登记、未绑定且可用的 Database；不增加资源侧
+允许绑定名单或逐 Tenant 的管理员审批。绑定仍检查目标、可用状态与排他关系。
+Released 不在可申请范围，必须由管理员处理旧访问并重新开放。导入时显式关联已有凭据，
+不通过隐式改密生成替代凭据；具体关联字段在 API 中定义。
 
 ## 7. Retain、重新绑定与 Delete
 
 回收策略属于 Database，默认 Retain；Tenant 删除是释放申请，不是独立资源的 GC 授权。
+有资源管理权限的主体可在进入删除流程前修改 Retain/Delete；进入删除流程后策略固定。
+显式设置 Delete 就是删除授权，不增加第二次审批或确认字段。
 Database 不得设置会让它随 Tenant 消失的 ownerReference。
 
 ### Retain
@@ -164,7 +185,8 @@ Kubernetes 应用由 ESO 投射同 namespace Secret，controller 不直接写明
 凭据仍输出 username/password/database/host/hostaddr/port/sslmode 七键，不生成带密码 URI。
 Tenant status 提供 Secret 引用与无认证信息的 OpenBao API URL。
 mount/base path 属部署配置，Tenant 不得自选任意路径；原按 Tenant namespace/name 固定
-推导路径的规则需修订为可支持资源保留与重新绑定的定位协议，本轮不定字段或新路径格式。
+推导路径的规则撤除。动态供应的凭据路径按 Database UID 确定；导入时显式关联已有凭据
+位置，不要求搬迁已有凭据。Released 不自动改密，管理员处理旧访问后才重新开放资源。
 不得因换 Tenant、改部署参数或重新绑定就隐式搬迁凭据或改密。
 
 TLS、OpenBao Kubernetes auth、controller/ESO 身份隔离、Secret 读取范围和防泄漏要求
@@ -189,7 +211,7 @@ ProvisioningFailed、CredentialProjectionFailed。Released 应明确显示未可
 | --- | --- |
 | Instance 登记与重验 | 无 registry 依赖；真实凭据/TLS/管理权限检查 |
 | 动态供应与重复 reconcile | 独立资源记录、排他绑定、密码不变、实际登录与投射成功 |
-| 显式导入 | 无数据/密码/owner 隐式修改；错误目标及未经授权申请被拒绝 |
+| 显式导入 | 无数据/密码/owner 隐式修改；错误目标、已占用或 Released 资源的申请被拒绝 |
 | 同名未知资源 | Conflict，原数据库/角色/凭据不变 |
 | 并发申请与单边绑定 | 最多一个使用者；失败方不能开始危险外部操作 |
 | controller 重启 | 已确认步骤正常继续；不确定创建报告人工可诊断冲突 |

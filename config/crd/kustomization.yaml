@@ -2,6 +2,9 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
+- bases/database.ayatori.ddupan.top_postgresqlinstances.yaml
+- bases/database.ayatori.ddupan.top_postgresqldatabases.yaml
+- bases/database.ayatori.ddupan.top_postgresqltenants.yaml
 - bases/execution.ayatori.ddupan.top_jobs.yaml
 - bases/execution.ayatori.ddupan.top_jobclasses.yaml
 - bases/execution.ayatori.ddupan.top_kubernetesexecutionparameters.yaml

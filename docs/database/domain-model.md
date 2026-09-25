@@ -1,6 +1,6 @@
 # Database 领域模型
 
-状态：资源模型已确认，字段与绑定协议待细化。日期：2026-09-24。
+状态：资源模型已确认，字段与绑定协议待细化。日期：2026-09-25。
 行为以 [系统规格](specification.md) 为准；决策依据见
 [ADR-0009](../decisions/0009-database-resource-and-claim.md)。
 
@@ -19,6 +19,10 @@
 Instance 一对多 Database；每个 Database 同时零或一个 Tenant，Tenant 最多一个 Database。
 Instance 不持有全部资源的内存集合。三者以引用关联，操作一个资源无需加载整个实例集合。
 
+Instance 与 Database 是集群级资源，Tenant 位于 namespace。Tenant 按名称引用 Database，
+Database 记录所绑定 Tenant 的 namespace/name/UID。Database 不属于应用 namespace；
+平台管理员管理资源及回收策略，普通申请者不能自行将 Released 资源重新开放。
+
 Database 的 instanceRef 表达资源归属，手工登记时也必须提供，不从 Tenant 反推。
 Tenant 动态申请才选择 Instance；引用已有 Database 时使用资源声明的 Instance。
 释放使用绑定不改变 Database 的实例归属，修改引用不能实现外部数据库迁移。
@@ -35,19 +39,26 @@ registry。管理凭据来源和连接刷新由应用层协调，连接池由 pg
 Database 保护目标和管理范围、排他绑定、导入验证与 Retain/Delete 规则。资源首次外部操作前
 必须已有持久记录；完成记录与外部存在性分别检查。数据库名称不是归属证明。
 
-Tenant 表达申请与交付要求；显式选择已有资源不自动授权使用。绑定后检查数据库满足要求、
+Tenant 表达申请与交付要求；可显式申请未绑定且可用的资源，不增加反向授权名单。
+绑定后检查数据库满足要求、
 应用凭据可登录且 ESO 投射完成，才可 Ready。Tenant 删除意味着释放使用关系。
 
-LoginRole 与 CredentialLocation 的生命周期必须随独立资源保留，不能因为 Tenant 消失就
-失去定位或未经授权被删除；具体字段归属及导入时的管理范围需继续评审。不要因此新增 Role、
-Credential 或 Claim CRD。当前首版仍是单 database + 单 login owner。
+第一版 Database 的生命周期边界包含一个 database、一个兼任 owner 的 LoginRole 及其
+应用凭据。LoginRole 与 CredentialLocation 随 Database 保留，不能因为 Tenant 消失就
+失去定位或未经授权被删除；导入时的管理授权与具体字段仍需评审。不新增 Role、Credential
+或 Claim CRD，也不预留多账号集合；若出现一库多账号的实际需求，再通过后续 API 版本演进。
 
 ## 生命周期与恢复
 
 - 动态创建与显式导入最终形成同一种 Database 资源，但导入本身不允许改密、改 owner 或删除。
 - Retain 后 Database 保持 Released 与旧绑定身份，人工确认数据、权限和凭据后才可重新绑定。
 - 回收策略属于资源侧；Tenant 与 Database 不是可随申请级联 GC 的父子关系。
+- 回收策略默认 Retain，进入删除流程前可由资源管理者修改，进入后固定；Delete 无额外审批。
+- 动态凭据位置按 Database UID 确定，导入显式关联已有凭据；Released 不自动改密。
 - 绑定 UID 防止同名新申请继承权限。双向记录的单边写入不代表绑定完成。
+- 动态 Database 名称由 Tenant UID 确定；先持久化资源侧 Tenant 引用，再更新 Tenant status
+  的 Database 引用。后一写入失败由 reconcile 核对身份后补齐，不回滚资源侧记录；
+  其他 Tenant 已占用则报冲突。双向一致后才供应或交付，绑定不等于 Ready。
 - 普通失败按 reconcile 重试；可靠确认的步骤幂等继续；不确定创建/未知同名对象报告 Conflict。
 - Kubernetes status 是持久进度和观察，不是外部事实，也不是 controller 内存。
   不引入“status 任意丢失后自动恢复所有权”的附加要求。
@@ -58,18 +69,25 @@ Credential 或 Claim CRD。当前首版仍是单 database + 单 login owner。
 | --- | --- |
 | 领域 | 值、身份、允许动作、不变量、完成与冲突判定；不做 IO |
 | 应用 | 装载记录与事实、协调 API 更新和 adapter、回读、交回领域判定 |
-| controller | watch/调度、映射、conditions/status/finalizer；不重写领域规则 |
-| adapter | Kubernetes、PostgreSQL、OpenBao、ESO 的具体访问与安全错误分类 |
+| controller | watch/调度、调用用例、请求资源呈现与安排重试；不判断绑定资格 |
+| adapter | Kubernetes 资源映射与呈现（含 conditions/status/finalizer）、后端访问与安全错误分类 |
 | 装配 | 客户端与成熟连接池的生命周期，不是领域状态 |
 
 不引入通用 Repository CRUD、跨系统 Unit of Work、事务队列或第二套 phase 存储。
 resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kubernetes 原子提交。
 
+绑定实现中，`domain/binding` 承载请求默认值、资源身份匹配、实例就绪与排他绑定规则；
+`application/BindingService` 协调固定申请、资源侧写入和回读确认，返回待呈现结果。
+两层均不依赖 Kubernetes API 类型。`adapter/kubernetes/BindingResources` 将 CR 转换为事实
+快照，并负责保留其他字段、检查快照版本、写入 finalizer 和呈现 Conditions/status。
+controller 仅连接事件、service 与呈现层，不把资源写入细节和领域判断塞进 Reconcile。
+这里的接口只列出绑定用例所需操作，不扩展成通用 CRUD、Repository 或事务框架。
+
 ## API 切片前需明确
 
-- Database 的 scope、引用格式、谁可以预留/绑定/释放，以及绑定字段和更新顺序。
+- 引用与绑定字段的最终格式及校验、管理员与 controller 的权限落实。
 - 资源侧回收策略与 Tenant/Database finalizer 配合。
-- 导入时角色/凭据的管理范围，稳定凭据定位、旧使用者撤权及新投射授权。
+- 导入时角色/凭据的管理范围及关联字段、旧使用者撤权及投射清理。
 - 绑定/导入同一实际目标的重复声明如何拒绝，且不引入 registry。
 - 管理员确认冲突、解除旧绑定的具体可审计操作入口。
 

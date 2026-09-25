@@ -51,8 +51,9 @@ PostgreSQL 管理 role 不应是 superuser。若平台选择 SECURITY DEFINER �
 删除操作，函数必须固定 `search_path`、严格校验 identifier、拒绝任意 SQL，并仅向
 controller role 授予 EXECUTE。controller 不调用 shell 或 `psql` 拼接用户输入。
 
-Kubernetes RBAC 应把 Instance 管理、Database 导入、预留、重新绑定授权和回收限制给平台管理员。
-知道 Database 名称不等于有权使用；Tenant editor
+Kubernetes RBAC 应把 Instance 管理、Database 导入、Released 重新开放和回收限制给平台管理员。
+有权创建 Tenant 的申请者可显式申请未绑定且可用的 Database，不增加资源侧允许绑定名单
+或逐 Tenant 审批。Released 必须先由管理员处理旧访问并重新开放。Tenant editor
 不自动获得 Secret read；是否读取目标 Secret 由 namespace 内独立 RBAC 决定。
 
 ## 删除保护
