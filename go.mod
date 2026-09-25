@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/openbao/openbao/api/auth/kubernetes/v2 v2.7.0
 	github.com/openbao/openbao/api/v2 v2.7.0
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0

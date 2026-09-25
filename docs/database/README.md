@@ -168,9 +168,33 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 真实后端覆盖创建/回读、并发唯一创建、重建适配器读取、软删除冲突、固定前缀 token
 拒绝管理路径，以及成功写入后丢失响应；HTTP 故障测试补充不重试和错误脱敏。
 
-这一切片尚未接入 manager：Kubernetes auth/token 生命周期、Database 状态中的稳定位置和
-已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
+凭据存储与下面的认证会话尚未接入 manager；Database 状态中的稳定位置和已确认步骤、
+供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
 测试 token 只用于临时 fixture，不是生产静态 token 配置接口。现有绑定不会触发外部写入。
+
+## OpenBao Kubernetes 认证会话
+
+`adapter/openbao.KubernetesSession` 复用官方 Kubernetes auth helper 和 `LifetimeWatcher`
+（均为 v2.7.0）。调用方提供专用 SDK client、固定 auth mount/role 与绝对 SA token 文件路径；
+构造时清空既有 token，不使用静态 token 作为失败后的回退身份。每次重新登录读取指定文件，
+拒绝缺失或空文件，避免 SDK 的空 token 默认路径回退。登录结果必须包含有效 token 和有限 TTL。
+
+续期、到期阈值与等待时间由 SDK 管理；可续期 token 的续期失败就撤下本地 token，不可续期
+token 由 SDK 监测剩余寿命。会话结束后最多每 5 秒重新登录一次，读取新的投射内容。
+`Ready()` 仅表示当前 lease 正受 SDK 管理，不授权任何 Database 写入，也不能保证下一次请求
+必然成功。认证/续期响应不写日志、不返回给调用方；后端操作仍独立检查并返回脱敏错误。
+
+`Start(ctx)` 退出时清空 client token 并等待续期 goroutine 结束。SDK Stop 不取消已经发出的
+续期 HTTP 请求，因此专用 client 的请求期限固定为 15 秒；不增加新连接池或自己的续期算法。
+同一会话拒绝并发 Start。当前还未添加 manager flags、Runnable/健康检查装配或生产 auth 配置，
+不能把适配器验收当成已部署的认证入口。
+
+依据官方 [Kubernetes auth](https://openbao.org/docs/auth/kubernetes/) 与
+[token 生命周期](https://openbao.org/docs/concepts/auth/)。真实测试使用 envtest 签发 SA token，
+OpenBao 通过专用 reviewer 调用真实 TokenReview；验证短 TTL 续期、撤销后的清空/重新登录、
+错误 namespace/audience 拒绝以及凭据访问恢复。临时 TokenReview 入口仅允许对应 POST，
+两段连接均验证 TLS；其 Docker bridge 入口仅为隔离测试，不修改生产 OpenBao 或 Kubernetes。
+单元测试补充缺失/空文件无回退、投射 token 更新、无期限 lease 拒绝、并发生命周期与退出清理。
 
 ## 设计入口
 
