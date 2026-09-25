@@ -31,6 +31,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	secretadapter "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
@@ -40,15 +41,19 @@ import (
 )
 
 const (
-	fixtureHost         = "fixture.invalid"
-	fixtureUser         = "postgres"
-	fixtureExtension    = "plpgsql"
-	dockerExec          = "exec"
-	fixtureImage        = "postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
-	fixturePassword     = "AYATORI-TEST-ONLY-initial-password"
-	rotatedPassword     = "AYATORI-TEST-ONLY-rotated-password"
-	controllerNamespace = "database-controller"
-	secretName          = "management"
+	fixtureAddress        = "127.0.0.1"
+	managementUsernameKey = "login"
+	managementPasswordKey = "credential"
+	unrelatedNamespace    = "unrelated"
+	fixtureHost           = "fixture.invalid"
+	fixtureUser           = "postgres"
+	fixtureExtension      = "plpgsql"
+	dockerExec            = "exec"
+	fixtureImage          = "postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+	fixturePassword       = "AYATORI-TEST-ONLY-initial-password"
+	rotatedPassword       = "AYATORI-TEST-ONLY-rotated-password"
+	controllerNamespace   = "database-controller"
+	secretName            = "management"
 )
 
 // fixture 不接受外部 DSN，只创建自己的临时容器并按确切 ID 清理。
@@ -79,7 +84,7 @@ func postgresFixture(t *testing.T, ctx context.Context) (string, int) {
 		t.Fatal("invalid fixture port")
 	}
 	// 初次 init 的临时服务器只监听 Unix socket，必须等最终 TCP listener。
-	for exec.CommandContext(ctx, "docker", dockerExec, id, "pg_isready", "-h", "127.0.0.1", "-U", fixtureUser).Run() != nil {
+	for exec.CommandContext(ctx, "docker", dockerExec, id, "pg_isready", "-h", fixtureAddress, "-U", fixtureUser).Run() != nil {
 		select {
 		case <-ctx.Done():
 			t.Fatal("fixture startup timed out")
@@ -154,7 +159,7 @@ func target(t *testing.T, port int, mode instance.TLSMode) instance.ObservationT
 	}
 	endpoint, err := instance.NewEndpoint(instance.EndpointValues{
 		Host:               fixtureHost,
-		HostAddr:           "127.0.0.1",
+		HostAddr:           fixtureAddress,
 		Port:               port,
 		ManagementDatabase: fixtureUser,
 		TLSMode:            mode,
@@ -164,8 +169,8 @@ func target(t *testing.T, port int, mode instance.TLSMode) instance.ObservationT
 	}
 	ref, err := instance.NewCredentialReference(instance.CredentialReferenceValues{
 		Name:        secretName,
-		UsernameKey: "login",
-		PasswordKey: "credential",
+		UsernameKey: managementUsernameKey,
+		PasswordKey: managementPasswordKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +201,7 @@ func (r *gatedReader) Read(ctx context.Context, ref instance.CredentialReference
 
 // credentialFixture 为每个场景创建独立 API server、PostgreSQL 和应用服务。
 type credentialFixture struct {
+	config       *rest.Config
 	ctx          context.Context
 	client       *kubernetes.Clientset
 	reader       *secretadapter.SecretCredentials
@@ -227,7 +233,7 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	if err != nil {
 		t.Fatal("cannot create test client")
 	}
-	for _, namespace := range []string{controllerNamespace, "unrelated"} {
+	for _, namespace := range []string{controllerNamespace, unrelatedNamespace} {
 		_, err := client.CoreV1().Namespaces().Create(
 			ctx,
 			&corev1.Namespace{Name: namespace},
@@ -260,6 +266,7 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	t.Cleanup(service.Close)
 
 	return &credentialFixture{
+		config:       config,
 		ctx:          ctx,
 		client:       client,
 		reader:       reader,
@@ -277,8 +284,8 @@ func (f *credentialFixture) createSecret(t *testing.T, namespace string) {
 	secret := &corev1.Secret{
 		Name: secretName,
 		Data: map[string][]byte{
-			"login":      []byte(fixtureUser),
-			"credential": []byte(fixturePassword),
+			managementUsernameKey: []byte(fixtureUser),
+			managementPasswordKey: []byte(fixturePassword),
 		},
 	}
 	if _, err := f.client.CoreV1().Secrets(namespace).Create(f.ctx, secret, metav1.CreateOptions{}); err != nil {

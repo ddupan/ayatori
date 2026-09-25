@@ -53,7 +53,9 @@ Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database �
 绑定顺序由 application service 协调，纯资格规则在领域层；Kubernetes adapter 负责快照
 映射、finalizer 和状态呈现。呈现前若资源版本已变化，返回冲突供下一轮重读，不覆盖其他修改。
 双向记录完成后 Tenant 为 Bound，Ready=False/BindingComplete，明确尚未供应或交付。
-生成的 manager RBAC 仅授予绑定所需资源读写，不包含 Secret 读取或后端凭据权限。
+生成的 manager ClusterRole 授予资源读写，不包含 Secret 读取；Instance 观测的管理 Secret
+权限由固定 namespace 的独立 Role 授予。Instance controller 已接入原生管理观察与引用删除
+保护，启用方式及 Ready 边界见 [模块说明](README.md#instance-原生管理观测)。
 
 当前有 Tenant/Database finalizer 保护，但**删除清理尚未实现**：Tenant 删除报告
 Ready=False/DeletionPending 并保留绑定与 finalizer，Database 的保护也不会被自动移除。

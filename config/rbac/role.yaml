@@ -19,6 +19,7 @@ rules:
   - database.ayatori.ddupan.top
   resources:
   - postgresqldatabases/finalizers
+  - postgresqlinstances/finalizers
   - postgresqltenants/finalizers
   verbs:
   - update
@@ -26,6 +27,7 @@ rules:
   - database.ayatori.ddupan.top
   resources:
   - postgresqldatabases/status
+  - postgresqlinstances/status
   - postgresqltenants/status
   verbs:
   - get
@@ -35,13 +37,6 @@ rules:
   - database.ayatori.ddupan.top
   resources:
   - postgresqlinstances
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - database.ayatori.ddupan.top
-  resources:
   - postgresqltenants
   verbs:
   - get

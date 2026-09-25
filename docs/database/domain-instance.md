@@ -1,8 +1,8 @@
 # Instance 领域对象规格
 
-日期：2026-09-24。资源模型修订依据
+日期：2026-09-25。资源模型修订依据
 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，行为以
-[系统规格](specification.md) 为准。本页替代原 registry 准备与恢复合同；领域依赖已撤除，完整应用/controller 链路尚未接入。
+[系统规格](specification.md) 为准。本页替代原 registry 准备与恢复合同；领域依赖已撤除，Instance 应用/controller 观测链路已接入。
 
 ## 职责
 
@@ -85,4 +85,6 @@ finalizer 不阻止并发申请 CR 创建；新请求见 Instance 删除中/不�
 
 Instance 领域代码、adapter 与测试的 registry 依赖已撤除。AssessManagement 根据完整观察
 直接完成验证；AssessReadiness 失败进入 Validating，依赖恢复后重新验证。领域测试覆盖各检查项
-在这两个入口的失败与恢复，但完整权限探测、Instance controller 和三资源生命周期尚未完成。
+在这两个入口的失败与恢复。原生权限检查、Instance controller、metadata-only Secret watch
+和引用删除保护已接入，验证矩阵见 [模块说明](README.md#instance-原生管理观测)；
+Database/Tenant 的供应、交付和回收仍未完成。

@@ -22,6 +22,7 @@ import (
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	executionv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -41,6 +42,10 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	var databaseNamespace, databaseRootCert string
+	flag.StringVar(&databaseNamespace, "database-secret-namespace", os.Getenv("POD_NAMESPACE"),
+		"固定管理 Secret namespace；为空时不启用 Instance 观测")
+	flag.StringVar(&databaseRootCert, "database-root-cert", "", "PostgreSQL 管理连接信任的公开 CA bundle 路径")
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -145,7 +150,7 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	managerOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -163,13 +168,25 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
-	})
+	}
+	if databaseNamespace != "" {
+		managerOptions.Cache = databasecontroller.InstanceCacheOptions(databaseNamespace)
+	}
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
 		os.Exit(1)
 	}
 
 	// +kubebuilder:scaffold:builder
+	var instanceService *application.InstanceService
+	if databaseNamespace != "" {
+		instanceService, err = setupInstanceObservation(mgr, databaseNamespace, databaseRootCert)
+		if err != nil {
+			setupLog.Error(err, "Failed to set up Instance observation")
+			os.Exit(1)
+		}
+	}
 	if err := (&databasecontroller.BindingReconciler{}).SetupWithManager(context.Background(), mgr); err != nil {
 		setupLog.Error(err, "Failed to set up Database binding controller")
 		os.Exit(1)
@@ -185,7 +202,12 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	err = mgr.Start(ctrl.SetupSignalHandler())
+	// worker 完全停止后才释放 pgxpool，避免与在途观察竞争。
+	if instanceService != nil {
+		instanceService.Close()
+	}
+	if err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}

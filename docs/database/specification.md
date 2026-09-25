@@ -171,6 +171,9 @@ status 缺失不假定发生于正常重启。Instance 可重新探测能力；D
 
 ## 9. 权限、凭据与扩展
 
+2026-09-25 确认第一版管理账号使用原生非 superuser + CREATEDB/CREATEROLE 方案，
+不引入 SECURITY DEFINER 接口；权限检查与限制见 [安全合同](security.md#最小权限)。
+
 动态供应继续使用一个兼任 database owner 的 LOGIN role；应用角色不得具备 superuser、
 CREATEDB、CREATEROLE 或 replication 权限。撤销 PUBLIC CONNECT，再授予目标角色；
 不修改无关数据库和角色。identifier 匹配 `^[a-z][a-z0-9_]{0,62}$`，SQL 安全引用。
