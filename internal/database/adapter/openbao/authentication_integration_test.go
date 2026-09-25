@@ -266,7 +266,7 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 	if err != nil {
 		t.Fatal("cannot construct external controller manager")
 	}
-	session, err := openbao.NewKubernetesSession(client, manager.GetConfig(), "kubernetes", authRole, testIdentity)
+	session, err := openbao.NewKubernetesSession(client, manager.GetClient(), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}

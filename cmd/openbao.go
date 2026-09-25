@@ -76,9 +76,9 @@ func setupOpenBaoAuthentication(manager ctrl.Manager, options openBaoOptions) er
 	if err != nil {
 		return err
 	}
-	// 与 reconcile 共用 GetConfig：支持 --kubeconfig/KUBECONFIG 和 in-cluster，绝不推断 Pod 文件位置。
+	// 复用 manager 已装配的 Kubernetes client，不重复加载配置或创建客户端。
 	session, err := openbao.NewKubernetesSession(
-		client, manager.GetConfig(), options.mount, options.role, options.identity,
+		client, manager.GetClient(), options.mount, options.role, options.identity,
 	)
 	if err != nil {
 		return err

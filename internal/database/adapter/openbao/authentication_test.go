@@ -26,8 +26,12 @@ import (
 	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
+	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 )
@@ -38,8 +42,18 @@ const (
 
 var testIdentity = openbao.KubernetesIdentity{Namespace: "bao-controller", ServiceAccount: authRole, Audience: "openbao"}
 
-func authenticationConfig(address string) *rest.Config {
-	return &rest.Config{Host: address, ContentType: "application/json"}
+func authenticationClient(t *testing.T, address string) kubeclient.Client {
+	t.Helper()
+	// HTTP 单元 fixture 只提供 TokenRequest；静态映射避免额外模拟 discovery API。
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion})
+	mapper.Add(corev1.SchemeGroupVersion.WithKind("ServiceAccount"), meta.RESTScopeNamespace)
+	client, err := kubeclient.New(&rest.Config{Host: address, ContentType: "application/json"}, kubeclient.Options{
+		Mapper: mapper,
+	})
+	if err != nil {
+		t.Fatal("cannot construct fixture Kubernetes client")
+	}
+	return client
 }
 
 func authenticationServer(t *testing.T, token func() (string, bool), login http.HandlerFunc) *httptest.Server {
@@ -81,7 +95,7 @@ func TestKubernetesSessionDoesNotFallbackFromMissingToken(t *testing.T) {
 		})
 		defer server.Close()
 		client := fixtureClient(t, server.URL)
-		session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
+		session, err := openbao.NewKubernetesSession(client, authenticationClient(t, server.URL), "kubernetes", authRole, testIdentity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,7 +171,7 @@ func TestKubernetesSessionRequestsNewTokenAfterFailure(t *testing.T) {
 	})
 	defer server.Close()
 	client := fixtureClient(t, server.URL)
-	session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
+	session, err := openbao.NewKubernetesSession(client, authenticationClient(t, server.URL), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +207,7 @@ func TestKubernetesSessionRejectsUnboundedLease(t *testing.T) {
 	})
 	defer server.Close()
 	client := fixtureClient(t, server.URL)
-	session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
+	session, err := openbao.NewKubernetesSession(client, authenticationClient(t, server.URL), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}

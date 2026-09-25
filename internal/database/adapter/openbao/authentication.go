@@ -27,10 +27,9 @@ import (
 	kubernetesauth "github.com/openbao/openbao/api/auth/kubernetes/v2"
 	bao "github.com/openbao/openbao/api/v2"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/rest"
+	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var ErrAuthenticationConfiguration = errors.New("invalid OpenBao Kubernetes authentication configuration")
@@ -39,13 +38,13 @@ var ErrAuthenticationConfiguration = errors.New("invalid OpenBao Kubernetes auth
 // 每次登录通过 manager 的 Kubernetes 身份申请新的 SA JWT，不依赖 controller 的部署位置。
 // 续期调度由官方 LifetimeWatcher 负责，不实现自己的 lease 算法。
 type KubernetesSession struct {
-	client   *bao.Client
-	mount    string
-	role     string
-	accounts corev1.ServiceAccountInterface
-	identity KubernetesIdentity
-	running  sync.Mutex
-	ready    atomic.Bool
+	client     *bao.Client
+	mount      string
+	role       string
+	kubernetes kubeclient.Client
+	identity   KubernetesIdentity
+	running    sync.Mutex
+	ready      atomic.Bool
 }
 
 // KubernetesIdentity 是部署固定的登录目标，不由 Tenant 选择。
@@ -55,22 +54,26 @@ type KubernetesIdentity struct {
 	Audience       string
 }
 
-func NewKubernetesSession(client *bao.Client, config *rest.Config, mount, role string, identity KubernetesIdentity) (*KubernetesSession, error) {
-	if client == nil || config == nil || !validPath(mount) || !pathSegment.MatchString(role) ||
+func NewKubernetesSession(
+	client *bao.Client,
+	kubernetes kubeclient.Client,
+	mount, role string,
+	identity KubernetesIdentity,
+) (*KubernetesSession, error) {
+	if client == nil || kubernetes == nil || !validPath(mount) || !pathSegment.MatchString(role) ||
 		len(validation.IsDNS1123Label(identity.Namespace)) != 0 ||
 		len(validation.IsDNS1123Subdomain(identity.ServiceAccount)) != 0 || strings.TrimSpace(identity.Audience) == "" {
-		return nil, ErrAuthenticationConfiguration
-	}
-	api, err := corev1.NewForConfig(config)
-	if err != nil {
 		return nil, ErrAuthenticationConfiguration
 	}
 	client.ClearToken()
 	client.SetMaxRetries(0)
 	client.SetClientTimeout(15 * time.Second)
 	return &KubernetesSession{
-		client: client, mount: mount, role: role,
-		accounts: api.ServiceAccounts(identity.Namespace), identity: identity,
+		client:     client,
+		mount:      mount,
+		role:       role,
+		kubernetes: kubernetes,
+		identity:   identity,
 	}, nil
 }
 
@@ -113,13 +116,19 @@ func (s *KubernetesSession) login(ctx context.Context) *bao.Secret {
 	// JWT 只用于本次登录，不缓存或自行解析 kubeconfig 中的凭据。
 	// client-go 负责 kubeconfig/in-cluster 身份与凭据更新；API server 按 RBAC 签发。
 	expirationSeconds := int64(600)
-	token, err := s.accounts.CreateToken(ctx, s.identity.ServiceAccount, &authenticationv1.TokenRequest{
+	account := &corev1.ServiceAccount{
+		Namespace: s.identity.Namespace,
+		Name:      s.identity.ServiceAccount,
+	}
+	token := &authenticationv1.TokenRequest{
 		Spec: authenticationv1.TokenRequestSpec{
 			Audiences:         []string{s.identity.Audience},
 			ExpirationSeconds: &expirationSeconds,
 		},
-	}, metav1.CreateOptions{})
-	if err != nil || token == nil || strings.TrimSpace(token.Status.Token) == "" ||
+	}
+	// 子资源写入直接请求 API server，不读 cache，也不需要额外的 ServiceAccount get 权限。
+	err := s.kubernetes.SubResource("token").Create(ctx, account, token)
+	if err != nil || strings.TrimSpace(token.Status.Token) == "" ||
 		!token.Status.ExpirationTimestamp.After(time.Now()) {
 		return nil
 	}

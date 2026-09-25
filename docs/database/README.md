@@ -175,11 +175,13 @@ Database 状态中的稳定位置和已确认步骤、供应 service/controller�
 ## OpenBao Kubernetes 认证会话
 
 `adapter/openbao.KubernetesSession` 复用官方 Kubernetes auth helper 和 `LifetimeWatcher`
-（均为 v2.7.0）。认证与 reconcile 共用 manager 的 Kubernetes 配置：标准 `--kubeconfig` /
+（均为 v2.7.0）。认证直接注入 `manager.GetClient()`，与 reconcile 共用已装配的 Kubernetes
+client，不从配置另建客户端。标准 `--kubeconfig` /
 `KUBECONFIG` 支持 systemd 或其他集群外运行方式，集群内使用 in-cluster 配置，不要求存在 Pod。
 Kubernetes 身份的签发和更新由部署管理及 client-go 的认证机制负责，不另建 kubeconfig 读取器。
 
-每次登录前，使用该身份调用固定 namespace/name 的 ServiceAccount TokenRequest，申请
+每次登录前，通过该 client 的 `SubResource("token").Create` 调用固定 namespace/name 的
+ServiceAccount TokenRequest；写入直连 API server，不读取 cache 或要求额外的 SA get 权限。申请
 audience 匹配 OpenBao role、期望有效期 600 秒的短期 JWT；检查返回值非空且未过期，再交给
 官方 Kubernetes auth helper。JWT 不缓存，不读取投射文件，也不回退静态 OpenBao token；
 实际 JWT 有效期由 API server 决定。RBAC 拒绝或 TokenRequest 失败时不会继续 Bao 登录。
