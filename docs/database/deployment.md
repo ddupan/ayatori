@@ -1,16 +1,16 @@
 # 部署与配置
 
-> 本页迁入作为 Database 模块的目标部署合同。Ayatori manager flags、manifests 与发布装配尚未
-> 实现；当前行为以修订后的系统规格为准，本页不能直接用于部署。
+> 本页区分已实现的 Instance 观测配置与尚未接入的供应/交付目标合同。
+> 完整 Database 服务仍不可部署使用；当前可执行入口见 [模块说明](README.md)。
 
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | Review |
 | 环境 | homelab Kubernetes + 外部 PostgreSQL/OpenBao |
-| 最后更新 | 2026-09-24 |
+| 最后更新 | 2026-09-25 |
 
-本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。当前 manifests 尚未实现这些
-配置，示例是后续实现合同，不可直接用于现有脚手架。
+本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测已接入 manager；
+OpenBao、ESO 与完整供应装配仍是后续实现合同。
 
 ## 依赖与顺序
 
@@ -30,7 +30,11 @@
 
 ## Controller 配置合同
 
-以下是尚待实现的部署配置合同，凭据定位随三资源 API 继续细化。controller 使用这些 CLI flags。
+当前 manager 支持 `--database-secret-namespace`（默认 `POD_NAMESPACE`，为空则停用
+Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径）。Deployment
+通过 downward API 获取 namespace，Secret 权限由该 namespace 的 Role 授予。
+
+以下是尚待实现的供应/交付配置合同，不表示当前 manager 接受这些 CLI flags。
 必填项缺失、路径无效或 duration 不为正数时，进程必须在启动 manager 前失败；
 不得等到 reconcile 时才逐个资源报告配置错误。
 
@@ -44,7 +48,7 @@
 | `--openbao-service-account-token-path` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Kubernetes auth 使用的投射 token 文件 |
 | `--openbao-tenant-base-path` | 默认 `postgresql-tenants` | controller 专属 mount-relative 前缀 |
 | `--external-secret-store-name` | 必填 | controller 创建的 ExternalSecret 固定引用 |
-| `--postgresql-ca-bundle-path` | PostgreSQL TLS 模式必填 | 只读 PEM trust bundle，不含私钥 |
+| `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
 | `--reconcile-timeout` | `30s` | 单轮 reconcile 中外部操作的总期限，必须大于零 |
 
 address 必须是绝对 `http` 或 `https` URL，不允许 userinfo、query 或 fragment，末尾 `/`
@@ -54,7 +58,9 @@ API 层。生产环境的 `--openbao-address` 必须使用 HTTPS；HTTP 只用�
 
 Tenant 不能选择任意凭据路径。凭据必须能随 Database 保留并安全交付给被授权的新 Tenant；
 原 `<base-path>/<namespace>/<metadata.name>` 定位规则不再直接作为新 API 合同。
-稳定位置与导入关联方式待 API 评审；consumer URL 仍使用无认证信息的 KV v2 API URL。
+动态供应位置使用 `<base-path>/<Database UID>`；导入使用 Database 的显式 credentialRef，
+不要求搬迁已有凭据。供应流程须先记录原 mount/path，不能在配置变化后重新推导位置。
+consumer URL 仍使用无认证信息的 KV v2 API URL。
 
 base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空段、`.`、`..`、
 `data`/`metadata` API 层。ExternalSecret 固定命名为
@@ -77,9 +83,10 @@ base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空
 - `Delete` 时禁止连接、终止目标 database session、删除已验证归属的 database/role。
 
 部分 PostgreSQL 操作天然要求较高权限，尤其终止其他 session 和安装某些 extension。
-应优先使用 PostgreSQL 预定义角色、受控 SECURITY DEFINER 管理函数或限定数据库的
-授权；任何不得不使用 superuser 的 extension 都必须按实例单独记录，不得扩大默认
-controller 权限。最终可执行 SQL grant 将随 PostgreSQL adapter 集成测试固化。
+第一版使用原生非 superuser 的 CREATEDB/CREATEROLE 方案，不引入 SECURITY DEFINER
+管理接口。对自行创建的 owner 显式建立 SET membership，再以 owner 管理 ACL 与扩展；
+已有对象仍须逐资源核实授权，不能凭基础属性接管。需要 superuser 的扩展不能扩大 controller
+权限。真实权限矩阵见 [Instance 原生管理观测](README.md#instance-原生管理观测)。
 
 ## OpenBao 与 ESO
 
