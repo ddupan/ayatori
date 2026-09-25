@@ -36,6 +36,7 @@ var (
 // Metadata 只查询版本与可用扩展，不能产生领域 Ready。
 type Database interface {
 	InspectMetadata(context.Context) (DatabaseMetadata, error)
+	InspectManagement(context.Context) (DatabaseMetadata, error)
 	Close()
 }
 
@@ -82,17 +83,26 @@ func (s *InstanceService) ObserveVersion(ctx context.Context, target instance.Ob
 
 // ObserveMetadata 返回当前目标和凭据下的版本与扩展；任何失败均丢弃全部结果。
 // 调用者仍需使用 CR resourceVersion 保存前提防止 spec 并发修改；本方法不建立跨系统事务。
-func (s *InstanceService) ObserveMetadata(ctx context.Context, target instance.ObservationTarget) (MetadataObservation, error) {
+func (s *InstanceService) ObserveMetadata(ctx context.Context, target instance.ObservationTarget) (InstanceObservation, error) {
+	return s.observe(ctx, target, false)
+}
+
+// ObserveManagement 复用同一凭据刷新与回读边界，但每轮重新检查原生管理能力。
+func (s *InstanceService) ObserveManagement(ctx context.Context, target instance.ObservationTarget) (InstanceObservation, error) {
+	return s.observe(ctx, target, true)
+}
+
+func (s *InstanceService) observe(ctx context.Context, target instance.ObservationTarget, management bool) (InstanceObservation, error) {
 	if err := target.Validate(); err != nil {
-		return MetadataObservation{}, err
+		return InstanceObservation{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return MetadataObservation{}, ErrClosed
+		return InstanceObservation{}, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
-		return MetadataObservation{}, err
+		return InstanceObservation{}, err
 	}
 
 	// 先读取有效凭据。读取失败时不得继续使用缓存中的旧连接。
@@ -100,11 +110,11 @@ func (s *InstanceService) ObserveMetadata(ctx context.Context, target instance.O
 	credentials, err := s.source.Read(ctx, target.Definition().AdminCredential())
 	if err != nil {
 		s.release(name)
-		return MetadataObservation{}, credentialError(err)
+		return InstanceObservation{}, credentialError(err)
 	}
 	if credentials.username == "" || credentials.password == "" {
 		s.release(name)
-		return MetadataObservation{}, ErrCredentialsInvalid
+		return InstanceObservation{}, ErrCredentialsInvalid
 	}
 
 	// 连接身份与有效值均未变化时复用 pgxpool；generation 本身不要求换池。
@@ -117,7 +127,7 @@ func (s *InstanceService) ObserveMetadata(ctx context.Context, target instance.O
 	if current == nil {
 		database, err := s.connector.Connect(ctx, target.Definition().Endpoint(), credentials)
 		if err != nil {
-			return MetadataObservation{}, err
+			return InstanceObservation{}, err
 		}
 		current = &entry{
 			target:      target,
@@ -127,30 +137,38 @@ func (s *InstanceService) ObserveMetadata(ctx context.Context, target instance.O
 		s.entries[name] = current
 	}
 
-	metadata, err := current.database.InspectMetadata(ctx)
+	var metadata DatabaseMetadata
+	if management {
+		metadata, err = current.database.InspectManagement(ctx)
+	} else {
+		metadata, err = current.database.InspectMetadata(ctx)
+		// 即使 adapter 误填权限，也不能把只读 metadata 入口升级为 Ready。
+		metadata.Management = instance.ManagementChecks{}
+	}
 	if err != nil {
 		s.release(name)
-		return MetadataObservation{}, err
+		return InstanceObservation{}, err
 	}
 	if metadata.Version == "" {
 		s.release(name)
-		return MetadataObservation{}, ErrObservation
+		return InstanceObservation{}, ErrObservation
 	}
 
 	// 回读后再检查凭据，避免把轮换前取得的结果交给新凭据的调用链。
 	latest, err := s.source.Read(ctx, target.Definition().AdminCredential())
 	if err != nil {
 		s.release(name)
-		return MetadataObservation{}, credentialError(err)
+		return InstanceObservation{}, credentialError(err)
 	}
 	if latest != credentials {
 		s.release(name)
-		return MetadataObservation{}, ErrCredentialsChanged
+		return InstanceObservation{}, ErrCredentialsChanged
 	}
-	return MetadataObservation{
+	return InstanceObservation{
 		target:     target,
 		version:    metadata.Version,
 		extensions: instance.ObserveExtensionSupport(metadata.AvailableExtensions),
+		management: metadata.Management,
 	}, nil
 }
 

@@ -1,7 +1,7 @@
 # Database 模块
 
-Database 是 Ayatori 首批实际产品领域之一。当前已包含 Instance 领域基础、管理凭据连接与
-metadata 观察切片，尚未完成 Database API/controller 和 Tenant 供应链路。
+Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
+管理能力观测；尚未完成 Database 供应/导入、Tenant 凭据交付与资源回收链路。
 
 ## 当前设计（2026-09-24）
 
@@ -12,7 +12,7 @@ Retain 后人工重新绑定与资源侧 Delete。撤销 PostgreSQL ownership re
 依据 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，当前合同见
 [系统规格](specification.md)。下面的迁移来源与已存在代码不反向约束新设计。
 registry adapter、专属迁移/测试及 Instance 的 registry 判定现已撤除；Instance 根据完整管理
-能力观察直接判定 Ready。新增 Database 资源、绑定、导入、角色/凭据管理边界与回收链路尚未实现。wiki 同步位置见
+能力观察直接判定 Ready。Database 资源与绑定已接入，导入、角色/凭据供应及回收仍未完成。wiki 同步位置见
 `homelab-wiki/services/postgresql-tenant-operator.md`，跨仓库发布状态由 wiki 的同步记录维护。
 
 ## 来源基线
@@ -59,10 +59,10 @@ Secret metadata 和无关字段变化不重建连接。观测后再次读取 Sec
 不把旧连接的成功作为新凭据有效的证据；这不构成跨 Kubernetes/PostgreSQL 的原子事务。
 Instance UID、endpoint 或凭据引用变化也会释放旧连接；Forget/Close 只释放本地资源。
 
-当前通过 `ObserveMetadata` 读取服务器版本和可用扩展，`ObserveVersion` 只是其版本读取便捷入口，
-不能产生完整 CapabilityObservation 或 Ready。
-controller 接入、Secret watch、finalizer 与真实权限检查仍待后续切片；并发 CR 更新
-必须由调用者通过 resourceVersion 校验。应用层沿用源实现的串行处理，本阶段未引入新的调度框架。
+`ObserveMetadata` 读取服务器版本和可用扩展，`ObserveVersion` 是版本读取便捷入口；两者
+不会填充管理检查，不能产生 Ready。`ObserveManagement` 使用同一凭据/连接边界读取完整
+原生管理检查，返回绑定当前 target 的 `InstanceObservation`。controller 的资源呈现适配器
+使用 resourceVersion 拒绝过期写入。应用层沿用串行处理，不引入新的调度框架。
 
 运行 `make test-database-integration` 验证真实 API server + 一次性 PostgreSQL；fixture 不接受外部
 DSN，镜像固定摘要，使用随机本机回环端口并在退出时删除测试容器。覆盖缺失/错误凭据、RBAC、
@@ -83,14 +83,13 @@ SQL adapter 通过一条只读语句读取 `pg_catalog.current_setting('server_v
 
 `InstanceService` 保留原有 CredentialReader → Connector → Database 边界，复用同一个
 凭据读取、连接刷新和串行释放流程，不新增连接池封装或任意查询回调。每次重新查询 metadata，
-并在 Secret 有效值回读一致后生成不可变的 `MetadataObservation`，绑定本次 target（含当前
+并在 Secret 有效值回读一致后生成不可变的 `InstanceObservation`，绑定本次 target（含当前
 generation），不绑定建池时的旧 target。结果不包含凭据，扩展集合不与 driver 的可变 slice 共享。
 凭据中途变化、读取失败或查询失败时，返回零值观察并释放连接，不复用旧的扩展列表。
 
 调用方可将 `Target()` 与 `Extensions()` 交给 Instance 的 `ObserveExtensions`；应用调用链
 仍负责同轮次使用，不能持久化或跨轮缓存这份证据。metadata 读取不安装扩展、不初始化 registry、
-不设置 Ready，也不授予 Tenant 写权限。管理权限矩阵及 controller 的
-checkpoint/status/finalizer 链路仍是后续切片。
+不设置 Ready，也不授予 Tenant 写权限。管理权限检查使用下面的独立入口。
 
 真实 API server + PostgreSQL 测试验证未安装扩展可被观察、名称保持大小写、search_path 遮蔽
 不改变查询来源、低权限账号读取、权限撤回失败与恢复、Secret 中途变化丢弃扩展结果。
@@ -106,7 +105,51 @@ Instance 不再具有 InitializingRegistry 阶段、RegistryState、准备决策
 
 保留凭据读取与连接刷新、TLS、metadata/扩展观察及其真实后端测试。领域测试覆盖每项能力
 在初次验证和 Ready 重验时失败、依赖恢复、重启后重新取证、错误目标/阶段及删除保护。
-这不等于管理权限探测矩阵或三资源 controller 已实现。
+这不等于三资源供应、交付和回收已实现。
+
+## Instance 原生管理观测
+
+2026-09-25 维护者确认先使用原生非 superuser 方案，不引入 SECURITY DEFINER 接口。
+`InspectManagement` 通过同一条只读语句读取当前执行角色的 `CREATEROLE`、`CREATEDB`、
+superuser 属性、服务器可写状态、版本和扩展列表。不创建探针数据库/角色，不初始化 schema。
+只有非 superuser、具备两项原生属性且当前服务器/会话可写时，基础管理能力才通过。
+角色属性不可从继承成员关系推导；具体已有资源仍须检查 owner、membership 与授权范围。
+
+权限依据和真实测试对应：
+
+- role：当前角色具有 CREATEROLE，可创建普通登录角色；
+- database：当前角色具有 CREATEDB，且会话非只读、服务器不在 recovery；
+- grant：使用自己新建角色的管理权限，显式建立 SET membership，再以 owner 管理数据库 ACL；
+- extension：新建数据库 owner 可安装 trusted 扩展；可用列表不是安装授权，非 trusted 或
+  其他前提不满足的扩展仍可能失败，必须逐请求执行和回读。导入不继承此动态供应授权。
+
+参考 PostgreSQL 官方 [CREATE ROLE](https://www.postgresql.org/docs/18/sql-createrole.html)、
+[CREATE DATABASE](https://www.postgresql.org/docs/18/sql-createdatabase.html) 与
+[CREATE EXTENSION](https://www.postgresql.org/docs/18/sql-createextension.html)。这些检查是基础
+能力观察，不是未来操作必然成功的保证；权限、容量、连接数等仍可能在执行时变化。
+
+`InstanceReconciliation` 协调 finalizer、观察、领域判定和删除引用检查，controller 只连接
+事件、用例、状态呈现与重试。每轮重建无证据的领域对象；旧 Ready 不授权新一轮操作。
+失败清除当前版本结果并撤销 Ready；CR 在观察期间被修改则拒绝旧结果，下一轮重新读取。
+连接/权限变化由 Secret watch 和 30 秒重查驱动，单轮 IO 最长 15 秒；不持续写入相同状态。
+
+manager 通过 `--database-secret-namespace`（默认 `POD_NAMESPACE`）启用 Instance 观测；
+为空时不启用。本地运行需显式提供该参数。Deployment 使用 downward API 获取自身 namespace；
+Secret 的 get/list/watch 权限由该 namespace 的 Role 单独授予，不放入 ClusterRole。
+watch 使用 controller-runtime 的 metadata-only cache，读取有效凭据仍直连 API server。
+TLS 使用既有 endpoint 合同，公开 CA bundle 可由 `--database-root-cert` 指定；不会自动挂载
+生产证书或创建管理 Secret。manager worker 停止后统一关闭 pgxpool。
+
+Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Database（含 Released、删除中）
+或动态 Tenant 申请都会阻止 finalizer 解除；列表查询失败也等待。仅在引用全部解除后移除
+`database.ayatori.ddupan.top/instance-protection`，不删除 PostgreSQL、账号或凭据。
+引用查询与删除不是跨对象事务；后续供应仍必须拒绝已删除/删除中的 Instance。
+
+验收使用真实 PostgreSQL + API server：原生管理账号实际建库、owner 授权、trusted 扩展
+安装/回读，拒绝非 trusted 扩展；权限撤回/恢复、只读会话、superuser 拒绝和中途轮换。
+实际 manager 在生成的资源 RBAC 和 namespaced Secret Role 下验证缺失 Secret 后出现、
+轮换、删除、跨 namespace 拒绝和 watch。API 测试另覆盖写入版本冲突、幂等、新 reconciler
+恢复与引用删除保护。完整 DBaaS 仍需供应/导入、OpenBao/ESO、Retain/Delete 集成验收。
 
 ## 设计入口
 

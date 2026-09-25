@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | Review |
-| 最后更新 | 2026-09-24 |
+| 最后更新 | 2026-09-25 |
 
 ## 保护目标
 
@@ -47,9 +47,11 @@ ESO 身份只读管理路径，租户 ESO 身份只读 tenant base path，二者
 使用管理凭据 Store。controller 对管理 Secret 的读取限于自身 namespace，Instance
 不能指定其他 namespace；controller 不创建或修改管理 Secret／ExternalSecret。
 
-PostgreSQL 管理 role 不应是 superuser。若平台选择 SECURITY DEFINER 函数承载创建或
-删除操作，函数必须固定 `search_path`、严格校验 identifier、拒绝任意 SQL，并仅向
-controller role 授予 EXECUTE。controller 不调用 shell 或 `psql` 拼接用户输入。
+2026-09-25 维护者确认第一版使用原生非 superuser 管理 role，具有 CREATEDB/CREATEROLE，
+不引入 SECURITY DEFINER 接口。Instance 检查拒绝 superuser；具体已有资源的 owner 和
+membership 仍需逐资源验证，不能把基础能力用于接管他人资源。扩展按实际权限安装，
+不因可用列表包含某个扩展就默认能安装它。controller 不调用 shell 或 `psql` 拼接用户输入。
+当前检查与真实权限矩阵见 [Instance 原生管理观测](README.md#instance-原生管理观测)。
 
 Kubernetes RBAC 应把 Instance 管理、Database 导入、Released 重新开放和回收限制给平台管理员。
 有权创建 Tenant 的申请者可显式申请未绑定且可用的 Database，不增加资源侧允许绑定名单

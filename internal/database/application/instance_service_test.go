@@ -42,6 +42,10 @@ type databaseStub struct {
 	metadata DatabaseMetadata
 }
 
+func (d *databaseStub) InspectManagement(ctx context.Context) (DatabaseMetadata, error) {
+	return d.InspectMetadata(ctx)
+}
+
 func (d *databaseStub) InspectMetadata(context.Context) (DatabaseMetadata, error) {
 	return d.metadata, d.err
 }
