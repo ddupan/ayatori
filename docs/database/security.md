@@ -24,6 +24,9 @@ Kubernetes 管理员、OpenBao 管理员和 PostgreSQL 管理员是平台信任�
 ## 凭据处理
 
 - controller 使用 Kubernetes auth 获取短期 OpenBao token，不配置长期静态 token。
+- Kubernetes auth 不等于部署在 Kubernetes 内：复用 manager 的 kubeconfig/in-cluster 身份，
+  通过最小 RBAC 的指定 ServiceAccount TokenRequest 获取 JWT，不依赖 Pod 投射文件。
+  kubeconfig 的签发、更新与撤销由部署管理负责；申请失败不回退其他机器身份。
 - 管理凭据只从 Instance 引用的 controller namespace Secret 读取，不复制到
   CR/status/Event/metric/trace；管理员维护 ExternalSecret，由 ESO 同步该 Secret。
 - 动态供应密码使用密码学安全随机源；已有可靠关联时复用 OpenBao 现值，结果不确定时停止并报冲突。

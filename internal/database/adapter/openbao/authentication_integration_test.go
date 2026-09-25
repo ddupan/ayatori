@@ -33,7 +33,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,17 +42,23 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 )
 
 const (
-	authNamespace = "bao-controller"
-	authAudience  = "openbao"
+	unrelatedAuthNamespace = "bao-unrelated"
+	tokenRequestRole       = "request-openbao-token"
+	authNamespace          = "bao-controller"
+	authAudience           = "openbao"
 )
 
 // Bao 容器通过 Docker bridge 访问这个仅转发 TokenReview 的临时入口。
@@ -127,7 +132,17 @@ func tokenReviewCertificate(t *testing.T, address net.IP) (tls.Certificate, stri
 	return certificate, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
-func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
+type kubernetesAuthFixture struct {
+	config           *rest.Config
+	controllerConfig *rest.Config
+	admin            *kubernetes.Clientset
+	controller       *kubernetes.Clientset
+	grant            func()
+	requestToken     func(string, []string) string
+}
+
+func newKubernetesAuthFixture(t *testing.T) *kubernetesAuthFixture {
+	t.Helper()
 	environment := &envtest.Environment{}
 	config, err := environment.Start()
 	if err != nil {
@@ -143,7 +158,7 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 		t.Fatal("cannot construct fixture API client")
 	}
 	ctx := t.Context()
-	for _, namespace := range []string{authNamespace, "bao-unrelated"} {
+	for _, namespace := range []string{authNamespace, unrelatedAuthNamespace} {
 		if _, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{Name: namespace}, metav1.CreateOptions{}); err != nil {
 			t.Fatal("cannot create fixture namespace")
 		}
@@ -151,9 +166,52 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 			t.Fatal("cannot create fixture service account")
 		}
 	}
+	// 集群外身份只有指定 SA 的 TokenRequest 权限，不使用 envtest 管理员凭据运行会话。
+	user, err := environment.AddUser(envtest.User{Name: "systemd-controller"}, config)
+	if err != nil {
+		t.Fatal("cannot create external controller identity")
+	}
+	kubeconfig, err := user.KubeConfig()
+	if err != nil {
+		t.Fatal("cannot build external kubeconfig")
+	}
+	externalConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		t.Fatal("cannot load external kubeconfig")
+	}
+	if _, err := clientset.RbacV1().Roles(authNamespace).Create(ctx, &rbacv1.Role{
+		Name: tokenRequestRole,
+		Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"},
+			ResourceNames: []string{authRole}, Verbs: []string{"create"}}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal("cannot create TokenRequest Role")
+	}
+	permission := &rbacv1.RoleBinding{
+		Name:     tokenRequestRole,
+		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: tokenRequestRole},
+		Subjects: []rbacv1.Subject{{Kind: "User", APIGroup: rbacv1.GroupName, Name: "systemd-controller"}},
+	}
+	grant := func() {
+		t.Helper()
+		if _, err := clientset.RbacV1().RoleBindings(authNamespace).Create(ctx, permission.DeepCopy(), metav1.CreateOptions{}); err != nil {
+			t.Fatal("cannot grant TokenRequest permission")
+		}
+	}
+	grant()
+	externalClient, err := kubernetes.NewForConfig(externalConfig)
+	if err != nil {
+		t.Fatal("cannot construct restricted controller client")
+	}
+	for _, target := range []struct{ namespace, name string }{{unrelatedAuthNamespace, authRole}, {authNamespace, "another-account"}} {
+		_, err := externalClient.CoreV1().ServiceAccounts(target.namespace).CreateToken(ctx, target.name,
+			&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{authAudience}}}, metav1.CreateOptions{})
+		if !apierrors.IsForbidden(err) {
+			t.Fatal("TokenRequest escaped Role namespace/resourceNames restriction")
+		}
+	}
 	if _, err := clientset.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
 		Name:     "bao-fixture-reviewer",
-		RoleRef:  rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "system:auth-delegator"},
+		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "system:auth-delegator"},
 		Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Namespace: authNamespace, Name: authRole}},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatal("cannot authorize fixture TokenReview")
@@ -167,12 +225,22 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 		}
 		return response.Status.Token
 	}
+
+	return &kubernetesAuthFixture{
+		config: config, controllerConfig: externalConfig, admin: clientset, controller: externalClient,
+		grant: grant, requestToken: requestToken,
+	}
+}
+
+func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
+	api := newKubernetesAuthFixture(t)
+	ctx := t.Context()
 	root := baoFixture(t)
 	if err := root.Sys().EnableAuthWithOptionsWithContext(ctx, "kubernetes", &bao.EnableAuthOptions{Type: "kubernetes"}); err != nil {
 		t.Fatal("cannot enable fixture Kubernetes auth")
 	}
-	reviewerToken := requestToken(authNamespace, nil)
-	reviewURL, reviewCA := tokenReviewEndpoint(t, config)
+	reviewerToken := api.requestToken(authNamespace, nil)
+	reviewURL, reviewCA := tokenReviewEndpoint(t, api.config)
 	if _, err := root.Logical().WriteWithContext(ctx, "auth/kubernetes/config", map[string]any{
 		"kubernetes_host":      reviewURL,
 		"kubernetes_ca_cert":   reviewCA,
@@ -189,18 +257,23 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 		"bound_service_account_namespaces": []string{authNamespace},
 		"audience":                         authAudience,
 		"token_policies":                   []string{authRole},
-		"token_ttl":                        "3s", "token_max_ttl": "15s",
+		"token_ttl":                        "3s", "token_max_ttl": "60s",
 	}); err != nil {
 		t.Fatal("cannot configure fixture auth role")
 	}
-	path := filepath.Join(t.TempDir(), "token")
-	writeAuthToken(t, path, requestToken(authNamespace, []string{authAudience}))
 	client := fixtureClient(t, root.Address())
-	session, err := openbao.NewKubernetesSession(client, "kubernetes", authRole, path)
+	manager, err := ctrl.NewManager(api.controllerConfig, ctrl.Options{Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
+	if err != nil {
+		t.Fatal("cannot construct external controller manager")
+	}
+	session, err := openbao.NewKubernetesSession(client, manager.GetConfig(), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancel := startSession(t, session)
+	if err := manager.Add(session); err != nil {
+		t.Fatal("cannot register authentication lifecycle")
+	}
+	cancel := startSession(t, manager)
 	waitForAuthentication(t, session.Ready)
 	store := fixtureStore(t, client)
 	if err := store.Create(ctx, credentialPath, fixtureCredential(t)); err != nil {
@@ -220,24 +293,34 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 		namespace string
 		audience  string
 	}{
-		{"bao-unrelated", authAudience}, {authNamespace, "wrong-audience"},
+		{unrelatedAuthNamespace, authAudience}, {authNamespace, "wrong-audience"},
 	} {
-		writeAuthToken(t, path, requestToken(invalid.namespace, []string{invalid.audience}))
-		if err := root.Auth().Token().RevokeOrphanWithContext(ctx, client.Token()); err != nil {
-			t.Fatal("cannot revoke fixture token")
-		}
-		waitForAuthentication(t, func() bool { return !session.Ready() && client.Token() == "" })
 		// 用相同真实登录入口直接确认 namespace/audience 拒绝，不依赖定时轮询推断。
 		if _, err := root.Logical().WriteWithContext(ctx, "auth/kubernetes/login", map[string]any{
-			"role": authRole, "jwt": requestToken(invalid.namespace, []string{invalid.audience}),
+			"role": authRole, "jwt": api.requestToken(invalid.namespace, []string{invalid.audience}),
 		}); err == nil {
 			t.Fatal("invalid Kubernetes identity was accepted")
 		}
-		writeAuthToken(t, path, requestToken(authNamespace, []string{authAudience}))
-		waitForAuthentication(t, session.Ready)
-		if _, err := store.Read(ctx, credentialPath); err != nil {
-			t.Fatal("credential access did not recover", err)
-		}
+	}
+	if err := api.admin.RbacV1().RoleBindings(authNamespace).Delete(ctx, tokenRequestRole, metav1.DeleteOptions{}); err != nil {
+		t.Fatal("cannot revoke TokenRequest permission")
+	}
+	if err := root.Auth().Token().RevokeOrphanWithContext(ctx, client.Token()); err != nil {
+		t.Fatal("cannot revoke fixture OpenBao token")
+	}
+	waitForAuthentication(t, func() bool { return !session.Ready() && client.Token() == "" })
+	denied, err := api.controller.CoreV1().ServiceAccounts(authNamespace).CreateToken(ctx, authRole,
+		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{authAudience}}}, metav1.CreateOptions{})
+	if !apierrors.IsForbidden(err) || (denied != nil && denied.Status.Token != "") {
+		t.Fatal("revoked caller still obtained a token")
+	}
+	api.grant()
+	waitForAuthentication(t, session.Ready)
+	if client.Token() == initialToken {
+		t.Fatal("reauthentication reused revoked OpenBao token")
+	}
+	if _, err := store.Read(ctx, credentialPath); err != nil {
+		t.Fatal("credential access did not recover", err)
 	}
 	cancel()
 	waitForAuthentication(t, func() bool { return !session.Ready() && client.Token() == "" })

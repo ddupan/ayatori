@@ -1,0 +1,37 @@
+# 示例：只授权 controller 为固定登录 SA 创建短期 JWT；由管理员替换 namespace/subject 后应用。
+# 不自动纳入 config/default，不包含 kubeconfig、长期 token 或 OpenBao 管理权限。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-openbao-login
+  namespace: ayatori-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: database-openbao-token
+  namespace: ayatori-system
+rules:
+- apiGroups: [""]
+  resources: [serviceaccounts/token]
+  resourceNames: [database-openbao-login]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: database-openbao-token
+  namespace: ayatori-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: database-openbao-token
+subjects:
+# 集群外示例：对应管理员签发 kubeconfig 的实际用户名，不是登录目标 SA 的名字。
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-controller
+# 集群内可以改为 manager 自己的 ServiceAccount；不要求两个 subject 同时授权。
+# - kind: ServiceAccount
+#   name: controller-manager
+#   namespace: ayatori-system

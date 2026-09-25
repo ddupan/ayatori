@@ -42,6 +42,8 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	var openBao openBaoOptions
+	openBao.bindFlags(flag.CommandLine)
 	var databaseNamespace, databaseRootCert string
 	flag.StringVar(&databaseNamespace, "database-secret-namespace", os.Getenv("POD_NAMESPACE"),
 		"固定管理 Secret namespace；为空时不启用 Instance 观测")
@@ -179,6 +181,10 @@ func main() {
 	}
 
 	// +kubebuilder:scaffold:builder
+	if err := setupOpenBaoAuthentication(mgr, openBao); err != nil {
+		setupLog.Error(err, "Failed to set up OpenBao authentication")
+		os.Exit(1)
+	}
 	var instanceService *application.InstanceService
 	if databaseNamespace != "" {
 		instanceService, err = setupInstanceObservation(mgr, databaseNamespace, databaseRootCert)

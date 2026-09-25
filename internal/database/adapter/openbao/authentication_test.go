@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	authenticationv1 "k8s.io/api/authentication/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 )
@@ -34,27 +36,52 @@ const (
 	authRole = "controller"
 )
 
-func writeAuthToken(t *testing.T, path, token string) {
+var testIdentity = openbao.KubernetesIdentity{Namespace: "bao-controller", ServiceAccount: authRole, Audience: "openbao"}
+
+func authenticationConfig(address string) *rest.Config {
+	return &rest.Config{Host: address, ContentType: "application/json"}
+}
+
+func authenticationServer(t *testing.T, token func() (string, bool), login http.HandlerFunc) *httptest.Server {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(token), 0600); err != nil {
-		t.Fatal("cannot write temporary projected token")
-	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/bao-controller/serviceaccounts/controller/token" {
+			login(w, r)
+			return
+		}
+		var request authenticationv1.TokenRequest
+		if json.NewDecoder(r.Body).Decode(&request) != nil || r.Method != http.MethodPost ||
+			len(request.Spec.Audiences) != 1 || request.Spec.Audiences[0] != testIdentity.Audience ||
+			request.Spec.ExpirationSeconds == nil || *request.Spec.ExpirationSeconds != 600 {
+			t.Error("unexpected TokenRequest target or lifetime")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		jwt, allowed := token()
+		if !allowed {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(authenticationv1.TokenRequest{
+			APIVersion: "authentication.k8s.io/v1", Kind: "TokenRequest",
+			Status: authenticationv1.TokenRequestStatus{Token: jwt, ExpirationTimestamp: metav1.NewTime(time.Now().Add(10 * time.Minute))},
+		}); err != nil {
+			t.Error("cannot encode fixture TokenRequest response")
+		}
+	}))
 }
 
 func TestKubernetesSessionDoesNotFallbackFromMissingToken(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer server.Close()
 	for _, missing := range []bool{true, false} {
-		path := filepath.Join(t.TempDir(), "token")
-		if !missing {
-			writeAuthToken(t, path, " \n")
-		}
+		server := authenticationServer(t, func() (string, bool) { return "", !missing }, func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+		})
+		defer server.Close()
 		client := fixtureClient(t, server.URL)
-		session, err := openbao.NewKubernetesSession(client, "kubernetes", authRole, path)
+		session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +89,7 @@ func TestKubernetesSessionDoesNotFallbackFromMissingToken(t *testing.T) {
 		err = session.Start(ctx)
 		cancel()
 		if err != nil || session.Ready() || client.Token() != "" || requests.Load() != 0 {
-			t.Fatal("missing or empty token must not fall back to another identity")
+			t.Fatal("denied or empty TokenRequest must not fall back to another identity")
 		}
 	}
 }
@@ -80,7 +107,7 @@ func waitForAuthentication(t *testing.T, check func() bool) {
 	}
 }
 
-func startSession(t *testing.T, session *openbao.KubernetesSession) context.CancelFunc {
+func startSession(t *testing.T, session interface{ Start(context.Context) error }) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -96,10 +123,16 @@ func startSession(t *testing.T, session *openbao.KubernetesSession) context.Canc
 	return cancel
 }
 
-func TestKubernetesSessionRereadsTokenAfterFailure(t *testing.T) {
+func TestKubernetesSessionRequestsNewTokenAfterFailure(t *testing.T) {
 	var attempts atomic.Int32
 	var accepted atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var rotated atomic.Bool
+	server := authenticationServer(t, func() (string, bool) {
+		if rotated.Load() {
+			return "rotated-test-jwt", true
+		}
+		return "expired-test-jwt", true
+	}, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/auth/kubernetes/login" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -121,12 +154,10 @@ func TestKubernetesSessionRereadsTokenAfterFailure(t *testing.T) {
 		}}); err != nil {
 			t.Error("cannot encode authentication fixture response")
 		}
-	}))
+	})
 	defer server.Close()
-	path := filepath.Join(t.TempDir(), "token")
-	writeAuthToken(t, path, "expired-test-jwt")
 	client := fixtureClient(t, server.URL)
-	session, err := openbao.NewKubernetesSession(client, "kubernetes", authRole, path)
+	session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +169,7 @@ func TestKubernetesSessionRereadsTokenAfterFailure(t *testing.T) {
 	if session.Ready() || client.Token() != "" {
 		t.Fatal("failed login retained credentials")
 	}
-	writeAuthToken(t, path, "rotated-test-jwt")
+	rotated.Store(true)
 	waitForAuthentication(t, func() bool { return accepted.Load() && session.Ready() })
 	if client.Token() != fixtureToken {
 		t.Fatal("successful login did not configure the client")
@@ -152,19 +183,17 @@ func TestKubernetesSessionRereadsTokenAfterFailure(t *testing.T) {
 
 func TestKubernetesSessionRejectsUnboundedLease(t *testing.T) {
 	var attempts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := authenticationServer(t, func() (string, bool) { return "test-jwt", true }, func(w http.ResponseWriter, _ *http.Request) {
 		attempts.Add(1)
 		if err := json.NewEncoder(w).Encode(map[string]any{"auth": map[string]any{
 			"client_token": fixtureToken, "lease_duration": 0,
 		}}); err != nil {
 			t.Error("cannot encode authentication fixture response")
 		}
-	}))
+	})
 	defer server.Close()
-	path := filepath.Join(t.TempDir(), "token")
-	writeAuthToken(t, path, "test-jwt")
 	client := fixtureClient(t, server.URL)
-	session, err := openbao.NewKubernetesSession(client, "kubernetes", authRole, path)
+	session, err := openbao.NewKubernetesSession(client, authenticationConfig(server.URL), "kubernetes", authRole, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
