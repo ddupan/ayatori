@@ -36,6 +36,7 @@ const (
 	fixturePassword = "AYATORI-TEST-ONLY-application-password"
 	fixtureToken    = "AYATORI-TEST-ONLY-bao-token"
 	kvDataKey       = "data"
+	kvVersionKey    = "version"
 )
 
 func fixtureCredential(t *testing.T) application.ApplicationCredential {
@@ -66,7 +67,7 @@ func TestCredentialReadbackMustConfirmTheWrite(t *testing.T) {
 					if json.NewDecoder(r.Body).Decode(&request) != nil || request.Options.CAS == nil || *request.Options.CAS != 0 {
 						t.Error("create request must explicitly require CAS=0")
 					}
-					if err := json.NewEncoder(w).Encode(map[string]any{kvDataKey: map[string]any{"version": 1}}); err != nil {
+					if err := json.NewEncoder(w).Encode(map[string]any{kvDataKey: map[string]any{kvVersionKey: 1}}); err != nil {
 						t.Error("cannot encode fixture write response")
 					}
 					return
@@ -85,7 +86,7 @@ func TestCredentialReadbackMustConfirmTheWrite(t *testing.T) {
 				}
 				response := map[string]any{kvDataKey: data}
 				if scenario != "missing metadata" {
-					response["metadata"] = map[string]any{"version": version}
+					response["metadata"] = map[string]any{kvVersionKey: version}
 				}
 				if err := json.NewEncoder(w).Encode(map[string]any{kvDataKey: response}); err != nil {
 					t.Error("cannot encode fixture read response")

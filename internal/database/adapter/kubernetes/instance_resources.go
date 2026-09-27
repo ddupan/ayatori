@@ -84,7 +84,7 @@ func (r *InstanceResources) PresentInstance(ctx context.Context, result applicat
 		ready = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
-		Type: "Ready", Status: ready, ObservedGeneration: object.Generation,
+		Type: readyCondition, Status: ready, ObservedGeneration: object.Generation,
 		Reason: result.Reason, Message: result.Message,
 	})
 	if !equality.Semantic.DeepEqual(*previous, object.Status) {

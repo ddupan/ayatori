@@ -61,6 +61,7 @@ func TestDatabaseAPI(t *testing.T) {
 	t.Run("作用域和默认值", func(t *testing.T) { testDefaults(t, client) })
 	t.Run("拒绝非法声明", func(t *testing.T) { testInvalidDeclarations(t, client) })
 	t.Run("status隔离和绑定并发", func(t *testing.T) { testBindingWrites(t, client) })
+	t.Run("凭据位置与确认版本", func(t *testing.T) { testCredentialStatus(t, client) })
 	t.Run("仓库示例", func(t *testing.T) { testSamples(t, client, scheme) })
 }
 

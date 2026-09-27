@@ -1,6 +1,6 @@
 # 部署与配置
 
-> 本页区分已实现的 Instance 观测配置与尚未接入的供应/交付目标合同。
+> 本页区分已实现的 Instance 观测、认证和凭据准备配置，与尚未接入的 PostgreSQL 供应/交付合同。
 > 完整 Database 服务仍不可部署使用；当前可执行入口见 [模块说明](README.md)。
 
 | 项目 | 内容 |
@@ -45,11 +45,11 @@ Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径�
 | `--openbao-auth-mount` | 已实现，`kubernetes` | Kubernetes auth mount 名称 |
 | `--openbao-auth-role` | 已实现，启用时必填 | OpenBao 登录 role |
 | `--openbao-ca-cert` | 已实现，默认系统信任根 | OpenBao 公开 CA PEM 路径 |
-| `--openbao-kv-mount` | `kv` | KV v2 mount；开发可显式用 `secret` |
+| `--database-credential-mount` | 已实现，默认空 | 显式设置后启用应用凭据准备，要求已配置 OpenBao 认证 |
 | `--openbao-service-account-namespace` | 已实现，启用时必填 | TokenRequest 目标 SA 的固定 namespace |
 | `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
 | `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience，必须匹配 OpenBao role |
-| `--openbao-tenant-base-path` | 默认 `postgresql-tenants` | controller 专属 mount-relative 前缀 |
+| `--database-credential-prefix` | 已实现，默认 `applications` | Database UID 路径的 mount-relative 前缀；不迁移已有位置 |
 | `--external-secret-store-name` | 必填 | controller 创建的 ExternalSecret 固定引用 |
 | `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
 | `--reconcile-timeout` | `30s` | 单轮 reconcile 中外部操作的总期限，必须大于零 |
@@ -122,8 +122,20 @@ base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空
 
 ## OpenBao 与 ESO
 
-controller policy 仅允许在固定 tenant base path 下 create/read/update/delete KV v2
-data 和 metadata，Delete 必须能永久删除全部版本及 metadata；不读取管理凭据路径。
+当前凭据准备只需固定前缀下 KV v2 data 的 create/read/update 权限，不需要 metadata 或
+delete 权限，也不读取管理凭据路径。示例（`secret` 为测试 mount，需替换为实际配置）：
+
+```hcl
+path "secret/data/applications/*" {
+  capabilities = ["create", "read", "update"]
+}
+```
+
+在上面的认证启动参数基础上增加 `--database-credential-mount=secret` 即启用凭据准备；
+需要不同前缀时同时配置 `--database-credential-prefix` 和对应 policy。仅设置
+`--openbao-address` 不会启用凭据创建。缺少认证配置或非法 mount/prefix 在启动时失败。
+新字段 CRD 必须先升级再启用 controller，否则 API pruning 会使确认记录无法保存。
+未来 Delete 清理才需要永久删除全部版本及 metadata 的权限，本切片不提前授予。
 
 管理凭据由管理员维护的 ExternalSecret 同步到 controller namespace；其 ESO 身份
 只读对应管理路径，不能供 Tenant 使用。租户 ESO 身份只读 tenant base path，不得

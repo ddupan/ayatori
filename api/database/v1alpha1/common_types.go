@@ -54,8 +54,8 @@ const (
 	ReclaimDelete ReclaimPolicy = "Delete"
 )
 
-// CredentialReference 定位已有 OpenBao KV v2 凭据，不包含任何秘密值。
-// 只由资源管理员在导入时填写；controller 必须检查部署允许的 mount/path 范围。
+// CredentialReference 定位 OpenBao KV v2 凭据，不包含任何秘密值。
+// 管理员在导入声明中指定，controller 在 status 中固定位置；两者均须检查部署允许的范围。
 type CredentialReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253

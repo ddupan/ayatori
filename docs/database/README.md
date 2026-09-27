@@ -43,8 +43,8 @@ registry 准备决策；这一依赖现已从代码移除，不能把旧运行�
 - 领域层不依赖 Kubernetes types、数据库 driver 或凭据 provider。
 - CredentialReference 只携带管理 Secret 的名称与字段映射，不包含 Secret 内容或 OpenBao path。
 - Instance checkpoint 不是外部事实；实际能力必须由 application/adapter 观察后交给领域对象判断。
-- 当前代码只检查 Instance 供应前置条件，不授予 Tenant 所有权或外部写入权限，也不表示
-  Database API 已经可用。
+- Instance 观察只检查供应前置条件，不单独授予 Tenant 所有权或外部写入权限；凭据准备
+  另行校验双向绑定和保护，尚不表示完整 Database API 已经可用。
 
 ## 管理凭据与连接切片
 
@@ -168,9 +168,42 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 真实后端覆盖创建/回读、并发唯一创建、重建适配器读取、软删除冲突、固定前缀 token
 拒绝管理路径，以及成功写入后丢失响应；HTTP 故障测试补充不重试和错误脱敏。
 
-认证会话已按下面的显式参数接入 manager；凭据存储尚未接入供应用例。
-Database 状态中的稳定位置和已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
-测试 token 只用于临时 fixture，不是生产静态 token 配置接口。现有绑定不会触发外部写入。
+认证会话和凭据准备用例已接入 manager，但默认不启用外部写入。
+Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段与 CEL 校验：
+固定位置、只在创建并回读成功后确认版本，二者写入后不可清空或修改。
+`ReadConfirmed` 按已确认版本检查最新 KV 值，删除或版本漂移报 Conflict，不读取旧版本掩盖变化。
+测试 token 只用于临时 fixture，不是生产静态 token 配置接口。
+
+### 凭据准备闭环
+
+配置认证后，显式设置 `--database-credential-mount` 启用准备；路径默认
+`applications/<Database UID>`，前缀由 `--database-credential-prefix` 配置。
+`CredentialPreparation` 用例检查 Provision 来源、双向绑定 UID、申请目标、finalizer、
+删除/Released 状态及当前 Instance Ready；导入资源不执行本流程。
+顺序为固定位置 → 确认后端尚无凭据 → 保存 CreationStarted → 创建并回读 → 保存确认版本。
+`CredentialReconciler` 只负责 Database/Tenant/Instance watch 和 30 秒依赖重查；
+Kubernetes repository 负责直接读取及有 resourceVersion 保护的状态更新。
+
+外部操作前后回查目标：Database 必须仍是同一 UID/resourceVersion，Tenant/Instance 必须
+保持绑定、spec generation、删除状态、finalizer 保护与有效 Ready；无关 Conditions 刷新
+不构成目标变化。不存在跨 Kubernetes/OpenBao 原子事务：中途发生相关变化时停止确认，
+留下可观察状态，交给后续协调或人工核实，不盲目重试过期的确认写入。
+
+`CredentialsReady=False/CreationStarted` 是正在进行而未确认的诊断，不是成功证明。
+任何新一轮协调遇到该状态且没有确认版本，都转为 Conflict；即使进程在发出请求前退出
+也采用这一保守边界。明确的认证/权限拒绝可等待恢复；响应丢失、回读失败、确认保存失败
+及未确认的已有值均不会自动认领或重新生成密码。Conflict 保留首次原因，普通依赖错误
+保留已确认版本；配置变化停止在原位置，不搬迁或覆盖。并行实例中途撞上已开始的创建
+同样可能保守地要求人工处理，不承诺无损接续；多副本部署应启用既有 leader election。
+
+成功只设置 `CredentialsReady=True`，Database Ready 仍为 False/ProvisioningIncomplete，
+Tenant 仍未完成交付。本切片没有 PostgreSQL role/database 创建、扩展安装、ESO 投射、
+Retain 释放或 Delete 清理，也不会解除 finalizer。不要作为完整 DBaaS 部署。
+
+单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、并发、
+依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
+及重启。该 fixture 只声明 Instance 前置 Ready，真实 PostgreSQL 管理能力由既有 Instance
+集成测试覆盖，不把凭据准备验收当成实际建库或应用登录验收。
 
 ## OpenBao Kubernetes 认证会话
 

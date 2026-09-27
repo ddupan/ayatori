@@ -38,7 +38,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	if options.manager.webhookOptions().Port != 9443 || !options.logging.Development {
 		t.Fatal("webhook or logging defaults changed")
 	}
-	if options.database.secretNamespace != "" || options.openBao.address != "" {
+	if options.database.secretNamespace != "" || options.database.credentialMount != "" || options.openBao.address != "" {
 		t.Fatal("optional backends enabled by default")
 	}
 	if options.openBao.mount != "kubernetes" || options.openBao.identity.Audience != "openbao" {
@@ -55,6 +55,19 @@ func TestDefaultConfiguration(t *testing.T) {
 		if _, _, err := manager.Scheme.ObjectKinds(object); err != nil {
 			t.Fatalf("missing scheme registration for %T: %v", object, err)
 		}
+	}
+}
+
+func TestCredentialPreparationOptions(t *testing.T) {
+	options := parseTestOptions(t, "--database-credential-mount=applications-kv", "--database-credential-prefix=database")
+	if options.database.credentialMount != "applications-kv" || options.database.credentialPrefix != "database" {
+		t.Fatal("凭据准备参数未传入领域装配")
+	}
+	if err := setupCredentialPreparation(nil, options.database, nil); err == nil {
+		t.Fatal("启用凭据准备必须有显式配置的认证 client")
+	}
+	if err := setupCredentialPreparation(nil, databaseOptions{}, nil); err != nil {
+		t.Fatal("默认停用凭据准备不应要求后端")
 	}
 }
 

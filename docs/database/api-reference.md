@@ -4,7 +4,7 @@
 | --- | --- |
 | 状态 | API schema 与绑定 controller 已实现；供应、交付与删除清理未接入 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
-| 最后更新 | 2026-09-25 |
+| 最后更新 | 2026-09-27 |
 
 以 [系统规格](specification.md) 与
 [ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。类型与生成的 CRD 已纳入源码，
@@ -24,6 +24,8 @@ Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 
 | Database | `spec.reclaimPolicy` | Retain 默认或 Delete |
 | Database | `spec.tenantRef.namespace/name/uid` | controller 写入的完整绑定身份，不是允许名单 |
 | Database | `status.instanceUID` | 观察时的 Instance 身份 |
+| Database | `status.credentialRef.mount/path` | 首次写入前固定的 KV v2 位置，不随部署配置迁移 |
+| Database | `status.credentialVersion` | 创建并回读成功后确认的正整数版本；省略表示未确认 |
 | Tenant | `spec.provision.instanceRef.name` | 动态申请来源，与 `spec.databaseRef` 互斥且必须二选一 |
 | Tenant | `spec.provision.database/loginRole` | 可省略，语义默认值由 controller 解析，不由 CRD 推导 |
 | Tenant | `spec.databaseRef.name` | 显式申请已有 Database，不额外指定 Instance |
@@ -36,6 +38,15 @@ Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应�
 `credentialRef.path` 是 mount 内逻辑路径，不包含 KV v2 的 `data/` 前缀。
 其部署允许范围、实际凭据读取和 URL 安全构造仍由后续 adapter/controller 验证。
 
+凭据位置与确认版本一旦写入便不可更改或移除；确认版本必须有对应位置。Conditions 描述
+当前可用性，不替代确认记录，也不能因读取暂时失败而清空记录。上述 schema 已有真实 API
+server 校验；独立的凭据准备用例在显式启用后填写这些字段，绑定 controller 不负责外部写入。
+未确认的已有值必须报 Conflict，不能用读取成功补记版本；已确认版本的恢复读取检查最新
+KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生成替代密码。第一版不提供轮换入口。
+`CredentialsReady` 条件只描述凭据准备结果；它不授权实际数据库交付。
+`CreationStarted` 且无确认版本表示创建未完成确认，重入时停在 Conflict；不尝试推断
+进程中断前请求是否发出。完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。
+
 示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、
 [导入 Database](../../config/samples/database_v1alpha1_postgresqldatabase.yaml)、
 [动态/已有资源申请](../../config/samples/database_v1alpha1_postgresqltenant.yaml)。
@@ -47,7 +58,7 @@ API 接受两个 Tenant 引用同一 Database 不表示允许双重绑定；排�
 已有资源必须有当前版本 Ready 观察、匹配的 Instance UID，并处于未绑定的 Available 状态。
 同一 Tenant 的资源侧记录已写入时，允许回读后补齐申请侧，不重新争抢资源。
 
-Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database 有实例身份观察或
+Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database 有实例身份观察、凭据位置或
 绑定后固定实际 database、loginRole、来源和凭据引用，回收策略仍可修改。
 读取绑定判断使用 APIReader，写入依靠 resourceVersion；watch/cache 负责触发协调。
 绑定顺序由 application service 协调，纯资格规则在领域层；Kubernetes adapter 负责快照

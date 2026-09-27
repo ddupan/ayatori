@@ -19,6 +19,7 @@ import (
 const (
 	TenantFinalizer   = "database.ayatori.ddupan.top/tenant-protection"
 	DatabaseFinalizer = "database.ayatori.ddupan.top/database-protection"
+	readyCondition    = "Ready"
 )
 
 // BindingResources 读取领域所需事实，并把用例结果呈现为 CR、finalizer 与 Conditions。
@@ -148,7 +149,7 @@ func (r *BindingResources) presentStatus(ctx context.Context, object *databasev1
 		}
 	}
 	meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
-		Type: "Ready", Status: metav1.ConditionFalse, Reason: status.Reason, Message: status.Message,
+		Type: readyCondition, Status: metav1.ConditionFalse, Reason: status.Reason, Message: status.Message,
 		ObservedGeneration: object.Generation,
 	})
 	if equality.Semantic.DeepEqual(*previous, object.Status) {
@@ -186,6 +187,6 @@ func bindingVersionConflict(resource, name string) error {
 }
 
 func currentReady(generation int64, conditions []metav1.Condition) bool {
-	condition := meta.FindStatusCondition(conditions, "Ready")
+	condition := meta.FindStatusCondition(conditions, readyCondition)
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == generation
 }

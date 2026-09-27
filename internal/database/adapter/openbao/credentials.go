@@ -32,11 +32,11 @@ import (
 )
 
 var (
-	ErrInvalidLocation = errors.New("credential location is outside the configured scope")
-	ErrUnavailable     = errors.New("credential backend unavailable")
-	ErrNotFound        = errors.New("application credential not found")
-	ErrConflict        = errors.New("credential creation requires manual conflict resolution")
-	ErrUncertain       = errors.New("credential creation outcome is uncertain; manual resolution required")
+	ErrInvalidLocation = application.ErrCredentialLocation
+	ErrUnavailable     = application.ErrCredentialUnavailable
+	ErrNotFound        = application.ErrCredentialNotFound
+	ErrConflict        = application.ErrCredentialConflict
+	ErrUncertain       = application.ErrCredentialUncertain
 )
 
 var pathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -45,6 +45,7 @@ var pathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // 本适配器既不自动认领已有值，也不提供覆盖、轮换或删除操作。
 type Credentials struct {
 	kv       *bao.KVv2
+	mount    string
 	basePath string
 }
 
@@ -54,7 +55,7 @@ func NewCredentials(client *bao.Client, mount, basePath string) (*Credentials, e
 	if client == nil || !validPath(mount) || !validPath(basePath) {
 		return nil, ErrInvalidLocation
 	}
-	return &Credentials{kv: client.KVv2(mount), basePath: basePath}, nil
+	return &Credentials{kv: client.KVv2(mount), mount: mount, basePath: basePath}, nil
 }
 
 func validPath(value string) bool {
@@ -80,20 +81,51 @@ func (c *Credentials) accepts(path string) bool {
 
 // Read 只读取调用方已确认关联的路径；成功读取不构成对既有凭据的自动认领。
 func (c *Credentials) Read(ctx context.Context, path string) (application.ApplicationCredential, error) {
+	secret, err := c.read(ctx, path)
+	if err != nil {
+		return application.ApplicationCredential{}, err
+	}
+	return application.ParseApplicationCredential(secret.Data)
+}
+
+// ReadConfirmed 读取最新值并核对已持久化的确认版本，不回退读取历史版本。
+// 确认后的删除或改写需要人工处理，不能因此重新生成密码。
+func (c *Credentials) ReadConfirmed(ctx context.Context, path string, version int64) (application.ApplicationCredential, error) {
+	if version < 1 {
+		return application.ApplicationCredential{}, ErrConflict
+	}
+	secret, err := c.read(ctx, path)
+	if errors.Is(err, ErrNotFound) {
+		return application.ApplicationCredential{}, ErrConflict
+	}
+	if err != nil {
+		return application.ApplicationCredential{}, err
+	}
+	if secret.VersionMetadata == nil || int64(secret.VersionMetadata.Version) != version {
+		return application.ApplicationCredential{}, ErrConflict
+	}
+	credential, err := application.ParseApplicationCredential(secret.Data)
+	if err != nil {
+		return application.ApplicationCredential{}, ErrConflict
+	}
+	return credential, nil
+}
+
+func (c *Credentials) read(ctx context.Context, path string) (*bao.KVSecret, error) {
 	if !c.accepts(path) {
-		return application.ApplicationCredential{}, ErrInvalidLocation
+		return nil, ErrInvalidLocation
 	}
 	secret, err := c.kv.Get(ctx, path)
 	if errors.Is(err, bao.ErrSecretNotFound) {
-		return application.ApplicationCredential{}, ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return application.ApplicationCredential{}, ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	if secret == nil || secret.Data == nil {
-		return application.ApplicationCredential{}, ErrNotFound
+		return nil, ErrNotFound
 	}
-	return application.ParseApplicationCredential(secret.Data)
+	return secret, nil
 }
 
 // Create 只创建从未存在过的路径，并验证回读七键与提交值完全一致。

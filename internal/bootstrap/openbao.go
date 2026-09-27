@@ -21,6 +21,8 @@ import (
 	"flag"
 	"net/http"
 
+	bao "github.com/openbao/openbao/api/v2"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
@@ -45,28 +47,32 @@ func (o *openBaoOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.identity.Audience, "openbao-token-audience", "openbao", "SA JWT audience，须匹配 OpenBao role")
 }
 
-func setupOpenBaoAuthentication(manager ctrl.Manager, options openBaoOptions) error {
+func setupOpenBaoAuthentication(manager ctrl.Manager, options openBaoOptions) (*bao.Client, error) {
 	if options.address == "" {
-		return nil
+		return nil, nil
 	}
 	client, err := openbao.NewClient(options.address, options.caCert)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// 复用 manager 已装配的 Kubernetes client，不重复加载配置或创建客户端。
 	session, err := openbao.NewKubernetesSession(
 		client, manager.GetClient(), options.mount, options.role, options.identity,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := manager.Add(session); err != nil {
-		return err
+		return nil, err
 	}
-	return manager.AddReadyzCheck("openbao-auth", func(_ *http.Request) error {
+	err = manager.AddReadyzCheck("openbao-auth", func(_ *http.Request) error {
 		if !session.Ready() {
 			return errors.New("OpenBao Kubernetes authentication unavailable")
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
