@@ -5,12 +5,21 @@
 
 ## 当前绑定切片的限制
 
-源码已接入绑定 controller，未接入 PostgreSQL 供应、OpenBao/ESO 交付或删除清理。
+源码已接入绑定、Instance 观测与可选的 Bao 凭据准备，未接入 PostgreSQL 供应、ESO 交付或删除清理。
 Bound/BindingComplete 只表示 Kubernetes 双向记录一致，Ready 仍为 False。
 Tenant 删除会保留 `database.ayatori.ddupan.top/tenant-protection` 并报告 DeletionPending；
 Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理后移除路径。
 这是未完成能力的明确边界，不是已经实现的 Retain/Delete 恢复逻辑。不要将此切片部署为
 业务 DBaaS，也不要为了消除等待状态直接移除 finalizer；后续必须补齐清理与验收。
+
+凭据准备现在可单独启用，见[部署参数](deployment.md)。观察 Database 的
+`CredentialsReady`、固定 `status.credentialRef` 和 `status.credentialVersion`，不要导出
+凭据内容。Prepared 只代表 Bao 凭据可用，不代表已建库或 Tenant Ready。
+`CreationStarted` 在创建结果确认前持久化；重启或失败留下该状态时报告 Conflict。
+这包括“状态已写但请求还没发出”的保守停止；不要因为当前位置暂时为空就重试生成密码。
+无确认版本的 Conflict 不会自行消失，后端恢复也不自动重入；应暂停该 controller、等待
+在途请求结束后核实版本历史、残留与绑定，再决定清理或显式导入。不要清空整个 status
+或更改固定引用来绕过保护。导入和完整人工恢复入口仍待对应切片实现。
 
 ## 日常检查
 

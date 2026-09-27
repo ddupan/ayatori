@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	bao "github.com/openbao/openbao/api/v2"
+
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
@@ -46,16 +48,28 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := setupOpenBaoAuthentication(manager, options.openBao); err != nil {
+	baoClient, err := setupOpenBaoAuthentication(manager, options.openBao)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	cleanup, err := setupDatabase(ctx, manager, options.database)
+	cleanup, err := setupDatabase(ctx, manager, options.database, baoClient)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
+	// 空 API 中没有供应目标；此处验证启用路径确实注册 controller，不访问外部 Bao。
+	fixtureConfig := bao.NewConfig()
+	fixtureConfig.Address = "http://127.0.0.1:1"
+	fixtureClient, err := bao.NewClient(fixtureConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.database.credentialMount = "secret"
+	if err := setupCredentialPreparation(manager, options.database, fixtureClient); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- manager.Start(ctx) }()
 	defer func() {

@@ -32,11 +32,11 @@ import (
 )
 
 var (
-	ErrInvalidLocation = errors.New("credential location is outside the configured scope")
-	ErrUnavailable     = errors.New("credential backend unavailable")
-	ErrNotFound        = errors.New("application credential not found")
-	ErrConflict        = errors.New("credential creation requires manual conflict resolution")
-	ErrUncertain       = errors.New("credential creation outcome is uncertain; manual resolution required")
+	ErrInvalidLocation = application.ErrCredentialLocation
+	ErrUnavailable     = application.ErrCredentialUnavailable
+	ErrNotFound        = application.ErrCredentialNotFound
+	ErrConflict        = application.ErrCredentialConflict
+	ErrUncertain       = application.ErrCredentialUncertain
 )
 
 var pathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -45,6 +45,7 @@ var pathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // 本适配器既不自动认领已有值，也不提供覆盖、轮换或删除操作。
 type Credentials struct {
 	kv       *bao.KVv2
+	mount    string
 	basePath string
 }
 
@@ -54,7 +55,7 @@ func NewCredentials(client *bao.Client, mount, basePath string) (*Credentials, e
 	if client == nil || !validPath(mount) || !validPath(basePath) {
 		return nil, ErrInvalidLocation
 	}
-	return &Credentials{kv: client.KVv2(mount), basePath: basePath}, nil
+	return &Credentials{kv: client.KVv2(mount), mount: mount, basePath: basePath}, nil
 }
 
 func validPath(value string) bool {

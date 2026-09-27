@@ -23,10 +23,11 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	if err := setupOpenBaoAuthentication(manager, options.openBao); err != nil {
+	baoClient, err := setupOpenBaoAuthentication(manager, options.openBao)
+	if err != nil {
 		return fmt.Errorf("set up OpenBao authentication: %w", err)
 	}
-	cleanup, err := setupDatabase(context.Background(), manager, options.database)
+	cleanup, err := setupDatabase(context.Background(), manager, options.database, baoClient)
 	if err != nil {
 		return err
 	}

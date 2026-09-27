@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 
+	bao "github.com/openbao/openbao/api/v2"
+
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
+	databasebao "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
@@ -14,14 +17,18 @@ import (
 )
 
 type databaseOptions struct {
-	secretNamespace string
-	rootCert        string
+	secretNamespace  string
+	rootCert         string
+	credentialMount  string
+	credentialPrefix string
 }
 
 func (o *databaseOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.secretNamespace, "database-secret-namespace", os.Getenv("POD_NAMESPACE"),
 		"固定管理 Secret namespace；为空时不启用 Instance 观测")
 	flags.StringVar(&o.rootCert, "database-root-cert", "", "PostgreSQL 管理连接信任的公开 CA bundle 路径")
+	flags.StringVar(&o.credentialMount, "database-credential-mount", "", "应用凭据 KV v2 mount；为空时不启用凭据准备")
+	flags.StringVar(&o.credentialPrefix, "database-credential-prefix", "applications", "应用凭据路径前缀；已有固定位置不随配置变化迁移")
 }
 
 func (o databaseOptions) configureManager(options *ctrl.Options) {
@@ -31,7 +38,7 @@ func (o databaseOptions) configureManager(options *ctrl.Options) {
 }
 
 // setupDatabase 封装 Database 的内部装配，并返回在 manager 停止后执行的清理。
-func setupDatabase(ctx context.Context, manager ctrl.Manager, options databaseOptions) (func(), error) {
+func setupDatabase(ctx context.Context, manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) (func(), error) {
 	cleanup := func() {}
 	if options.secretNamespace != "" {
 		service, err := setupInstanceObservation(manager, options.secretNamespace, options.rootCert)
@@ -44,7 +51,25 @@ func setupDatabase(ctx context.Context, manager ctrl.Manager, options databaseOp
 		cleanup()
 		return nil, fmt.Errorf("set up Database binding controller: %w", err)
 	}
+	if err := setupCredentialPreparation(manager, options, baoClient); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("set up Database credential preparation: %w", err)
+	}
 	return cleanup, nil
+}
+
+func setupCredentialPreparation(manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) error {
+	if options.credentialMount == "" {
+		return nil
+	}
+	if baoClient == nil {
+		return fmt.Errorf("database credential preparation requires OpenBao authentication configuration")
+	}
+	store, err := databasebao.NewCredentials(baoClient, options.credentialMount, options.credentialPrefix)
+	if err != nil {
+		return err
+	}
+	return (&databasecontroller.CredentialReconciler{Store: store}).SetupWithManager(manager)
 }
 
 func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) (*application.InstanceService, error) {

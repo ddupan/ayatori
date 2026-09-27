@@ -40,9 +40,12 @@ Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应�
 
 凭据位置与确认版本一旦写入便不可更改或移除；确认版本必须有对应位置。Conditions 描述
 当前可用性，不替代确认记录，也不能因读取暂时失败而清空记录。上述 schema 已有真实 API
-server 校验；负责持久化它们的供应用例尚未接入，现有绑定 controller 不会填写这些字段。
+server 校验；独立的凭据准备用例在显式启用后填写这些字段，绑定 controller 不负责外部写入。
 未确认的已有值必须报 Conflict，不能用读取成功补记版本；已确认版本的恢复读取检查最新
 KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生成替代密码。第一版不提供轮换入口。
+`CredentialsReady` 条件只描述凭据准备结果；它不授权实际数据库交付。
+`CreationStarted` 且无确认版本表示创建未完成确认，重入时停在 Conflict；不尝试推断
+进程中断前请求是否发出。完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。
 
 示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、
 [导入 Database](../../config/samples/database_v1alpha1_postgresqldatabase.yaml)、
