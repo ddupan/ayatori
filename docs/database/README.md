@@ -169,7 +169,12 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 拒绝管理路径，以及成功写入后丢失响应；HTTP 故障测试补充不重试和错误脱敏。
 
 认证会话已按下面的显式参数接入 manager；凭据存储尚未接入供应用例。
-Database 状态中的稳定位置和已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
+Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段与 CEL 校验：
+固定位置、只在创建并回读成功后确认版本，二者写入后不可清空或修改。
+`ReadConfirmed` 按已确认版本检查最新 KV 值，删除或版本漂移报 Conflict，不读取旧版本掩盖变化。
+真实 API server 验证 status 清除拒绝、版本冲突和 Conditions 更新；真实 Bao 验证重建 adapter
+后读取、缺少确认记录拒绝、版本变化与软删除。字段持久化的供应 service/controller、
+PostgreSQL 创建以及 ESO 交付仍未完成，本切片不是已接入的凭据准备流程。
 测试 token 只用于临时 fixture，不是生产静态 token 配置接口。现有绑定不会触发外部写入。
 
 ## OpenBao Kubernetes 认证会话

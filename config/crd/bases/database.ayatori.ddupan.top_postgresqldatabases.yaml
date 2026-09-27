@@ -50,8 +50,8 @@ spec:
             properties:
               credentialRef:
                 description: |-
-                  CredentialReference 定位已有 OpenBao KV v2 凭据，不包含任何秘密值。
-                  只由资源管理员在导入时填写；controller 必须检查部署允许的 mount/path 范围。
+                  CredentialReference 定位 OpenBao KV v2 凭据，不包含任何秘密值。
+                  管理员在导入声明中指定，controller 在 status 中固定位置；两者均须检查部署允许的范围。
                 properties:
                   mount:
                     maxLength: 253
@@ -198,6 +198,29 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              credentialRef:
+                description: CredentialRef 在首次外部写入前固定凭据位置；部署配置变化不迁移此位置。
+                properties:
+                  mount:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  path:
+                    description: Path 是 mount 内的逻辑路径，不含 KV v2 的 data/ API 前缀。
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                required:
+                - mount
+                - path
+                type: object
+              credentialVersion:
+                description: |-
+                  CredentialVersion 只在创建并回读成功后记录，不表示凭据当前仍可用。
+                  省略表示尚未确认；已有凭据不能仅凭读取成功补记确认。
+                format: int64
+                minimum: 1
+                type: integer
               instanceUID:
                 description: InstanceUID 记录观察时的实例身份，不把同名新实例视为原目标。
                 type: string
@@ -212,13 +235,22 @@ spec:
         - spec
         type: object
         x-kubernetes-validations:
+        - message: credentialVersion requires credentialRef
+          rule: '!has(self.status) || !has(self.status.credentialVersion) || has(self.status.credentialRef)'
+        - message: recorded credentialRef cannot change or be removed
+          rule: '!(has(oldSelf.status) && has(oldSelf.status.credentialRef)) || (has(self.status)
+            && has(self.status.credentialRef) && self.status.credentialRef == oldSelf.status.credentialRef)'
+        - message: confirmed credentialVersion cannot change or be removed
+          rule: '!(has(oldSelf.status) && has(oldSelf.status.credentialVersion)) ||
+            (has(self.status) && has(self.status.credentialVersion) && self.status.credentialVersion
+            == oldSelf.status.credentialVersion)'
         - message: managed database target cannot change after observation or binding
             starts
-          rule: '!(has(oldSelf.spec.tenantRef) || (has(oldSelf.status) && has(oldSelf.status.instanceUID)))
-            || (self.spec.instanceRef == oldSelf.spec.instanceRef && self.spec.database
-            == oldSelf.spec.database && self.spec.loginRole == oldSelf.spec.loginRole
-            && self.spec.source == oldSelf.spec.source && has(self.spec.credentialRef)
-            == has(oldSelf.spec.credentialRef) && (!has(oldSelf.spec.credentialRef)
+          rule: '!(has(oldSelf.spec.tenantRef) || (has(oldSelf.status) && (has(oldSelf.status.instanceUID)
+            || has(oldSelf.status.credentialRef)))) || (self.spec.instanceRef == oldSelf.spec.instanceRef
+            && self.spec.database == oldSelf.spec.database && self.spec.loginRole
+            == oldSelf.spec.loginRole && self.spec.source == oldSelf.spec.source &&
+            has(self.spec.credentialRef) == has(oldSelf.spec.credentialRef) && (!has(oldSelf.spec.credentialRef)
             || self.spec.credentialRef == oldSelf.spec.credentialRef))'
     served: true
     storage: true

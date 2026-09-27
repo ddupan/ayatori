@@ -192,6 +192,12 @@ mount/base path 属部署配置，Tenant 不得自选任意路径；原按 Tenan
 位置，不要求搬迁已有凭据。Released 不自动改密，管理员处理旧访问后才重新开放资源。
 不得因换 Tenant、改部署参数或重新绑定就隐式搬迁凭据或改密。
 
+2026-09-27 确认最小凭据记录：Database `status.credentialRef` 在首次外部写入前固定
+mount/path；`status.credentialVersion` 仅在成功创建并回读后保存 KV 版本。位置和确认版本
+不得自动更改或清空，Conditions 只描述当前可用性。已有值但无确认版本时报告 Conflict，
+不能靠读取成功认领；已确认凭据消失或最新版本不一致同样停止，等待人工核实。
+部署参数变化不得搬迁旧位置；确认记录写入的 resourceVersion 冲突不能通过盲目重试覆盖。
+
 TLS、OpenBao Kubernetes auth、controller/ESO 身份隔离、Secret 读取范围和防泄漏要求
 见 [安全模型](security.md)。这些安全约束继续适用。
 

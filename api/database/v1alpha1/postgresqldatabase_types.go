@@ -30,6 +30,14 @@ type PostgreSQLDatabaseStatus struct {
 	// InstanceUID 记录观察时的实例身份，不把同名新实例视为原目标。
 	// +optional
 	InstanceUID types.UID `json:"instanceUID,omitempty"`
+	// CredentialRef 在首次外部写入前固定凭据位置；部署配置变化不迁移此位置。
+	// +optional
+	CredentialRef *CredentialReference `json:"credentialRef,omitempty"`
+	// CredentialVersion 只在创建并回读成功后记录，不表示凭据当前仍可用。
+	// 省略表示尚未确认；已有凭据不能仅凭读取成功补记确认。
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	CredentialVersion int64 `json:"credentialVersion,omitempty"`
 	// Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
 	// +optional
 	Phase string `json:"phase,omitempty"`
@@ -42,7 +50,10 @@ type PostgreSQLDatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
-// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.spec.tenantRef) || (has(oldSelf.status) && has(oldSelf.status.instanceUID))) || (self.spec.instanceRef == oldSelf.spec.instanceRef && self.spec.database == oldSelf.spec.database && self.spec.loginRole == oldSelf.spec.loginRole && self.spec.source == oldSelf.spec.source && has(self.spec.credentialRef) == has(oldSelf.spec.credentialRef) && (!has(oldSelf.spec.credentialRef) || self.spec.credentialRef == oldSelf.spec.credentialRef))",message="managed database target cannot change after observation or binding starts"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.credentialVersion) || has(self.status.credentialRef)",message="credentialVersion requires credentialRef"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.credentialRef)) || (has(self.status) && has(self.status.credentialRef) && self.status.credentialRef == oldSelf.status.credentialRef)",message="recorded credentialRef cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.credentialVersion)) || (has(self.status) && has(self.status.credentialVersion) && self.status.credentialVersion == oldSelf.status.credentialVersion)",message="confirmed credentialVersion cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.spec.tenantRef) || (has(oldSelf.status) && (has(oldSelf.status.instanceUID) || has(oldSelf.status.credentialRef)))) || (self.spec.instanceRef == oldSelf.spec.instanceRef && self.spec.database == oldSelf.spec.database && self.spec.loginRole == oldSelf.spec.loginRole && self.spec.source == oldSelf.spec.source && has(self.spec.credentialRef) == has(oldSelf.spec.credentialRef) && (!has(oldSelf.spec.credentialRef) || self.spec.credentialRef == oldSelf.spec.credentialRef))",message="managed database target cannot change after observation or binding starts"
 // +kubebuilder:printcolumn:name="Instance",type=string,JSONPath=`.spec.instanceRef.name`
 // +kubebuilder:printcolumn:name="Database",type=string,JSONPath=`.spec.database`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
