@@ -45,6 +45,11 @@ Proxmox 作为稀缺物理基础设施可以共享，通过 pool、tag、token �
 
 ## 进程内依赖边界
 
+`cmd/main.go` 是唯一程序入口，只调用 `internal/bootstrap.Run` 并处理退出状态。
+命令行参数、manager 创建、infra 与领域装配集中在 `internal/bootstrap`，
+不在 `cmd` 平铺组件装配文件，也不为每个领域生成独立二进制。
+Makefile 与 Dockerfile 均继续构建 `cmd/main.go`。
+
 基础设施能力属于整个 controller-manager，不因首个消费者是 Database 就归入该领域。
 `internal/infra/openbao` 管理官方 SDK client 的 TLS 配置、Kubernetes 认证及 token 生命周期，
 不依赖 Database 或其他产品领域。Bao client 默认禁用自动重试，写入结果不确定时由用例处理；
