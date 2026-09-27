@@ -12,7 +12,6 @@ import (
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 )
 
 // 在 API 边界模拟旧 schema 裁剪位置字段；剩余写入仍由真实 API server 处理。
@@ -48,5 +47,5 @@ func testPreparationPruning(t *testing.T, f *preparationFixture) {
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 }

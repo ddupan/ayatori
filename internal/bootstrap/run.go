@@ -27,12 +27,12 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("set up OpenBao authentication: %w", err)
 	}
-	cleanup, err := setupDatabase(context.Background(), manager, options.database, baoClient)
+	closeDatabaseConnections, err := registerDatabaseControllers(context.Background(), manager, options.database, baoClient)
 	if err != nil {
 		return err
 	}
 	// manager 的 worker 完全停止后才释放组件持有的资源。
-	defer cleanup()
+	defer closeDatabaseConnections()
 
 	setupLog.Info("Starting manager")
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {

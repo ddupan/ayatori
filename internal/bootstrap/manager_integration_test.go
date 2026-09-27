@@ -54,11 +54,11 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	cleanup, err := setupDatabase(ctx, manager, options.database, baoClient)
+	closeDatabaseConnections, err := registerDatabaseControllers(ctx, manager, options.database, baoClient)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer closeDatabaseConnections()
 	// 空 API 中没有供应目标；此处验证启用路径确实注册 controller，不访问外部 Bao。
 	fixtureConfig := bao.NewConfig()
 	fixtureConfig.Address = "http://127.0.0.1:1"
@@ -80,7 +80,7 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 				t.Error(err)
 			}
 		case <-time.After(20 * time.Second):
-			t.Error("manager did not stop before component cleanup")
+			t.Error("manager did not stop before component closeDatabaseConnections")
 		}
 	}()
 	if !manager.GetCache().WaitForCacheSync(ctx) {

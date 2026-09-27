@@ -54,7 +54,7 @@ func testPreparationConcurrency(t *testing.T, f *preparationFixture) {
 	if succeeded != 1 || conflicted != 1 {
 		t.Fatal("同一快照只能有一个用例成功固定位置并继续创建")
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	stored, err := f.bao.KVv2("secret").Get(t.Context(), database.Status.CredentialRef.Path)
 	if err != nil || stored.VersionMetadata.Version != 1 {
 		t.Fatal("并发准备用例只能产生一个凭据版本")

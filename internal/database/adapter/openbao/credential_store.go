@@ -3,22 +3,24 @@ package openbao
 import (
 	"context"
 
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 )
 
 var _ application.CredentialStore = (*Credentials)(nil)
 
-func (c *Credentials) ProvisionLocation(uid string) (application.CredentialLocation, error) {
+func (c *Credentials) ProvisionLocation(uid string) (credentialdomain.Location, error) {
 	path, err := c.ProvisionPath(uid)
 	if err != nil {
-		return application.CredentialLocation{}, err
+		return credentialdomain.Location{}, err
 	}
-	return application.CredentialLocation{Mount: c.mount, Path: path}, nil
+	return credentialdomain.Location{Mount: c.mount, Path: path}, nil
 }
 
-func (c *Credentials) ReadCredential(ctx context.Context, location application.CredentialLocation, version int64) (application.ApplicationCredential, error) {
+func (c *Credentials) ReadCredential(ctx context.Context, location credentialdomain.Location, version int64) (credentialdomain.ApplicationCredential, error) {
 	if location.Mount != c.mount {
-		return application.ApplicationCredential{}, ErrInvalidLocation
+		return credentialdomain.ApplicationCredential{}, ErrInvalidLocation
 	}
 	if version == 0 {
 		return c.Read(ctx, location.Path)
@@ -26,7 +28,7 @@ func (c *Credentials) ReadCredential(ctx context.Context, location application.C
 	return c.ReadConfirmed(ctx, location.Path, version)
 }
 
-func (c *Credentials) CreateCredential(ctx context.Context, location application.CredentialLocation, credential application.ApplicationCredential) (int64, error) {
+func (c *Credentials) CreateCredential(ctx context.Context, location credentialdomain.Location, credential credentialdomain.ApplicationCredential) (int64, error) {
 	if location.Mount != c.mount {
 		return 0, ErrInvalidLocation
 	}

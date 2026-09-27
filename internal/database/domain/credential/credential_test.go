@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package application_test
+package credential_test
 
 import (
 	"encoding/json"
@@ -23,7 +23,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -35,11 +36,11 @@ func TestApplicationCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := application.GenerateApplicationCredential("owner", "app", endpoint)
+	first, err := credentialdomain.GenerateApplicationCredential("owner", "app", endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := application.GenerateApplicationCredential("owner", "app", endpoint)
+	second, err := credentialdomain.GenerateApplicationCredential("owner", "app", endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestApplicationCredential(t *testing.T) {
 	if len(data) != 7 || data["password"] == second.SecretData()["password"] || len(data["password"].(string)) != 43 {
 		t.Fatal("expected seven keys and independent 256-bit passwords")
 	}
-	parsed, err := application.ParseApplicationCredential(data)
+	parsed, err := credentialdomain.ParseApplicationCredential(data)
 	if err != nil || !maps.Equal(parsed.SecretData(), data) {
 		t.Fatal("credential did not round trip")
 	}
@@ -67,15 +68,15 @@ func TestApplicationCredential(t *testing.T) {
 	for key := range data {
 		invalid := maps.Clone(data)
 		delete(invalid, key)
-		if _, err := application.ParseApplicationCredential(invalid); err == nil {
+		if _, err := credentialdomain.ParseApplicationCredential(invalid); err == nil {
 			t.Fatalf("accepted missing %s", key)
 		}
 		invalid[key] = 42
-		if _, err := application.ParseApplicationCredential(invalid); err == nil {
+		if _, err := credentialdomain.ParseApplicationCredential(invalid); err == nil {
 			t.Fatalf("accepted non-string %s", key)
 		}
 	}
-	if (application.ApplicationCredential{}).Validate() == nil {
+	if (credentialdomain.ApplicationCredential{}).Validate() == nil {
 		t.Fatal("accepted zero credential")
 	}
 }

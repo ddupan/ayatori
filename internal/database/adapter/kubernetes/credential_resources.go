@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
@@ -30,8 +32,9 @@ func (r *CredentialResources) Load(ctx context.Context, name string) (*applicati
 		return nil, client.IgnoreNotFound(err)
 	}
 	record := &application.CredentialRecord{
-		Database: *bindingDatabase(database), DatabaseProtected: controllerutil.ContainsFinalizer(database, DatabaseFinalizer),
-		Status: credentialStatus(database),
+		Database: bindingDatabase(database).Database, Revision: database.ResourceVersion,
+		DatabaseProtected: controllerutil.ContainsFinalizer(database, DatabaseFinalizer),
+		Status:            credentialStatus(database),
 	}
 	if database.Spec.Source != "Provision" {
 		return record, nil
@@ -43,7 +46,8 @@ func (r *CredentialResources) Load(ctx context.Context, name string) (*applicati
 			return nil, err
 		}
 		if err == nil {
-			record.Tenant = bindingTenant(tenant)
+			record.Tenant = &bindingTenant(tenant).Tenant
+			record.TenantGeneration = tenant.Generation
 			record.TenantProtected = controllerutil.ContainsFinalizer(tenant, TenantFinalizer)
 		}
 	}
@@ -56,29 +60,29 @@ func (r *CredentialResources) Load(ctx context.Context, name string) (*applicati
 	if err != nil {
 		return nil, err
 	}
-	record.Instance = &application.CredentialInstance{
+	record.Instance = &credentialdomain.Instance{
 		Identity: binding.Identity{Name: instance.Name, UID: string(instance.UID)},
 		Deleting: !instance.DeletionTimestamp.IsZero(), Ready: currentReady(instance.Generation, instance.Status.Conditions),
-		Generation: instance.Generation, Endpoint: observed.Target.Definition().Endpoint(),
+		Endpoint: observed.Target.Definition().Endpoint(),
 	}
+	record.InstanceGeneration = instance.Generation
 	return record, nil
 }
 
-func credentialStatus(database *databasev1alpha1.PostgreSQLDatabase) application.CredentialStatus {
-	status := application.CredentialStatus{Version: database.Status.CredentialVersion}
+func credentialStatus(database *databasev1alpha1.PostgreSQLDatabase) credentialdomain.State {
+	status := credentialdomain.State{Version: database.Status.CredentialVersion}
 	if ref := database.Status.CredentialRef; ref != nil {
-		status.Location = &application.CredentialLocation{Mount: ref.Mount, Path: ref.Path}
+		status.Location = &credentialdomain.Location{Mount: ref.Mount, Path: ref.Path}
 	}
-	if condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady); condition != nil {
-		status.Ready = condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == database.Generation
-		status.Reason, status.Message = condition.Reason, condition.Message
+	if condition := meta.FindStatusCondition(database.Status.Conditions, credentialsReadyCondition); condition != nil {
+		status.Phase, status.Message = credentialPhase(condition.Reason), condition.Message
 	}
 	return status
 }
 
-func (r *CredentialResources) Save(ctx context.Context, record *application.CredentialRecord, status application.CredentialStatus) (*application.CredentialRecord, error) {
+func (r *CredentialResources) Save(ctx context.Context, record *application.CredentialRecord, status credentialdomain.State) (*application.CredentialRecord, error) {
 	bindingResources := &BindingResources{Client: r.Client, Reader: r.Reader}
-	database, err := bindingResources.databaseAtVersion(ctx, &record.Database)
+	database, err := bindingResources.databaseAtVersion(ctx, &application.BindingDatabase{Database: record.Database, Revision: record.Revision})
 	if err != nil {
 		return nil, err
 	}
@@ -88,11 +92,11 @@ func (r *CredentialResources) Save(ctx context.Context, record *application.Cred
 	}
 	database.Status.CredentialVersion = status.Version
 	conditionStatus := metav1.ConditionFalse
-	if status.Ready {
+	if status.Phase == credentialdomain.Prepared {
 		conditionStatus = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&database.Status.Conditions, metav1.Condition{
-		Type: application.CredentialsReady, Status: conditionStatus, Reason: status.Reason, Message: status.Message,
+		Type: credentialsReadyCondition, Status: conditionStatus, Reason: credentialReason(status.Phase), Message: status.Message,
 		ObservedGeneration: database.Generation,
 	})
 	meta.SetStatusCondition(&database.Status.Conditions, metav1.Condition{
@@ -106,7 +110,8 @@ func (r *CredentialResources) Save(ctx context.Context, record *application.Cred
 		}
 	}
 	updated := *record
-	updated.Database = *bindingDatabase(database)
+	updated.Database = bindingDatabase(database).Database
+	updated.Revision = database.ResourceVersion
 	updated.Status = credentialStatus(database)
 	// 旧 CRD 会裁剪未知 status 字段。不能把 HTTP 成功当作位置/版本已保存后继续写后端。
 	if !equality.Semantic.DeepEqual(updated.Status.Location, status.Location) || updated.Status.Version != status.Version {
@@ -120,7 +125,7 @@ func (r *CredentialResources) CheckCurrent(ctx context.Context, record *applicat
 	if err != nil {
 		return err
 	}
-	if current == nil || current.Database.Identity != record.Database.Identity || current.Database.Revision != record.Database.Revision ||
+	if current == nil || current.Database.Identity != record.Database.Identity || current.Revision != record.Revision ||
 		!sameCredentialDependencies(current, record) {
 		return apierrors.NewConflict(databasev1alpha1.GroupVersion.WithResource("postgresqldatabases").GroupResource(), record.Database.Identity.Name,
 			fmt.Errorf("凭据准备的资源快照已变化；停止本轮操作并重新观察"))
@@ -134,9 +139,9 @@ func sameCredentialDependencies(current, previous *application.CredentialRecord)
 	}
 	// Tenant Ready 的诊断变化、Instance 对同一 generation 的观测刷新不改变写入目标。
 	// 仍检查申请 spec generation、完整绑定身份、删除状态、保护和当前 Instance Ready。
-	return current.Tenant.Generation == previous.Tenant.Generation &&
-		equality.Semantic.DeepEqual(current.Tenant.Tenant, previous.Tenant.Tenant) &&
+	return current.TenantGeneration == previous.TenantGeneration &&
+		equality.Semantic.DeepEqual(current.Tenant, previous.Tenant) &&
 		current.TenantProtected == previous.TenantProtected && current.DatabaseProtected == previous.DatabaseProtected &&
-		current.Instance.Instance == previous.Instance.Instance && current.Instance.Generation == previous.Instance.Generation &&
+		current.Instance.Instance == previous.Instance.Instance && current.InstanceGeneration == previous.InstanceGeneration &&
 		current.Instance.Endpoint == previous.Instance.Endpoint
 }

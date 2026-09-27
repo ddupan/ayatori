@@ -25,10 +25,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	bao "github.com/openbao/openbao/api/v2"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 )
 
 const (
@@ -39,9 +40,9 @@ const (
 	kvVersionKey    = "version"
 )
 
-func fixtureCredential(t *testing.T) application.ApplicationCredential {
+func fixtureCredential(t *testing.T) credentialdomain.ApplicationCredential {
 	t.Helper()
-	credential, err := application.ParseApplicationCredential(map[string]any{
+	credential, err := credentialdomain.ParseApplicationCredential(map[string]any{
 		"username": "app_owner", "password": fixturePassword, "database": "app",
 		"host": "postgres.example", "hostaddr": "192.0.2.1", "port": "5432", "sslmode": "verify-full",
 	})

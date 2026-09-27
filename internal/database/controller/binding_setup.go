@@ -2,9 +2,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -14,16 +15,16 @@ import (
 const targetDatabaseIndex = "database.bindingTarget"
 
 func (r *BindingReconciler) SetupWithManager(ctx context.Context, manager ctrl.Manager) error {
-	if r.Client == nil {
-		r.Client = manager.GetClient()
-	}
-	if r.Reader == nil {
-		r.Reader = manager.GetAPIReader()
+	if r.Client == nil || r.Service == nil || r.Presenter == nil {
+		return errors.New("binding controller requires injected client, use case and presenter")
 	}
 	if err := manager.GetFieldIndexer().IndexField(ctx, &databasev1alpha1.PostgreSQLTenant{},
 		targetDatabaseIndex, func(object client.Object) []string {
 			tenant := object.(*databasev1alpha1.PostgreSQLTenant)
-			return []string{kubernetes.BindingTargetName(tenant)}
+			if tenant.Spec.DatabaseRef != nil {
+				return []string{string(tenant.Spec.DatabaseRef.Name)}
+			}
+			return []string{binding.DynamicDatabaseName(string(tenant.UID))}
 		}); err != nil {
 		return err
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
@@ -25,14 +27,14 @@ func preparationRecord(t *testing.T) *CredentialRecord {
 		t.Fatal(err)
 	}
 	return &CredentialRecord{
-		Database: BindingDatabase{Database: binding.Database{
+		Database: binding.Database{
 			Identity: database, Instance: preparationInstanceName, InstanceUID: preparationInstanceUID, Name: bindingTestName, LoginRole: bindingTestName, Source: "Provision", Tenant: &tenant,
-		}},
-		Tenant: &BindingTenant{
+		},
+		Tenant: &binding.Tenant{
 			Identity: tenant, Phase: binding.Bound, Database: &database,
 			Request: binding.Request{Provision: &binding.ProvisionRequest{Instance: preparationInstanceName}},
 		},
-		Instance:          &CredentialInstance{Identity: binding.Identity{Name: preparationInstanceName, UID: preparationInstanceUID}, Ready: true, Endpoint: endpoint},
+		Instance:          &credentialdomain.Instance{Identity: binding.Identity{Name: preparationInstanceName, UID: preparationInstanceUID}, Ready: true, Endpoint: endpoint},
 		DatabaseProtected: true, TenantProtected: true,
 	}
 }
@@ -48,7 +50,7 @@ func (r *memoryCredentialResources) Load(context.Context, string) (*CredentialRe
 	return &copy, nil
 }
 
-func (r *memoryCredentialResources) Save(_ context.Context, record *CredentialRecord, status CredentialStatus) (*CredentialRecord, error) {
+func (r *memoryCredentialResources) Save(_ context.Context, record *CredentialRecord, status credentialdomain.State) (*CredentialRecord, error) {
 	if r.saveError != nil {
 		return nil, r.saveError
 	}
@@ -69,16 +71,16 @@ type preparationStore struct {
 	createError error
 }
 
-func (*preparationStore) ProvisionLocation(uid string) (CredentialLocation, error) {
-	return CredentialLocation{Mount: "applications", Path: "database/" + uid}, nil
+func (*preparationStore) ProvisionLocation(uid string) (credentialdomain.Location, error) {
+	return credentialdomain.Location{Mount: "applications", Path: "database/" + uid}, nil
 }
 
-func (s *preparationStore) ReadCredential(context.Context, CredentialLocation, int64) (ApplicationCredential, error) {
+func (s *preparationStore) ReadCredential(context.Context, credentialdomain.Location, int64) (credentialdomain.ApplicationCredential, error) {
 	s.reads++
-	return ApplicationCredential{}, s.readError
+	return credentialdomain.ApplicationCredential{}, s.readError
 }
 
-func (s *preparationStore) CreateCredential(context.Context, CredentialLocation, ApplicationCredential) (int64, error) {
+func (s *preparationStore) CreateCredential(context.Context, credentialdomain.Location, credentialdomain.ApplicationCredential) (int64, error) {
 	s.creates++
 	if s.createError != nil {
 		return 0, s.createError
@@ -159,7 +161,7 @@ func TestCredentialPreparationWriteBoundary(t *testing.T) {
 				if err := service.Reconcile(t.Context(), resources.record.Database.Identity.Name); err != nil {
 					t.Fatal(err)
 				}
-				if store.creates != test.wantCreates || resources.record.Status.Reason != binding.Conflict {
+				if store.creates != test.wantCreates || resources.record.Status.Phase != credentialdomain.Conflict {
 					t.Fatal("未确认创建重入时不得生成替代密码")
 				}
 			}
