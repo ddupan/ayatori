@@ -50,14 +50,6 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	restricted := instanceControllerRBAC(t, f, apiClient)
-	credentials, err := secretadapter.NewSecretCredentials(restricted, controllerNamespace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := application.NewInstanceService(credentials, postgresql.Connector{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	// 同进程 -count 重复启动测试 manager；生产继续校验 controller 名称唯一。
 	skipRepeatedName := true
 	manager, err := ctrl.NewManager(restricted, ctrl.Options{
@@ -65,6 +57,14 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
 		Controller: controllerconfig.Controller{SkipNameValidation: &skipRepeatedName},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := secretadapter.NewSecretCredentials(manager.GetAPIReader(), controllerNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := application.NewInstanceService(credentials, postgresql.Connector{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -104,6 +104,7 @@ func fixtureClient(t *testing.T, address string) *bao.Client {
 	t.Helper()
 	config := bao.DefaultConfig()
 	config.Address = address
+	config.MaxRetries = 0
 	client, err := bao.NewClient(config)
 	if err != nil {
 		t.Fatal("cannot construct fixture client")

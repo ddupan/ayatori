@@ -168,9 +168,56 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 真实后端覆盖创建/回读、并发唯一创建、重建适配器读取、软删除冲突、固定前缀 token
 拒绝管理路径，以及成功写入后丢失响应；HTTP 故障测试补充不重试和错误脱敏。
 
-这一切片尚未接入 manager：Kubernetes auth/token 生命周期、Database 状态中的稳定位置和
-已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
+认证会话已按下面的显式参数接入 manager；凭据存储尚未接入供应用例。
+Database 状态中的稳定位置和已确认步骤、供应 service/controller、PostgreSQL 创建以及 ESO 交付仍未完成。
 测试 token 只用于临时 fixture，不是生产静态 token 配置接口。现有绑定不会触发外部写入。
+
+## OpenBao Kubernetes 认证会话
+
+公共 `internal/infra/openbao.KubernetesSession` 复用官方 Kubernetes auth helper 和 `LifetimeWatcher`
+（均为 v2.7.0）。认证直接注入 `manager.GetClient()`，与 reconcile 共用已装配的 Kubernetes
+client，不从配置另建客户端。标准 `--kubeconfig` /
+`KUBECONFIG` 支持 systemd 或其他集群外运行方式，集群内使用 in-cluster 配置，不要求存在 Pod。
+Kubernetes 身份的签发和更新由部署管理及 client-go 的认证机制负责，不另建 kubeconfig 读取器。
+
+每次登录前，通过该 client 的 `SubResource("token").Create` 调用固定 namespace/name 的
+ServiceAccount TokenRequest；写入直连 API server，不读取 cache 或要求额外的 SA get 权限。申请
+audience 匹配 OpenBao role、期望有效期 600 秒的短期 JWT；检查返回值非空且未过期，再交给
+官方 Kubernetes auth helper。JWT 不缓存，不读取投射文件，也不回退静态 OpenBao token；
+实际 JWT 有效期由 API server 决定。RBAC 拒绝或 TokenRequest 失败时不会继续 Bao 登录。
+OpenBao 登录结果必须包含有效 token 和有限 TTL。
+
+续期、到期阈值与等待时间由 SDK 管理；可续期 token 的续期失败就撤下本地 token，不可续期
+token 由 SDK 监测剩余寿命。会话结束后最多每 5 秒重新登录一次，并重新申请 Kubernetes JWT。
+`Ready()` 仅表示当前 lease 正受 SDK 管理，不授权任何 Database 写入，也不能保证下一次请求
+必然成功。认证/续期响应不写日志、不返回给调用方；后端操作仍独立检查并返回脱敏错误。
+
+`Start(ctx)` 退出时清空 client token 并等待续期 goroutine 结束。SDK Stop 不取消已经发出的
+续期 HTTP 请求，因此专用 client 的请求期限固定为 15 秒；不增加新连接池或自己的续期算法。
+同一会话拒绝并发 Start。manager 使用 Runnable 管理生命周期，并增加 `openbao-auth` readiness
+检查；认证故障不影响 liveness。`--openbao-address` 为空时不启用，不自动修改生产 auth/RBAC。
+HTTPS 和显式 CA/系统信任根不可通过 BAO 环境变量降级，参数见 [部署合同](deployment.md)。
+
+依据官方 [Kubernetes auth](https://openbao.org/docs/auth/kubernetes/) 与
+[token 生命周期](https://openbao.org/docs/concepts/auth/)。真实测试使用 envtest 签发 SA token，
+OpenBao 通过专用 reviewer 调用真实 TokenReview；集群外受限 kubeconfig 启动实际 manager，
+验证共享 client 申请 JWT、短 TTL 续期、RBAC 撤回/恢复与重新登录、跨 namespace/其他 SA 拒绝、
+错误 OpenBao audience 拒绝以及凭据访问恢复。临时 TokenReview 入口仅允许对应 POST，
+两段连接均验证 TLS；其 Docker bridge 入口仅为隔离测试，不修改生产 OpenBao 或 Kubernetes。
+单元测试补充 TokenRequest 失败/空 token 无回退、重新申请 JWT、无期限 lease 拒绝、
+并发生命周期、退出清理及 manager 显式参数不受 BAO 环境身份覆盖。
+
+## 公共基础设施与领域适配
+
+Bao client/TLS 与认证生命周期已移至 `internal/infra/openbao`，与任何产品领域无关。
+Kubernetes 读写客户端由 manager 管理，Secret 凭据适配器只接收直连的 `client.Reader`。
+`adapter/openbao.Credentials` 仍属于 Database：它直接使用官方 KV v2 API，实现七键凭据、
+UID 路径、CAS=0 与回读确认的领域合同，不把这些规则推广为公共存储语义。
+后续供应用例需要的 repository 接口由领域侧按实际操作定义，不提前增加通用仓储抽象。
+分层约定见[总体架构](../architecture/overview.md#进程内依赖边界)。
+
+认证单元测试归公共 infra；真实认证与 Database 凭据读写的组合测试仍在 Database adapter。
+Database 集成测试和 lint 入口同时覆盖 `internal/infra/...`，避免拆包导致 CI 漏测。
 
 ## 设计入口
 

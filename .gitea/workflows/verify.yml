@@ -25,6 +25,11 @@ jobs:
           make test
           git diff --exit-code
 
+      - name: Build controller entrypoint
+        run: |
+          make build
+          ./bin/manager --help
+
   lint:
     runs-on: [self-hosted, pod]
     steps:

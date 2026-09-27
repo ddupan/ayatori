@@ -69,11 +69,13 @@ lint: golangci-lint ## Run golangci-lint linter
 
 .PHONY: test-database-integration
 test-database-integration: setup-envtest ## 使用临时 API server、PostgreSQL 与 OpenBao 容器验证 Database 后端。
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -tags=integration -race -count=1 ./internal/database/...
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+		go test -tags=integration -race -count=1 ./internal/database/... ./internal/infra/... ./internal/bootstrap/...
 
 .PHONY: lint-database-integration
 lint-database-integration: golangci-lint ## 检查集成测试构建标签下的 Database 代码。
-	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/database/...
+	"$(GOLANGCI_LINT)" run --build-tags=integration \
+		./internal/database/... ./internal/infra/... ./internal/bootstrap/...
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes

@@ -22,10 +22,8 @@ import (
 	"errors"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
-	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
@@ -34,18 +32,16 @@ import (
 // SecretCredentials 直接读取 API server，不将 Secret 数据纳入共享 informer cache。
 // namespace 在装配时固定，Instance 不能选择跨 namespace 读取。
 type SecretCredentials struct {
-	secrets typedcore.SecretInterface
+	reader    client.Reader
+	namespace string
 }
 
-func NewSecretCredentials(config *rest.Config, namespace string) (*SecretCredentials, error) {
-	if config == nil || len(validation.IsDNS1123Label(namespace)) != 0 {
-		return nil, errors.New("valid controller namespace and API configuration required")
+// NewSecretCredentials 要求注入 manager.GetAPIReader() 或等价直连 reader，不可使用缓存 reader。
+func NewSecretCredentials(reader client.Reader, namespace string) (*SecretCredentials, error) {
+	if reader == nil || len(validation.IsDNS1123Label(namespace)) != 0 {
+		return nil, errors.New("valid controller namespace and API reader required")
 	}
-	client, err := typedcore.NewForConfig(config)
-	if err != nil {
-		return nil, application.ErrCredentialsUnavailable
-	}
-	return &SecretCredentials{secrets: client.Secrets(namespace)}, nil
+	return &SecretCredentials{reader: reader, namespace: namespace}, nil
 }
 
 func (r *SecretCredentials) Read(ctx context.Context, ref instance.CredentialReference) (application.Credentials, error) {
@@ -53,7 +49,8 @@ func (r *SecretCredentials) Read(ctx context.Context, ref instance.CredentialRef
 		return application.Credentials{}, application.ErrCredentialsInvalid
 	}
 	keys := ref.Values()
-	secret, err := r.secrets.Get(ctx, keys.Name, metav1.GetOptions{})
+	secret := &corev1.Secret{}
+	err := r.reader.Get(ctx, client.ObjectKey{Namespace: r.namespace, Name: keys.Name}, secret)
 	if err != nil {
 		return application.Credentials{}, application.ErrCredentialsUnavailable
 	}

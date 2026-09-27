@@ -10,7 +10,7 @@
 | 最后更新 | 2026-09-25 |
 
 本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测已接入 manager；
-OpenBao、ESO 与完整供应装配仍是后续实现合同。
+OpenBao 认证可显式启用；ESO 与完整供应装配仍是后续实现合同。
 
 ## 依赖与顺序
 
@@ -34,18 +34,21 @@ OpenBao、ESO 与完整供应装配仍是后续实现合同。
 Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径）。Deployment
 通过 downward API 获取 namespace，Secret 权限由该 namespace 的 Role 授予。
 
-以下是尚待实现的供应/交付配置合同，不表示当前 manager 接受这些 CLI flags。
+以下表格区分已实现的认证参数与尚待实现的供应/交付参数。
 必填项缺失、路径无效或 duration 不为正数时，进程必须在启动 manager 前失败；
 不得等到 reconcile 时才逐个资源报告配置错误。
 
 | CLI flag | 必填/默认 | 说明 |
 | --- | --- | --- |
-| `--openbao-address` | 必填 | controller 可访问的 OpenBao API address |
+| `--openbao-address` | 已实现，默认空 | HTTPS API 地址；为空时关闭认证会话 |
 | `--openbao-consumer-address` | 默认同 `--openbao-address` | 写入 Tenant status，必须能被预期外部消费者解析 |
-| `--openbao-auth-mount` | `kubernetes` | Kubernetes auth mount 名称 |
-| `--openbao-auth-role` | 必填 | controller ServiceAccount 对应 role |
+| `--openbao-auth-mount` | 已实现，`kubernetes` | Kubernetes auth mount 名称 |
+| `--openbao-auth-role` | 已实现，启用时必填 | OpenBao 登录 role |
+| `--openbao-ca-cert` | 已实现，默认系统信任根 | OpenBao 公开 CA PEM 路径 |
 | `--openbao-kv-mount` | `kv` | KV v2 mount；开发可显式用 `secret` |
-| `--openbao-service-account-token-path` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Kubernetes auth 使用的投射 token 文件 |
+| `--openbao-service-account-namespace` | 已实现，启用时必填 | TokenRequest 目标 SA 的固定 namespace |
+| `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
+| `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience，必须匹配 OpenBao role |
 | `--openbao-tenant-base-path` | 默认 `postgresql-tenants` | controller 专属 mount-relative 前缀 |
 | `--external-secret-store-name` | 必填 | controller 创建的 ExternalSecret 固定引用 |
 | `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
@@ -55,6 +58,35 @@ address 必须是绝对 `http` 或 `https` URL，不允许 userinfo、query 或 
 在规范化后移除。mount、auth mount 和 base path 都使用 mount-relative path 语义，不以
 `/` 开头，不含空段、`.` 或 `..`；base path 还不得编码 KV v2 的 `data`/`metadata`
 API 层。生产环境的 `--openbao-address` 必须使用 HTTPS；HTTP 只用于明确的开发 fixture。
+
+### 集群内与 systemd 共用 Kubernetes 认证
+
+controller 是 API 客户端，不要求部署为 Pod。OpenBao 认证直接复用 manager 已加载的
+Kubernetes 配置：集群外可用标准 `--kubeconfig`（或 `KUBECONFIG`），集群内可使用
+in-cluster 配置。禁止另要求 `/var/run/secrets/.../token` 文件或解析 kubeconfig 中的 bearer token。
+每次 Bao 登录前通过 TokenRequest 申请新的短期 SA JWT，Kubernetes JWT 与 Bao token 的
+生命周期分别由 API 签发和官方 SDK 续期管理；不把 kubeconfig 本身当成永久有效凭据。
+
+管理员为 controller 的实际 Kubernetes 身份授予目标 namespace 内
+`create serviceaccounts/token`，用 `resourceNames` 限定目标 SA；示例见
+[最小 RBAC](../../config/samples/database_openbao_auth_rbac.yaml)。集群外 RoleBinding subject
+对应 kubeconfig 的用户/组，集群内可绑定 manager SA；登录目标 SA 可以独立于调用者身份。
+controller 不创建 SA、Role/RoleBinding，也不向自己授予权限。不要求 `get secrets` 来获取 JWT。
+OpenBao role 还需限制 SA 名称、namespace 与 audience，TokenReview reviewer 身份由管理员配置。
+
+示例启动参数（仅示意，不包含真实 kubeconfig 或凭据）：
+
+```sh
+manager --kubeconfig=/etc/ayatori/controller.kubeconfig \
+  --database-secret-namespace=ayatori-system \
+  --openbao-address=https://bao.example:8200 \
+  --openbao-auth-role=ayatori-database \
+  --openbao-service-account-namespace=ayatori-system \
+  --openbao-service-account-name=database-openbao-login
+```
+
+这里的认证成功只开放 manager readiness，不代表 Database 已具备供应或交付能力。
+实例管理 Secret 的 namespace 同样由参数指定，systemd 模式不依赖 `POD_NAMESPACE` 环境变量。
 
 Tenant 不能选择任意凭据路径。凭据必须能随 Database 保留并安全交付给被授权的新 Tenant；
 原 `<base-path>/<namespace>/<metadata.name>` 定位规则不再直接作为新 API 合同。

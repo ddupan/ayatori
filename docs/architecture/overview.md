@@ -43,6 +43,34 @@ Dev 与 Prod 使用独立的 Kubernetes API、数据库、身份和 controller �
 Proxmox 作为稀缺物理基础设施可以共享，通过 pool、tag、token 和明确的资源范围区分
 环境。其他后端尽量使用独立数据库、角色、地址池、DNS 空间与凭据。
 
+## 进程内依赖边界
+
+`cmd/main.go` 是唯一程序入口，只调用 `internal/bootstrap.Run` 并处理退出状态。
+命令行参数、manager 创建、infra 与领域装配集中在 `internal/bootstrap`，
+不在 `cmd` 平铺组件装配文件，也不为每个领域生成独立二进制。
+Makefile 与 Dockerfile 均继续构建 `cmd/main.go`。
+
+`Run` 只编排解析配置、创建 manager、显式装配组件、启动与退出清理。
+`options.go` 组织配置和通用 flags；`manager.go` 处理 scheme、metrics、webhook、TLS 与探针；
+`database.go`、`openbao.go` 各自维护组件参数及装配细节。新增组件不向 `Run` 堆叠参数和内部
+条件分支，也不为此引入插件注册框架。组件启动失败时释放已装配资源，正常退出则先停止
+manager worker，再释放连接。
+
+基础设施能力属于整个 controller-manager，不因首个消费者是 Database 就归入该领域。
+`internal/infra/openbao` 管理官方 SDK client 的 TLS 配置、Kubernetes 认证及 token 生命周期，
+不依赖 Database 或其他产品领域。Bao client 默认禁用自动重试，写入结果不确定时由用例处理；
+领域适配器不修改共享 client 的全局配置。Kubernetes 客户端、cache 和直连 reader 由 manager 管理；
+启动入口负责装配与注入，不在领域适配器内重复创建客户端。
+
+读写能力优先直接使用官方 `client.Reader`、`client.Client`、OpenBao KV API 等接口，
+不为统一命名再包一层通用 reader/writer，也不引入全局注册中心。共享连接不表示扩大授权；
+不同身份或权限边界仍由启动装配显式隔离。
+
+领域按用例需要维护 repository 契约，其 adapter 负责 CR/领域对象映射及业务结果转换。
+例如 Database 的七键凭据格式、UID 路径、禁止覆盖和不确定结果处理仍由 Database 维护；
+它们不是公共 KV 存储的业务规则。Secret 管理凭据读取注入 `manager.GetAPIReader()`，
+保持直连 API server、不缓存 Secret 内容的安全边界；资源写入复用 `manager.GetClient()`。
+
 ## 数据面
 
 Ayatori 不承载或重新实现数据面。控制面故障只应阻止创建与变更，不应停止已有 VM、
