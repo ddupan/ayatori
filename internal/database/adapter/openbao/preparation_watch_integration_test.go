@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -15,7 +18,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 )
 
@@ -26,7 +28,7 @@ func testPreparationWatch(t *testing.T, f *preparationFixture) {
 			return
 		}
 		if err := f.api.Get(context.Background(), client.ObjectKeyFromObject(database), database); err == nil {
-			if condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady); condition != nil {
+			if condition := meta.FindStatusCondition(database.Status.Conditions, "CredentialsReady"); condition != nil {
 				t.Logf("失败时凭据条件: %s: %s", condition.Reason, condition.Message)
 			}
 		}
@@ -50,7 +52,7 @@ func testPreparationWatch(t *testing.T, f *preparationFixture) {
 		if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), database); err != nil {
 			return false
 		}
-		condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady)
+		condition := meta.FindStatusCondition(database.Status.Conditions, "CredentialsReady")
 		return condition != nil && condition.Reason == "DependencyUnavailable"
 	})
 	if database.Status.CredentialRef != nil {
@@ -69,7 +71,7 @@ func testPreparationWatch(t *testing.T, f *preparationFixture) {
 		if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), database); err != nil {
 			return false
 		}
-		condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady)
+		condition := meta.FindStatusCondition(database.Status.Conditions, "CredentialsReady")
 		return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "DependencyUnavailable"
 	})
 	setReady(metav1.ConditionTrue)
@@ -77,7 +79,7 @@ func testPreparationWatch(t *testing.T, f *preparationFixture) {
 		if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), database); err != nil {
 			return false
 		}
-		condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady)
+		condition := meta.FindStatusCondition(database.Status.Conditions, "CredentialsReady")
 		return condition != nil && condition.Status == metav1.ConditionTrue && database.Status.CredentialVersion == 1
 	})
 	stored, err := f.bao.KVv2("secret").Get(t.Context(), database.Status.CredentialRef.Path)
@@ -96,10 +98,14 @@ func startPreparationManager(t *testing.T, f *preparationFixture) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&databasecontroller.BindingReconciler{}).SetupWithManager(t.Context(), manager); err != nil {
+	bindingResources := &kubernetes.BindingResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
+	binder := databasecontroller.NewBindingReconciler(manager.GetClient(), &application.BindingService{Resources: bindingResources}, bindingResources)
+	if err := binder.SetupWithManager(t.Context(), manager); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&databasecontroller.CredentialReconciler{Store: fixtureStore(t, f.bao)}).SetupWithManager(manager); err != nil {
+	credentialResources := &kubernetes.CredentialResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
+	preparation := &application.CredentialPreparation{Resources: credentialResources, Store: fixtureStore(t, f.bao)}
+	if err := databasecontroller.NewCredentialReconciler(manager.GetClient(), preparation).SetupWithManager(manager); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

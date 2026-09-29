@@ -2,9 +2,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,16 +13,16 @@ import (
 
 // CredentialReconciler 只连接事件、用例和重试，不在控制器中编排凭据写入。
 type CredentialReconciler struct {
-	Client client.Client
-	Reader client.Reader
-	Store  application.CredentialStore
+	Client  client.Client
+	Service *application.CredentialPreparation
+}
+
+func NewCredentialReconciler(cache client.Client, service *application.CredentialPreparation) *CredentialReconciler {
+	return &CredentialReconciler{Client: cache, Service: service}
 }
 
 func (r *CredentialReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
-	service := application.CredentialPreparation{
-		Resources: &kubernetes.CredentialResources{Client: r.Client, Reader: r.Reader}, Store: r.Store,
-	}
-	if err := service.Reconcile(ctx, request.Name); err != nil {
+	if err := r.Service.Reconcile(ctx, request.Name); err != nil {
 		return ctrl.Result{}, err
 	}
 	// Bao 的可用性和版本变化没有 Kubernetes watch；与已有依赖重查保持一致。
@@ -30,11 +30,8 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 }
 
 func (r *CredentialReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if r.Client == nil {
-		r.Client = manager.GetClient()
-	}
-	if r.Reader == nil {
-		r.Reader = manager.GetAPIReader()
+	if r.Client == nil || r.Service == nil {
+		return errors.New("credential controller requires injected client and use case")
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		Named("database-credentials").For(&databasev1alpha1.PostgreSQLDatabase{}).

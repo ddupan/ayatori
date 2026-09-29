@@ -22,14 +22,8 @@ func InstanceCacheOptions(namespace string) cache.Options {
 }
 
 func (r *InstanceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if r.Observer == nil || len(validation.IsDNS1123Label(r.SecretNamespace)) != 0 {
+	if r.Client == nil || r.Service == nil || r.Presenter == nil || len(validation.IsDNS1123Label(r.SecretNamespace)) != 0 {
 		return errors.New("instance observer and valid management Secret namespace required")
-	}
-	if r.Client == nil {
-		r.Client = manager.GetClient()
-	}
-	if r.Reader == nil {
-		r.Reader = manager.GetAPIReader()
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		Named("database-instance").

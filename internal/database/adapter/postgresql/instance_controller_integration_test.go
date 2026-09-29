@@ -68,7 +68,9 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler := &databasecontroller.InstanceReconciler{Observer: service, SecretNamespace: controllerNamespace}
+	resources := &secretadapter.InstanceResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
+	usecase := &application.InstanceReconciliation{Resources: resources, Observer: service}
+	reconciler := databasecontroller.NewInstanceReconciler(manager.GetClient(), usecase, resources, controllerNamespace)
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		t.Fatal(err)
 	}

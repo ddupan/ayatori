@@ -80,7 +80,8 @@ func (f *preparationFixture) bound(t *testing.T, name string) (*databasev1alpha1
 	if err := f.api.Create(t.Context(), tenant); err != nil {
 		t.Fatal(err)
 	}
-	binder := &databasecontroller.BindingReconciler{Client: f.api, Reader: f.api}
+	resources := &kubernetes.BindingResources{Client: f.api, Reader: f.api}
+	binder := databasecontroller.NewBindingReconciler(f.api, &application.BindingService{Resources: resources}, resources)
 	if _, err := binder.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func (f *preparationFixture) status(t *testing.T, database *databasev1alpha1.Pos
 	if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), database); err != nil {
 		t.Fatal(err)
 	}
-	condition := meta.FindStatusCondition(database.Status.Conditions, application.CredentialsReady)
+	condition := meta.FindStatusCondition(database.Status.Conditions, "CredentialsReady")
 	if database.Status.CredentialVersion != version || condition == nil || condition.Reason != reason {
 		t.Fatalf("凭据版本或条件不符：version=%d，期望 reason=%s", database.Status.CredentialVersion, reason)
 	}

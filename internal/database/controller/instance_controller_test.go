@@ -52,7 +52,8 @@ func newInstanceReconciler(t *testing.T, apiClient client.Client, backend *insta
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Close)
-	return &InstanceReconciler{Client: apiClient, Reader: apiClient, Observer: service}
+	resources := &kubernetes.InstanceResources{Client: apiClient, Reader: apiClient}
+	return NewInstanceReconciler(apiClient, &application.InstanceReconciliation{Resources: resources, Observer: service}, resources, "")
 }
 
 func reconcileInstance(t *testing.T, reconciler *InstanceReconciler, object *databasev1alpha1.PostgreSQLInstance) {
@@ -164,11 +165,11 @@ func TestInstanceDeletionProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend.inspect = func() { t.Fatal("删除中不应连接 PostgreSQL") }
-	reconciler.Reader = &failedReferenceReader{Reader: apiClient}
+	reconciler.Service.Resources.(*kubernetes.InstanceResources).Reader = &failedReferenceReader{Reader: apiClient}
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, reasonDependency)
-	reconciler.Reader = apiClient
+	reconciler.Service.Resources.(*kubernetes.InstanceResources).Reader = apiClient
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, "InstanceInUse")

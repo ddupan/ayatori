@@ -51,11 +51,3 @@ func tenantReference(tenant binding.TenantIdentity) *databasev1alpha1.TenantRefe
 		Namespace: tenant.Namespace, Name: databasev1alpha1.ObjectName(tenant.Name), UID: types.UID(tenant.UID),
 	}
 }
-
-// BindingTargetName 供 informer 索引使用；不把无效请求丢出事件映射。
-func BindingTargetName(tenant *databasev1alpha1.PostgreSQLTenant) string {
-	if tenant.Spec.DatabaseRef != nil {
-		return string(tenant.Spec.DatabaseRef.Name)
-	}
-	return binding.DynamicDatabaseName(string(tenant.UID))
-}

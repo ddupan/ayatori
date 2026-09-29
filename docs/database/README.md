@@ -183,6 +183,10 @@ Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段�
 顺序为固定位置 → 确认后端尚无凭据 → 保存 CreationStarted → 创建并回读 → 保存确认版本。
 `CredentialReconciler` 只负责 Database/Tenant/Instance watch 和 30 秒依赖重查；
 Kubernetes repository 负责直接读取及有 resourceVersion 保护的状态更新。
+三类 controller 的依赖均在 bootstrap 显式组装，不在 Reconcile 中构造服务。
+`domain/credential` 保存应用凭据值对象、准备资格、固定位置与未确认创建的恢复规则；
+application 保留 I/O 顺序、消费方接口及并发快照，不再复用绑定用例的快照类型。
+领域阶段与 `CredentialsReady`/Reason 的转换由 Kubernetes adapter 负责，已有 API 保持兼容。
 
 外部操作前后回查目标：Database 必须仍是同一 UID/resourceVersion，Tenant/Instance 必须
 保持绑定、spec generation、删除状态、finalizer 保护与有效 Ready；无关 Conditions 刷新

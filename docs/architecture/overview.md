@@ -56,6 +56,17 @@ Makefile 与 Dockerfile 均继续构建 `cmd/main.go`。
 条件分支，也不为此引入插件注册框架。组件启动失败时释放已装配资源，正常退出则先停止
 manager worker，再释放连接。
 
+Database 使用 Wire 式的显式构造函数注入，目前手写装配，不引入 Wire 生成器、Dig/Fx
+容器或运行时服务查找。`database_wiring.go` 集中展示 repository → 用例 → controller 的
+对象构造；`registerDatabaseControllers` 负责注册，返回的 `closeDatabaseConnections`
+只在 worker 停止后关闭 Instance 连接。controller 在启动时接收完整依赖，不在 Reconcile
+或 SetupWithManager 中补建 adapter/service；缺失依赖在注册时失败。
+
+domain 持有凭据值对象、准备资格与创建恢复规则；application 只组织读写、调用领域判断
+和保存结果。用例需要的 repository 接口与并发快照仍由消费方定义，不把所有类型都强塞
+进领域。Kubernetes adapter 将领域阶段映射为已有 Conditions，领域不依赖其字符串协议。
+单测检查 domain/controller 的依赖边界，并验证共享 writer、直连 reader 和服务的注入。
+
 基础设施能力属于整个 controller-manager，不因首个消费者是 Database 就归入该领域。
 `internal/infra/openbao` 管理官方 SDK client 的 TLS 配置、Kubernetes 认证及 token 生命周期，
 不依赖 Database 或其他产品领域。Bao client 默认禁用自动重试，写入结果不确定时由用例处理；

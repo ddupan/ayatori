@@ -37,25 +37,25 @@ func (o databaseOptions) configureManager(options *ctrl.Options) {
 	}
 }
 
-// setupDatabase 封装 Database 的内部装配，并返回在 manager 停止后执行的清理。
-func setupDatabase(ctx context.Context, manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) (func(), error) {
-	cleanup := func() {}
+// registerDatabaseControllers 封装 Database 的内部装配，并返回在 manager 停止后执行的清理。
+func registerDatabaseControllers(ctx context.Context, manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) (func(), error) {
+	closeDatabaseConnections := func() {}
 	if options.secretNamespace != "" {
 		service, err := setupInstanceObservation(manager, options.secretNamespace, options.rootCert)
 		if err != nil {
 			return nil, fmt.Errorf("set up Instance observation: %w", err)
 		}
-		cleanup = service.Close
+		closeDatabaseConnections = service.Close
 	}
-	if err := (&databasecontroller.BindingReconciler{}).SetupWithManager(ctx, manager); err != nil {
-		cleanup()
+	if err := wireBindingController(manager.GetClient(), manager.GetAPIReader()).SetupWithManager(ctx, manager); err != nil {
+		closeDatabaseConnections()
 		return nil, fmt.Errorf("set up Database binding controller: %w", err)
 	}
 	if err := setupCredentialPreparation(manager, options, baoClient); err != nil {
-		cleanup()
+		closeDatabaseConnections()
 		return nil, fmt.Errorf("set up Database credential preparation: %w", err)
 	}
-	return cleanup, nil
+	return closeDatabaseConnections, nil
 }
 
 func setupCredentialPreparation(manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) error {
@@ -69,7 +69,7 @@ func setupCredentialPreparation(manager ctrl.Manager, options databaseOptions, b
 	if err != nil {
 		return err
 	}
-	return (&databasecontroller.CredentialReconciler{Store: store}).SetupWithManager(manager)
+	return wireCredentialController(manager.GetClient(), manager.GetAPIReader(), store).SetupWithManager(manager)
 }
 
 func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) (*application.InstanceService, error) {
@@ -81,7 +81,7 @@ func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) 
 	if err != nil {
 		return nil, err
 	}
-	reconciler := &databasecontroller.InstanceReconciler{Observer: service, SecretNamespace: namespace}
+	reconciler := wireInstanceController(manager.GetClient(), manager.GetAPIReader(), service, namespace)
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		service.Close()
 		return nil, err

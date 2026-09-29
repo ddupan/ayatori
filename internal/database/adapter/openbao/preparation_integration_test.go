@@ -8,6 +8,8 @@ import (
 	"maps"
 	"testing"
 
+	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+
 	bao "github.com/openbao/openbao/api/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,7 +38,7 @@ func testPreparationRestart(t *testing.T, f *preparationFixture) {
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	path := database.Status.CredentialRef.Path
 	before, err := f.bao.KVv2("secret").Get(t.Context(), path)
 	if err != nil {
@@ -51,12 +53,12 @@ func testPreparationRestart(t *testing.T, f *preparationFixture) {
 			t.Fatal(err)
 		}
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	revision := database.ResourceVersion
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	if database.ResourceVersion != revision {
 		t.Fatal("幂等重试不应改写 status")
 	}
@@ -135,7 +137,7 @@ func testPreparationLostConfirmation(t *testing.T, f *preparationFixture) {
 	if err := service.Reconcile(t.Context(), database.Name); err == nil {
 		t.Fatal("确认写入失败应返回 API 错误")
 	}
-	f.status(t, database, 0, application.CredentialCreationStarted)
+	f.status(t, database, 0, "CreationStarted")
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ type afterCreateStore struct {
 	after func() error
 }
 
-func (s afterCreateStore) CreateCredential(ctx context.Context, location application.CredentialLocation, credential application.ApplicationCredential) (int64, error) {
+func (s afterCreateStore) CreateCredential(ctx context.Context, location credentialdomain.Location, credential credentialdomain.ApplicationCredential) (int64, error) {
 	version, err := s.CredentialStore.CreateCredential(ctx, location, credential)
 	if err != nil {
 		return 0, err
@@ -185,7 +187,7 @@ func testPreparationChangedBinding(t *testing.T, f *preparationFixture) {
 	if err := service.Reconcile(t.Context(), database.Name); err == nil {
 		t.Fatal("中途删除 Tenant 后不得确认凭据")
 	}
-	f.status(t, database, 0, application.CredentialCreationStarted)
+	f.status(t, database, 0, "CreationStarted")
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +207,7 @@ func testPreparationDependencies(t *testing.T, f *preparationFixture) {
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	if err := service.Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +215,7 @@ func testPreparationDependencies(t *testing.T, f *preparationFixture) {
 	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 1, application.CredentialPrepared)
+	f.status(t, database, 1, "CredentialPrepared")
 	moved, err := openbao.NewCredentials(f.bao, "other", "elsewhere")
 	if err != nil {
 		t.Fatal(err)

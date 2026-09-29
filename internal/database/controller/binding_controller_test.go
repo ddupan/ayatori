@@ -42,6 +42,11 @@ func targetDatabaseName(tenant *databasev1alpha1.PostgreSQLTenant) string {
 	return "tenant-" + string(tenant.UID)
 }
 
+func bindingTestReconciler(writer client.Client, reader client.Reader) *BindingReconciler {
+	resources := &kubernetes.BindingResources{Client: writer, Reader: reader}
+	return NewBindingReconciler(writer, &application.BindingService{Resources: resources}, resources)
+}
+
 func tenantReference(tenant *databasev1alpha1.PostgreSQLTenant) *databasev1alpha1.TenantReference {
 	return &databasev1alpha1.TenantReference{
 		Namespace: tenant.Namespace, Name: databasev1alpha1.ObjectName(tenant.Name), UID: tenant.UID,
@@ -103,7 +108,7 @@ func testDynamicBinding(t *testing.T, apiClient client.Client) {
 	instance := readyInstance(t, apiClient, "dynamic-instance")
 	tenant := provisionTenant("dynamic", instance.Name)
 	requireCreate(t, apiClient, tenant)
-	reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	reconciler := bindingTestReconciler(apiClient, apiClient)
 	reconcileOK(t, reconciler, tenant)
 	reload(t, apiClient, tenant)
 	if tenant.Status.DatabaseRef == nil || tenant.Status.Phase != phaseBound {
@@ -154,7 +159,7 @@ func testBindingRestart(t *testing.T, apiClient client.Client) {
 	instance := readyInstance(t, apiClient, "restart-instance")
 	tenant := provisionTenant("restart", instance.Name)
 	requireCreate(t, apiClient, tenant)
-	first := &BindingReconciler{Client: &failedTenantStatusClient{Client: apiClient}, Reader: apiClient}
+	first := bindingTestReconciler(&failedTenantStatusClient{Client: apiClient}, apiClient)
 	if _, err := first.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)}); err == nil {
 		t.Fatal("预期第二次绑定写入失败")
 	}
@@ -169,7 +174,7 @@ func testBindingRestart(t *testing.T, apiClient client.Client) {
 		t.Fatal("失败后资源侧绑定不应回滚")
 	}
 	// 新建 reconciler，无旧内存，只从 API 中读取进度。
-	restarted := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	restarted := bindingTestReconciler(apiClient, apiClient)
 	reconcileOK(t, restarted, tenant)
 	reload(t, apiClient, tenant)
 	if tenant.Status.DatabaseRef == nil || tenant.Status.DatabaseRef.UID != database.UID {
@@ -190,7 +195,7 @@ func testConcurrentBinding(t *testing.T, apiClient client.Client) {
 	results := make(chan error, len(tenants))
 	for _, tenant := range tenants {
 		workers.Go(func() {
-			reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+			reconciler := bindingTestReconciler(apiClient, apiClient)
 			_, err := reconciler.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)})
 			results <- err
 		})
@@ -202,7 +207,7 @@ func testConcurrentBinding(t *testing.T, apiClient client.Client) {
 			t.Fatalf("并发协调出现非版本冲突错误: %v", err)
 		}
 	}
-	reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	reconciler := bindingTestReconciler(apiClient, apiClient)
 	bound := 0
 	for _, tenant := range tenants {
 		reconcileOK(t, reconciler, tenant)
@@ -233,7 +238,7 @@ func testBindingIdentity(t *testing.T, apiClient client.Client) {
 	}
 	tenant := existingTenant("identity", database.Name)
 	requireCreate(t, apiClient, tenant)
-	reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	reconciler := bindingTestReconciler(apiClient, apiClient)
 	reconcileOK(t, reconciler, tenant)
 	reload(t, apiClient, tenant)
 	assertNotReady(t, tenant, reasonConflict)
@@ -256,7 +261,7 @@ func testBindingIdentity(t *testing.T, apiClient client.Client) {
 func testBindingProtection(t *testing.T, apiClient client.Client) {
 	tenant := provisionTenant("protection", "missing-instance")
 	requireCreate(t, apiClient, tenant)
-	reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	reconciler := bindingTestReconciler(apiClient, apiClient)
 	reconcileOK(t, reconciler, tenant)
 	reload(t, apiClient, tenant)
 	assertNotReady(t, tenant, reasonDependency)
@@ -292,7 +297,7 @@ func testStaleObservation(t *testing.T, apiClient client.Client) {
 	}
 	tenant := existingTenant("stale", database.Name)
 	requireCreate(t, apiClient, tenant)
-	reconciler := &BindingReconciler{Client: apiClient, Reader: apiClient}
+	reconciler := bindingTestReconciler(apiClient, apiClient)
 	reconcileOK(t, reconciler, tenant)
 	reload(t, apiClient, tenant)
 	assertNotReady(t, tenant, reasonDependency)
@@ -318,7 +323,7 @@ func testBindingWatch(t *testing.T, apiClient client.Client, config *rest.Config
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconciler := &BindingReconciler{}
+	reconciler := bindingTestReconciler(manager.GetClient(), manager.GetAPIReader())
 	if err := reconciler.SetupWithManager(t.Context(), manager); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +378,7 @@ func testPresentationVersion(t *testing.T, apiClient client.Client) {
 	if err := resources.Present(t.Context(), result); !apierrors.IsConflict(err) {
 		t.Fatalf("过期结果呈现 = %v, want Conflict", err)
 	}
-	reconcileOK(t, &BindingReconciler{Client: apiClient, Reader: apiClient}, tenant)
+	reconcileOK(t, bindingTestReconciler(apiClient, apiClient), tenant)
 	reload(t, apiClient, tenant)
 	if tenant.Status.Phase != phaseBound || tenant.Spec.SecretName != "updated-delivery" ||
 		tenant.Annotations["example.test/keep"] != "preserved" {
