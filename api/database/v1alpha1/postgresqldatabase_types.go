@@ -38,6 +38,16 @@ type PostgreSQLDatabaseStatus struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	CredentialVersion int64 `json:"credentialVersion,omitempty"`
+	// RoleOID 只在角色创建提交并回读成功后保存，后续不按同名认领。
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	// +optional
+	RoleOID int64 `json:"roleOID,omitempty"`
+	// DatabaseOID 只在数据库创建并回读成功后保存；缺失不代表允许认领已有对象。
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+	// +optional
+	DatabaseOID int64 `json:"databaseOID,omitempty"`
 	// Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
 	// +optional
 	Phase string `json:"phase,omitempty"`
@@ -50,6 +60,10 @@ type PostgreSQLDatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.roleOID) || (has(self.status.credentialVersion) && has(self.status.instanceUID))",message="roleOID requires confirmed credentials and instanceUID"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.databaseOID) || has(self.status.roleOID)",message="databaseOID requires roleOID"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.roleOID)) || (has(self.status) && has(self.status.roleOID) && self.status.roleOID == oldSelf.status.roleOID)",message="confirmed roleOID cannot change or be removed"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.databaseOID)) || (has(self.status) && has(self.status.databaseOID) && self.status.databaseOID == oldSelf.status.databaseOID)",message="confirmed databaseOID cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.credentialVersion) || has(self.status.credentialRef)",message="credentialVersion requires credentialRef"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.credentialRef)) || (has(self.status) && has(self.status.credentialRef) && self.status.credentialRef == oldSelf.status.credentialRef)",message="recorded credentialRef cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.credentialVersion)) || (has(self.status) && has(self.status.credentialVersion) && self.status.credentialVersion == oldSelf.status.credentialVersion)",message="confirmed credentialVersion cannot change or be removed"

@@ -35,6 +35,7 @@ var (
 // Database 与 Connector 复用原项目 internal/instance/service.go 的能力边界。
 // Metadata 只查询版本与可用扩展，不能产生领域 Ready。
 type Database interface {
+	ResourceDatabase
 	InspectMetadata(context.Context) (DatabaseMetadata, error)
 	InspectManagement(context.Context) (DatabaseMetadata, error)
 	Close()
@@ -93,16 +94,45 @@ func (s *InstanceService) ObserveManagement(ctx context.Context, target instance
 }
 
 func (s *InstanceService) observe(ctx context.Context, target instance.ObservationTarget, management bool) (InstanceObservation, error) {
-	if err := target.Validate(); err != nil {
-		return InstanceObservation{}, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	current, err := s.connection(ctx, target)
+	if err != nil {
+		return InstanceObservation{}, err
+	}
+	name := target.Identity().Name()
+	var metadata DatabaseMetadata
+	if management {
+		metadata, err = current.database.InspectManagement(ctx)
+	} else {
+		metadata, err = current.database.InspectMetadata(ctx)
+		metadata.Management = instance.ManagementChecks{}
+	}
+	if err != nil {
+		s.release(name)
+		return InstanceObservation{}, err
+	}
+	if metadata.Version == "" {
+		s.release(name)
+		return InstanceObservation{}, ErrObservation
+	}
+	if err := s.checkCredentials(ctx, target, current.credentials); err != nil {
+		return InstanceObservation{}, err
+	}
+	return InstanceObservation{target: target, version: metadata.Version,
+		extensions: instance.ObserveExtensionSupport(metadata.AvailableExtensions), management: metadata.Management}, nil
+}
+
+// connection 由持有 mu 的调用者使用；不缓存观察结果或管理权限。
+func (s *InstanceService) connection(ctx context.Context, target instance.ObservationTarget) (*entry, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
 	if s.closed {
-		return InstanceObservation{}, ErrClosed
+		return nil, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
-		return InstanceObservation{}, err
+		return nil, err
 	}
 
 	// 先读取有效凭据。读取失败时不得继续使用缓存中的旧连接。
@@ -110,11 +140,11 @@ func (s *InstanceService) observe(ctx context.Context, target instance.Observati
 	credentials, err := s.source.Read(ctx, target.Definition().AdminCredential())
 	if err != nil {
 		s.release(name)
-		return InstanceObservation{}, credentialError(err)
+		return nil, credentialError(err)
 	}
 	if credentials.username == "" || credentials.password == "" {
 		s.release(name)
-		return InstanceObservation{}, ErrCredentialsInvalid
+		return nil, ErrCredentialsInvalid
 	}
 
 	// 连接身份与有效值均未变化时复用 pgxpool；generation 本身不要求换池。
@@ -127,7 +157,7 @@ func (s *InstanceService) observe(ctx context.Context, target instance.Observati
 	if current == nil {
 		database, err := s.connector.Connect(ctx, target.Definition().Endpoint(), credentials)
 		if err != nil {
-			return InstanceObservation{}, err
+			return nil, err
 		}
 		current = &entry{
 			target:      target,
@@ -137,39 +167,22 @@ func (s *InstanceService) observe(ctx context.Context, target instance.Observati
 		s.entries[name] = current
 	}
 
-	var metadata DatabaseMetadata
-	if management {
-		metadata, err = current.database.InspectManagement(ctx)
-	} else {
-		metadata, err = current.database.InspectMetadata(ctx)
-		// 即使 adapter 误填权限，也不能把只读 metadata 入口升级为 Ready。
-		metadata.Management = instance.ManagementChecks{}
-	}
-	if err != nil {
-		s.release(name)
-		return InstanceObservation{}, err
-	}
-	if metadata.Version == "" {
-		s.release(name)
-		return InstanceObservation{}, ErrObservation
-	}
+	return current, nil
+}
 
+func (s *InstanceService) checkCredentials(ctx context.Context, target instance.ObservationTarget, credentials Credentials) error {
+	name := target.Identity().Name()
 	// 回读后再检查凭据，避免把轮换前取得的结果交给新凭据的调用链。
 	latest, err := s.source.Read(ctx, target.Definition().AdminCredential())
 	if err != nil {
 		s.release(name)
-		return InstanceObservation{}, credentialError(err)
+		return credentialError(err)
 	}
 	if latest != credentials {
 		s.release(name)
-		return InstanceObservation{}, ErrCredentialsChanged
+		return ErrCredentialsChanged
 	}
-	return InstanceObservation{
-		target:     target,
-		version:    metadata.Version,
-		extensions: instance.ObserveExtensionSupport(metadata.AvailableExtensions),
-		management: metadata.Management,
-	}, nil
+	return nil
 }
 
 func credentialError(err error) error {

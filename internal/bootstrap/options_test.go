@@ -63,11 +63,14 @@ func TestCredentialPreparationOptions(t *testing.T) {
 	if options.database.credentialMount != "applications-kv" || options.database.credentialPrefix != "database" {
 		t.Fatal("凭据准备参数未传入领域装配")
 	}
-	if err := setupCredentialPreparation(nil, options.database, nil); err == nil {
+	if err := registerDatabaseSupplyController(nil, options.database, nil, nil); err == nil {
 		t.Fatal("启用凭据准备必须有显式配置的认证 client")
 	}
-	if err := setupCredentialPreparation(nil, databaseOptions{}, nil); err != nil {
+	if err := registerDatabaseSupplyController(nil, databaseOptions{}, nil, nil); err != nil {
 		t.Fatal("默认停用凭据准备不应要求后端")
+	}
+	if err := registerDatabaseSupplyController(nil, databaseOptions{provisionResources: true}, nil, nil); err == nil {
+		t.Fatal("启用资源供应必须有管理连接及凭据准备")
 	}
 }
 

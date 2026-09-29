@@ -106,14 +106,14 @@ func (t Target) Check() *Issue {
 		return &Issue{Unavailable, "等待 Database 与 Tenant 双向绑定完成"}
 	}
 	if *database.Tenant != t.Tenant.Identity || *t.Tenant.Database != database.Identity {
-		return &Issue{Conflict, "双向绑定的名称或 UID 不匹配，未创建凭据"}
+		return &Issue{Conflict, "双向绑定的名称或 UID 不匹配，未继续供应"}
 	}
 	if t.Tenant.Deleting || t.Tenant.Phase != binding.Bound || !t.DatabaseProtected || !t.TenantProtected {
-		return &Issue{Stopped, "Tenant 未完成绑定、正在删除或缺少 finalizer 保护，未创建凭据"}
+		return &Issue{Stopped, "Tenant 未完成绑定、正在删除或缺少 finalizer 保护，未继续供应"}
 	}
 	request, err := t.Tenant.Request.Resolve(t.Tenant.Identity)
 	if err != nil || (request.Provision != nil && !database.MatchesProvision(request, t.Tenant.Identity)) || request.Name != database.Identity.Name {
-		return &Issue{Conflict, "Tenant 申请与 Database 目标不一致，未创建凭据"}
+		return &Issue{Conflict, "Tenant 申请与 Database 目标不一致，未继续供应"}
 	}
 	if t.Instance == nil || database.InstanceUID == "" {
 		return &Issue{Unavailable, "等待 Instance 与已记录的实例身份"}

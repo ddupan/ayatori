@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | API schema 与绑定 controller 已实现；供应、交付与删除清理未接入 |
+| 状态 | API、绑定、凭据准备及角色/数据库创建已实现；扩展、导入、交付与删除清理未接入 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
-| 最后更新 | 2026-09-27 |
+| 最后更新 | 2026-09-29 |
 
 以 [系统规格](specification.md) 与
 [ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。类型与生成的 CRD 已纳入源码，
@@ -26,6 +26,7 @@ Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 
 | Database | `status.instanceUID` | 观察时的 Instance 身份 |
 | Database | `status.credentialRef.mount/path` | 首次写入前固定的 KV v2 位置，不随部署配置迁移 |
 | Database | `status.credentialVersion` | 创建并回读成功后确认的正整数版本；省略表示未确认 |
+| Database | `status.roleOID`、`status.databaseOID` | 分别创建并回读成功后确认的 PostgreSQL OID；不能凭同名补记 |
 | Tenant | `spec.provision.instanceRef.name` | 动态申请来源，与 `spec.databaseRef` 互斥且必须二选一 |
 | Tenant | `spec.provision.database/loginRole` | 可省略，语义默认值由 controller 解析，不由 CRD 推导 |
 | Tenant | `spec.databaseRef.name` | 显式申请已有 Database，不额外指定 Instance |
@@ -46,6 +47,13 @@ KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生�
 `CredentialsReady` 条件只描述凭据准备结果；它不授权实际数据库交付。
 `CreationStarted` 且无确认版本表示创建未完成确认，重入时停在 Conflict；不尝试推断
 进程中断前请求是否发出。完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。
+
+角色/数据库 OID 为 1–4294967295，写入后不可修改或移除。角色确认要求已有凭据确认与
+Instance UID；数据库确认要求先有角色确认。`ResourcesReady` 的 CreatingRole/CreatingDatabase
+没有相应 OID 时，下轮转 Conflict；依赖故障不清空确认。旧 CRD 裁剪 OID 会阻止继续下一步，
+但不能回滚已发出的外部创建，因此必须先升级 CRD 再启用供应。
+`ResourcesReady=True/Available` 只表示角色、数据库和 ACL 已确认，总体 Ready 仍不放行。
+详见[资源创建闭环](README.md#postgresql-资源创建闭环)。
 
 示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、
 [导入 Database](../../config/samples/database_v1alpha1_postgresqldatabase.yaml)、
@@ -131,7 +139,7 @@ Database 是平台管理的集群级资源，不归属于应用 namespace，也�
 普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放；
 这些资源管理操作由平台管理员授权。controller 的绑定协调权限与用户申请权限分别配置。
 
-以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；后端行为尚未实现：
+以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入、交付与回收尚未实现：
 
 | 内容 | 合同 |
 | --- | --- |
