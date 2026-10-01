@@ -56,19 +56,11 @@ func (s *InstanceService) TransferOwnership(ctx context.Context, target instance
 	})
 }
 
-// 所有供应操作与观察共用同一个连接登记和 Secret 刷新边界，执行前重新确认原生管理能力。
-// 不持有登记锁：不同 Instance、不同 Database 的操作并发执行，同一对象由 controller 串行。
+// 供应操作与观察共用同一个连接登记和 Secret 刷新边界。不在每次操作前重查管理权限：
+// 供应只在 Instance 当前 Ready 时放行，权限不足时 SQL 本身会被拒绝并按可重试处理。
 func (s *InstanceService) withManagementConnection(ctx context.Context, target instance.ObservationTarget, operation func(Database) error) error {
 	current, err := s.connection(ctx, target)
 	if err != nil {
-		return database.ErrUnavailable
-	}
-	metadata, err := current.database.InspectManagement(ctx)
-	checks := metadata.Management
-	if err != nil || checks.Connection != instance.CheckPassed || checks.Roles != instance.CheckPassed || checks.Databases != instance.CheckPassed || checks.Grants != instance.CheckPassed {
-		return database.ErrUnavailable
-	}
-	if err := s.checkCredentials(ctx, current); err != nil {
 		return database.ErrUnavailable
 	}
 	return operation(current.database)

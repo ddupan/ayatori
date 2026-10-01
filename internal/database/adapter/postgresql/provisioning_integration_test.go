@@ -107,13 +107,15 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 			t.Fatal("未知数据库被认领、修改或继续创建了角色")
 		}
 	})
-	t.Run("已确认角色后权限恢复", func(t *testing.T) {
+	t.Run("管理权限恢复后继续", func(t *testing.T) {
 		database := f.bound(t, "permission_restore")
-		f.reconcile(t, database, databasedomain.ResourcePending)
 		f.queryPostgres(t, "ALTER ROLE native_manager NOCREATEDB")
 		f.reconcile(t, database, databasedomain.ResourceUnavailable)
+		if database.Status.DatabaseOID != 0 {
+			t.Fatal("权限被拒绝时不应记录数据库")
+		}
 		f.queryPostgres(t, "ALTER ROLE native_manager CREATEDB")
-		for range 3 {
+		for range 4 {
 			f.reconcile(t, database, databasedomain.ResourcePending)
 		}
 		f.reconcile(t, database, databasedomain.ResourceAvailable)
