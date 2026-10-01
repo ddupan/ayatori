@@ -10,9 +10,7 @@ import (
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	secretadapter "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -60,17 +58,9 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := secretadapter.NewSecretCredentials(manager.GetAPIReader(), controllerNamespace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := application.NewInstanceService(credentials, postgresql.Connector{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resources := &secretadapter.InstanceResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
-	usecase := &application.InstanceReconciliation{Resources: resources, Observer: service}
-	reconciler := databasecontroller.NewInstanceReconciler(manager.GetClient(), usecase, resources, controllerNamespace)
+	service := &postgresql.Instances{}
+	reconciler := &databasecontroller.InstanceReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), PostgreSQL: service,
+		Secrets: databasecontroller.ManagementSecrets{Reader: manager.GetAPIReader(), Namespace: controllerNamespace}}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		t.Fatal(err)
 	}

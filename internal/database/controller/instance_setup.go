@@ -22,7 +22,7 @@ func InstanceCacheOptions(namespace string) cache.Options {
 }
 
 func (r *InstanceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if r.Client == nil || r.Service == nil || r.Presenter == nil || len(validation.IsDNS1123Label(r.SecretNamespace)) != 0 {
+	if r.Client == nil || r.Reader == nil || r.PostgreSQL == nil || r.Secrets.Reader == nil || len(validation.IsDNS1123Label(r.Secrets.Namespace)) != 0 {
 		return errors.New("instance observer and valid management Secret namespace required")
 	}
 	return ctrl.NewControllerManagedBy(manager).
@@ -35,7 +35,7 @@ func (r *InstanceReconciler) SetupWithManager(manager ctrl.Manager) error {
 }
 
 func (r *InstanceReconciler) instancesForSecret(ctx context.Context, object client.Object) []ctrl.Request {
-	if object.GetNamespace() != r.SecretNamespace {
+	if object.GetNamespace() != r.Secrets.Namespace {
 		return nil
 	}
 	instances := &databasev1alpha1.PostgreSQLInstanceList{}

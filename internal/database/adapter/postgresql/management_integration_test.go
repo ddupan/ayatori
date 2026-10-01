@@ -4,13 +4,11 @@ package postgresql_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	corev1 "k8s.io/api/core/v1"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -25,7 +23,7 @@ func useNativeManager(t *testing.T, f *credentialFixture) {
 
 func assessManagement(t *testing.T, f *credentialFixture) instance.Snapshot {
 	t.Helper()
-	observation, err := f.service.ObserveManagement(f.ctx, f.target)
+	facts, err := f.observe(f.ctx, f.target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +34,7 @@ func assessManagement(t *testing.T, f *credentialFixture) instance.Snapshot {
 	if err := aggregate.BeginValidation(); err != nil {
 		t.Fatal(err)
 	}
-	capabilities, err := observation.Capabilities()
+	capabilities, err := instance.NewCapabilityObservation(f.target, facts.Version, facts.Checks())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,20 +77,6 @@ func TestNativeManagementPrivileges(t *testing.T) {
 	f.updateSecret(t, func(secret *corev1.Secret) { secret.Data[managementUsernameKey] = []byte(fixtureUser) })
 	if snapshot := assessManagement(t, f); snapshot.Failure != instance.InsufficientPrivileges {
 		t.Fatal("不应以 superuser 绕过非特权账号合同")
-	}
-	reads := 0
-	f.gate.beforeRead = func() {
-		reads++
-		if reads == 2 {
-			f.updateSecret(t, func(secret *corev1.Secret) { secret.Data[managementPasswordKey] = []byte(rotatedPassword) })
-		}
-	}
-	observation, err := f.service.ObserveManagement(f.ctx, f.target)
-	if !errors.Is(err, application.ErrCredentialsChanged) || observation.Target().Validate() == nil {
-		t.Fatal("管理观察期间凭据轮换应丢弃全部能力结果")
-	}
-	if f.backendIDs(t) != "" {
-		t.Fatal("中途轮换后不应保留旧管理连接")
 	}
 }
 

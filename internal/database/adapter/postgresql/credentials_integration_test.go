@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -39,15 +39,15 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 	reference := fixture.target.Definition().AdminCredential()
 
 	fixture.createSecret(t, "unrelated")
-	if _, err := fixture.reader.Read(fixture.ctx, reference); !errors.Is(err, application.ErrCredentialsUnavailable) {
+	if _, err := fixture.secrets.Read(fixture.ctx, reference); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("a Secret in another namespace satisfied the reference")
 	}
-	if _, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target); !errors.Is(err, application.ErrCredentialsUnavailable) {
+	if _, err := fixture.observe(fixture.ctx, fixture.target); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("missing Secret did not fail closed")
 	}
 
 	fixture.createSecret(t, controllerNamespace)
-	if _, err := fixture.deniedReader.Read(fixture.ctx, reference); !errors.Is(err, application.ErrCredentialsUnavailable) {
+	if _, err := fixture.deniedSecrets.Read(fixture.ctx, reference); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("API server did not enforce Secret RBAC")
 	}
 	fixture.observeVersion(t)
@@ -55,7 +55,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 	fixture.updateSecret(t, func(secret *corev1.Secret) {
 		delete(secret.Data, "credential")
 	})
-	if _, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target); !errors.Is(err, application.ErrCredentialsInvalid) {
+	if _, err := fixture.observe(fixture.ctx, fixture.target); !errors.Is(err, instance.ErrCredentialsInvalid) {
 		t.Fatal("missing credential field reused a cached connection")
 	}
 	fixture.updateSecret(t, func(secret *corev1.Secret) {
@@ -67,7 +67,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal("cannot delete fixture Secret")
 	}
-	if _, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target); !errors.Is(err, application.ErrCredentialsUnavailable) {
+	if _, err := fixture.observe(fixture.ctx, fixture.target); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("deleted Secret retained access")
 	}
 }
@@ -94,8 +94,8 @@ func TestEffectiveCredentialChangesReplaceConnection(t *testing.T) {
 	fixture.updateSecret(t, func(secret *corev1.Secret) {
 		secret.Data["credential"] = []byte(rotatedPassword)
 	})
-	version, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target)
-	if !errors.Is(err, application.ErrAuthentication) || version != "" {
+	facts, err := fixture.observe(fixture.ctx, fixture.target)
+	if !errors.Is(err, instance.ErrAuthentication) || facts.Version != "" {
 		t.Fatal("old connection bypassed changed credentials")
 	}
 
@@ -108,43 +108,13 @@ func TestEffectiveCredentialChangesReplaceConnection(t *testing.T) {
 	fixture.updateSecret(t, func(secret *corev1.Secret) {
 		secret.Data["login"] = []byte("nonexistent")
 	})
-	if _, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target); !errors.Is(err, application.ErrAuthentication) {
+	if _, err := fixture.observe(fixture.ctx, fixture.target); !errors.Is(err, instance.ErrAuthentication) {
 		t.Fatal("username change did not require a new authentication")
 	}
 	fixture.updateSecret(t, func(secret *corev1.Secret) {
 		secret.Data["login"] = []byte(fixtureUser)
 	})
 	fixture.observeVersion(t)
-}
-
-func TestObservationDiscardsResultWhenCredentialsChange(t *testing.T) {
-	fixture := newCredentialFixture(t)
-	fixture.createSecret(t, controllerNamespace)
-
-	reads := 0
-	fixture.gate.beforeRead = func() {
-		reads++
-		if reads == 2 {
-			fixture.updateSecret(t, func(secret *corev1.Secret) {
-				secret.Data["credential"] = []byte(rotatedPassword)
-			})
-		}
-	}
-
-	observation, err := fixture.service.ObserveMetadata(fixture.ctx, fixture.target)
-	if !errors.Is(err, application.ErrCredentialsChanged) {
-		t.Fatal("in-flight rotation was not detected")
-	}
-	if observation.Version() != "" {
-		t.Fatal("observation returned data obtained with stale credentials")
-	}
-	requested := instance.NewExtensionSet([]string{fixtureExtension})
-	if observation.Extensions().Check(requested).Decision != instance.ExtensionSupportUnobserved {
-		t.Fatal("observation returned extension support obtained with stale credentials")
-	}
-	if fixture.backendIDs(t) != "" {
-		t.Fatal("stale connection was retained after rotation")
-	}
 }
 
 func TestConnectionReleaseAndServiceRestart(t *testing.T) {
@@ -160,23 +130,20 @@ func TestConnectionReleaseAndServiceRestart(t *testing.T) {
 
 	fixture.service.Close()
 	fixture.service.Close()
-	if _, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target); !errors.Is(err, application.ErrClosed) {
+	if _, err := fixture.observe(fixture.ctx, fixture.target); !errors.Is(err, postgresql.ErrClosed) {
 		t.Fatal("closed service accepted work")
 	}
 
-	restarted, err := application.NewInstanceService(fixture.reader, postgresql.Connector{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(restarted.Close)
-	if _, err := restarted.ObserveVersion(fixture.ctx, fixture.target); err != nil {
+	fixture.service = &postgresql.Instances{}
+	t.Cleanup(fixture.service.Close)
+	if _, err := fixture.observe(fixture.ctx, fixture.target); err != nil {
 		t.Fatal("new service could not recover from stored Secret", err)
 	}
 
 	// 此 fixture 未启用 TLS；各加密模式均不得偷偷回退到明文连接。
 	for _, mode := range []instance.TLSMode{instance.TLSRequire, instance.TLSVerifyCA, instance.TLSVerifyFull} {
 		securedTarget := target(t, fixture.port, mode)
-		if _, err := restarted.ObserveVersion(fixture.ctx, securedTarget); err == nil {
+		if _, err := fixture.observe(fixture.ctx, securedTarget); err == nil {
 			t.Fatal("TLS policy silently downgraded to plaintext")
 		}
 	}
@@ -189,8 +156,8 @@ func TestConcurrentVersionObservations(t *testing.T) {
 	var workers sync.WaitGroup
 	for range 4 {
 		workers.Go(func() {
-			version, err := fixture.service.ObserveVersion(fixture.ctx, fixture.target)
-			if err != nil || version == "" {
+			facts, err := fixture.observe(fixture.ctx, fixture.target)
+			if err != nil || facts.Version == "" {
 				t.Error("concurrent observation failed", err)
 			}
 		})
@@ -218,9 +185,9 @@ func TestManagementConnectionRecoversAfterTimeout(t *testing.T) {
 	})
 
 	queryContext, cancel := context.WithTimeout(fixture.ctx, 500*time.Millisecond)
-	version, err := fixture.service.ObserveVersion(queryContext, fixture.target)
+	facts, err := fixture.observe(queryContext, fixture.target)
 	cancel()
-	if err == nil || version != "" {
+	if err == nil || facts.Version != "" {
 		t.Fatal("timed out PostgreSQL observation returned a successful result")
 	}
 

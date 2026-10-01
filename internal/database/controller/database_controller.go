@@ -39,12 +39,13 @@ type CredentialBackend interface {
 }
 
 // PostgreSQLBackend 只返回 catalog 事实和 database 包定义的结果分类。
+// 每次调用都传入本轮读取的管理凭据，adapter 据此复用或替换连接池。
 type PostgreSQLBackend interface {
-	InspectResources(context.Context, instance.ObservationTarget, *database.Database) (database.ResourceFacts, error)
-	CreateDatabase(context.Context, instance.ObservationTarget, *database.Database) (uint32, error)
-	RevokePublicConnect(context.Context, instance.ObservationTarget, *database.Database) error
-	CreateLoginRole(context.Context, instance.ObservationTarget, *database.Database, credential.ApplicationCredential) (uint32, error)
-	TransferOwnership(context.Context, instance.ObservationTarget, *database.Database) error
+	InspectResources(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) (database.ResourceFacts, error)
+	CreateDatabase(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) (uint32, error)
+	RevokePublicConnect(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
+	CreateLoginRole(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database, credential.ApplicationCredential) (uint32, error)
+	TransferOwnership(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
 }
 
 // DatabaseReconciler 是 PostgreSQLDatabase 的唯一 status 写入者：先准备凭据，
@@ -53,7 +54,9 @@ type DatabaseReconciler struct {
 	Client      client.Client
 	Reader      client.Reader
 	Credentials CredentialBackend
-	PostgreSQL  PostgreSQLBackend
+	// Secrets 与 PostgreSQL 只在启用资源供应时注入。
+	Secrets    ManagementSecrets
+	PostgreSQL PostgreSQLBackend
 }
 
 // databaseState 是本轮从 API 直接读取的事实。
@@ -103,17 +106,22 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	if r.PostgreSQL == nil || db.PlanResources() == database.Wait {
 		return r.save(ctx, state, db)
 	}
-	facts, err := r.PostgreSQL.InspectResources(ctx, state.target, db)
+	target := state.target
+	management, err := r.Secrets.Read(ctx, target.Definition().AdminCredential())
+	var facts database.ResourceFacts
+	if err == nil {
+		facts, err = r.PostgreSQL.InspectResources(ctx, target, management, db)
+	}
 	switch db.ObserveResources(facts, err) {
 	case database.CreateDatabase:
-		db.DatabaseCreated(r.PostgreSQL.CreateDatabase(ctx, state.target, db))
+		db.DatabaseCreated(r.PostgreSQL.CreateDatabase(ctx, target, management, db))
 	case database.RevokePublicConnect:
-		db.Converged("撤销 PUBLIC CONNECT", r.PostgreSQL.RevokePublicConnect(ctx, state.target, db))
+		db.Converged("撤销 PUBLIC CONNECT", r.PostgreSQL.RevokePublicConnect(ctx, target, management, db))
 	case database.CreateRole:
 		// PlanResources 只在本轮凭据验证成功后放行，value 此时一定是已确认凭据。
-		db.RoleCreated(r.PostgreSQL.CreateLoginRole(ctx, state.target, db, value))
+		db.RoleCreated(r.PostgreSQL.CreateLoginRole(ctx, target, management, db, value))
 	case database.TransferOwnership:
-		db.Converged("移交数据库 owner", r.PostgreSQL.TransferOwnership(ctx, state.target, db))
+		db.Converged("移交数据库 owner", r.PostgreSQL.TransferOwnership(ctx, target, management, db))
 	}
 	return r.save(ctx, state, db)
 }

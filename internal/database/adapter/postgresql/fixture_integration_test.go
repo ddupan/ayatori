@@ -35,9 +35,8 @@ import (
 	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	secretadapter "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -187,31 +186,17 @@ func target(t *testing.T, port int, mode instance.TLSMode) instance.ObservationT
 	return value
 }
 
-// 在真实读取前设置屏障，确定性验证观测期间 Secret 变化；实际数据仍来自 API server。
-type gatedReader struct {
-	application.CredentialReader
-	beforeRead func()
-}
-
-func (r *gatedReader) Read(ctx context.Context, ref instance.CredentialReference) (application.Credentials, error) {
-	if r.beforeRead != nil {
-		r.beforeRead()
-	}
-	return r.CredentialReader.Read(ctx, ref)
-}
-
 // credentialFixture 为每个场景创建独立 API server、PostgreSQL 和应用服务。
 type credentialFixture struct {
-	config       *rest.Config
-	ctx          context.Context
-	client       *kubernetes.Clientset
-	reader       *secretadapter.SecretCredentials
-	deniedReader *secretadapter.SecretCredentials
-	gate         *gatedReader
-	service      *application.InstanceService
-	target       instance.ObservationTarget
-	containerID  string
-	port         int
+	config        *rest.Config
+	ctx           context.Context
+	client        *kubernetes.Clientset
+	secrets       databasecontroller.ManagementSecrets
+	deniedSecrets databasecontroller.ManagementSecrets
+	service       *postgresql.Instances
+	target        instance.ObservationTarget
+	containerID   string
+	port          int
 }
 
 func newCredentialFixture(t *testing.T) *credentialFixture {
@@ -249,10 +234,6 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := secretadapter.NewSecretCredentials(apiReader, controllerNamespace)
-	if err != nil {
-		t.Fatal(err)
-	}
 	user, err := environment.AddUser(envtest.User{Name: "without-secret-access"}, config)
 	if err != nil {
 		t.Fatal(err)
@@ -261,30 +242,21 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deniedReader, err := secretadapter.NewSecretCredentials(deniedAPIReader, controllerNamespace)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	containerID, port := postgresFixture(t, ctx)
-	gate := &gatedReader{CredentialReader: reader}
-	service, err := application.NewInstanceService(gate, postgresql.Connector{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := &postgresql.Instances{}
 	t.Cleanup(service.Close)
 
 	return &credentialFixture{
-		config:       config,
-		ctx:          ctx,
-		client:       client,
-		reader:       reader,
-		deniedReader: deniedReader,
-		gate:         gate,
-		service:      service,
-		target:       target(t, port, instance.TLSDisable),
-		containerID:  containerID,
-		port:         port,
+		config:        config,
+		ctx:           ctx,
+		client:        client,
+		secrets:       databasecontroller.ManagementSecrets{Reader: apiReader, Namespace: controllerNamespace},
+		deniedSecrets: databasecontroller.ManagementSecrets{Reader: deniedAPIReader, Namespace: controllerNamespace},
+		service:       service,
+		target:        target(t, port, instance.TLSDisable),
+		containerID:   containerID,
+		port:          port,
 	}
 }
 
@@ -315,13 +287,22 @@ func (f *credentialFixture) updateSecret(t *testing.T, change func(*corev1.Secre
 	}
 }
 
+// observe 按 Reconciler 的顺序读取当前管理 Secret，再观察管理能力。
+func (f *credentialFixture) observe(ctx context.Context, target instance.ObservationTarget) (instance.ManagementFacts, error) {
+	credentials, err := f.secrets.Read(ctx, target.Definition().AdminCredential())
+	if err != nil {
+		return instance.ManagementFacts{}, err
+	}
+	return f.service.InspectManagement(ctx, target, credentials)
+}
+
 func (f *credentialFixture) observeVersion(t *testing.T) {
 	t.Helper()
-	version, err := f.service.ObserveVersion(f.ctx, f.target)
+	facts, err := f.observe(f.ctx, f.target)
 	if err != nil {
 		t.Fatal("version observation failed", err)
 	}
-	if version == "" {
+	if facts.Version == "" {
 		t.Fatal("successful observation returned an empty version")
 	}
 }

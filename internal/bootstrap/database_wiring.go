@@ -15,14 +15,19 @@ func wireBindingController(writer client.Client, reader client.Reader) *database
 	return databasecontroller.NewBindingReconciler(writer, service, resources)
 }
 
-func wireInstanceController(writer client.Client, reader client.Reader, observer application.InstanceObserver, namespace string) *databasecontroller.InstanceReconciler {
-	resources := &kubernetes.InstanceResources{Client: writer, Reader: reader}
-	service := &application.InstanceReconciliation{Resources: resources, Observer: observer}
-	return databasecontroller.NewInstanceReconciler(writer, service, resources, namespace)
+// wireInstanceController 中的 reader 必须直连 API server：Secret 内容不进入共享 cache。
+func wireInstanceController(writer client.Client, reader client.Reader, instances databasecontroller.InstanceBackend, namespace string) *databasecontroller.InstanceReconciler {
+	return &databasecontroller.InstanceReconciler{Client: writer, Reader: reader, PostgreSQL: instances,
+		Secrets: databasecontroller.ManagementSecrets{Reader: reader, Namespace: namespace}}
 }
 
 // wireDatabaseController 装配 Database 的唯一 status 写入者；postgres 为 nil 时只准备凭据。
 func wireDatabaseController(writer client.Client, reader client.Reader, credentials databasecontroller.CredentialBackend,
-	postgres databasecontroller.PostgreSQLBackend) *databasecontroller.DatabaseReconciler {
-	return &databasecontroller.DatabaseReconciler{Client: writer, Reader: reader, Credentials: credentials, PostgreSQL: postgres}
+	postgres databasecontroller.PostgreSQLBackend, namespace string) *databasecontroller.DatabaseReconciler {
+	reconciler := &databasecontroller.DatabaseReconciler{Client: writer, Reader: reader, Credentials: credentials}
+	if postgres != nil {
+		reconciler.PostgreSQL = postgres
+		reconciler.Secrets = databasecontroller.ManagementSecrets{Reader: reader, Namespace: namespace}
+	}
+	return reconciler
 }

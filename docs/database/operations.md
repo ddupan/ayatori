@@ -26,7 +26,7 @@ Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理�
 Instance 观察已实现：先确认 manager 配置了 `--database-secret-namespace` 或 `POD_NAMESPACE`，
 再检查 Ready Reason、observedGeneration 与管理 Secret 名称/字段映射，切勿导出其 data。
 `InsufficientPrivileges` 表示当前原生方案要求的非 superuser、CREATEDB/CREATEROLE 不满足；
-`CredentialsChanged` 会丢弃中途轮换的结果并重验；`InstanceInUse` 消息定位阻塞删除的资源。
+`InstanceInUse` 消息定位阻塞删除的资源。
 Secret 事件立即入队，30 秒重查覆盖 PostgreSQL 权限等没有 Kubernetes 事件的外部变化。
 Instance 删除不要求 PostgreSQL 可达，但必须可读取所有 Database/Tenant 引用。
 

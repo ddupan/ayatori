@@ -57,15 +57,18 @@ Makefile 与 Dockerfile 均继续构建 `cmd/main.go`。
 manager worker，再释放连接。
 
 Database 使用 Wire 式的显式构造函数注入，目前手写装配，不引入 Wire 生成器、Dig/Fx
-容器或运行时服务查找。`database_wiring.go` 集中展示 repository → 用例 → controller 的
-对象构造；`registerDatabaseControllers` 负责注册，返回的 `closeDatabaseConnections`
-只在 worker 停止后关闭 Instance 连接。controller 在启动时接收完整依赖，不在 Reconcile
-或 SetupWithManager 中补建 adapter/service；缺失依赖在注册时失败。
+容器或运行时服务查找。`database_wiring.go` 集中展示后端 adapter → Reconciler 的对象构造；
+`registerDatabaseControllers` 负责注册，返回的 `closeDatabaseConnections` 只在 worker 停止后
+关闭 Instance 连接。controller 在启动时接收完整依赖，不在 Reconcile 或 SetupWithManager 中
+补建 adapter；缺失依赖在注册时失败。
 
-domain 持有凭据值对象、准备资格与创建恢复规则；application 只组织读写、调用领域判断
-和保存结果。用例需要的 repository 接口与并发快照仍由消费方定义，不把所有类型都强塞
-进领域。Kubernetes adapter 将领域阶段映射为已有 Conditions，领域不依赖其字符串协议。
-单测检查 domain/controller 的依赖边界，并验证共享 writer、直连 reader 和服务的注入。
+Reconciler 本身就是 Kubernetes adapter 并承担用例：直接用 `client.Client` 读写 CR，负责 CR
+与领域对象的映射、外部操作顺序和 Conditions 呈现。domain 聚合根据持久状态与本轮事实决定
+下一步，不依赖 Kubernetes 或后端。只为可能出现新实现的后端（PostgreSQL、凭据后端）在
+controller 中按使用方需要声明接口；后端 adapter 只返回事实，并把错误归为领域结果分类。
+Kubernetes 侧不再包一层 Repository/Presenter 接口。判断放置与命名规则见
+[Database 领域模型](../database/domain-model.md#分层)；Tenant 绑定链路尚待迁移。
+单测检查 domain/controller 的依赖边界，并验证共享 writer、直连 reader 和后端的注入。
 
 基础设施能力属于整个 controller-manager，不因首个消费者是 Database 就归入该领域。
 `internal/infra/openbao` 管理官方 SDK client 的 TLS 配置、Kubernetes 认证及 token 生命周期，
@@ -77,8 +80,7 @@ domain 持有凭据值对象、准备资格与创建恢复规则；application �
 不为统一命名再包一层通用 reader/writer，也不引入全局注册中心。共享连接不表示扩大授权；
 不同身份或权限边界仍由启动装配显式隔离。
 
-领域按用例需要维护 repository 契约，其 adapter 负责 CR/领域对象映射及业务结果转换。
-例如 Database 的七键凭据格式、UID 路径、禁止覆盖和不确定结果处理仍由 Database 维护；
+业务结果语义归产品领域：Database 的七键凭据格式、UID 路径、禁止覆盖和不确定结果处理由 Database 维护，
 它们不是公共 KV 存储的业务规则。Secret 管理凭据读取注入 `manager.GetAPIReader()`，
 保持直连 API server、不缓存 Secret 内容的安全边界；资源写入复用 `manager.GetClient()`。
 

@@ -24,71 +24,163 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
-// Connector 不读取 Secret、不决定连接何时替换；池本身由 pgxpool 实现。
-type Connector struct {
+// ErrClosed 表示 manager 已停止，不再建立新连接。
+var ErrClosed = errors.New("postgresql instances closed")
+
+// Instances 按 Instance 名称复用管理连接池。不读取 Secret：调用方每轮传入当前有效凭据，
+// 目标或凭据变化时替换池。pgxpool 本身支持并发；mu 只保护登记，建连、查询与关闭都在锁外。
+type Instances struct {
 	RootCert string
+
+	mu      sync.Mutex
+	entries map[string]*entry
+	closed  bool
 }
 
-type connection struct {
-	pool *pgxpool.Pool
+type entry struct {
+	target      instance.ObservationTarget
+	credentials instance.ManagementCredentials
+	pool        *pgxpool.Pool
 }
 
-func (*connection) String() string     { return "[redacted PostgreSQL database]" }
-func (d *connection) GoString() string { return d.String() }
-func (d *connection) Close() {
-	d.pool.Close()
+func (*Instances) String() string     { return "[redacted PostgreSQL instances]" }
+func (i *Instances) GoString() string { return i.String() }
+
+func (e *entry) serves(target instance.ObservationTarget, credentials instance.ManagementCredentials) bool {
+	return e.target.Identity() == target.Identity() && e.target.Definition() == target.Definition() && e.credentials == credentials
 }
 
-func (c Connector) Connect(ctx context.Context, endpoint instance.Endpoint, credentials application.Credentials) (application.Database, error) {
+// pool 返回目标与凭据对应的连接池；generation 本身不要求换池。
+func (i *Instances) pool(ctx context.Context, target instance.ObservationTarget, credentials instance.ManagementCredentials) (*entry, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
+	}
+	name := target.Identity().Name()
+	i.mu.Lock()
+	current, closed := i.entries[name], i.closed
+	i.mu.Unlock()
+	if closed {
+		return nil, ErrClosed
+	}
+	if current != nil && current.serves(target, credentials) {
+		return current, nil
+	}
+	i.release(current)
+	pool, err := i.connect(ctx, target.Definition().Endpoint(), credentials)
+	if err != nil {
+		return nil, err
+	}
+	created := &entry{target: target, credentials: credentials, pool: pool}
+	i.mu.Lock()
+	if i.closed {
+		i.mu.Unlock()
+		pool.Close()
+		return nil, ErrClosed
+	}
+	// 并发建连时只保留一个池；落后者关闭自己新建的池并复用已登记的。
+	if existing := i.entries[name]; existing != nil && existing.serves(target, credentials) {
+		i.mu.Unlock()
+		pool.Close()
+		return existing, nil
+	}
+	if i.entries == nil {
+		i.entries = make(map[string]*entry)
+	}
+	replaced := i.entries[name]
+	i.entries[name] = created
+	i.mu.Unlock()
+	if replaced != nil {
+		replaced.pool.Close()
+	}
+	return created, nil
+}
+
+func (i *Instances) connect(ctx context.Context, endpoint instance.Endpoint, credentials instance.ManagementCredentials) (*pgxpool.Pool, error) {
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
 	}
-	if credentials.Username() == "" || credentials.Password() == "" {
-		return nil, application.ErrCredentialsInvalid
-	}
-	endpointValues := endpoint.Values()
+	values := endpoint.Values()
 	query := url.Values{
-		"sslmode":          {string(endpointValues.TLSMode)},
+		"sslmode":          {string(values.TLSMode)},
 		"connect_timeout":  {"5"},
 		"application_name": {"ayatori-database-management"},
 	}
-	if c.RootCert != "" {
-		query.Set("sslrootcert", c.RootCert)
+	if i.RootCert != "" {
+		query.Set("sslrootcert", i.RootCert)
 	}
 	connectionURL := url.URL{
 		Scheme:   "postgresql",
-		Host:     net.JoinHostPort(endpointValues.Host, strconv.Itoa(endpointValues.Port)),
-		Path:     "/" + endpointValues.ManagementDatabase,
+		Host:     net.JoinHostPort(values.Host, strconv.Itoa(values.Port)),
+		Path:     "/" + values.ManagementDatabase,
 		User:     url.UserPassword(credentials.Username(), credentials.Password()),
 		RawQuery: query.Encode(),
 	}
 	config, err := pgxpool.ParseConfig(connectionURL.String())
 	if err != nil {
-		return nil, application.ErrConnection
+		return nil, errConnection
 	}
 	// pgx 不实现 libpq hostaddr；复用其 LookupFunc 扩展点，TLS 验证身份仍采用 host。
 	config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
-		return []string{endpointValues.HostAddr}, nil
+		return []string{values.HostAddr}, nil
 	}
 	config.ConnConfig.Fallbacks = nil
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return nil, safeError(err, application.ErrConnection)
+		return nil, safeError(err, errConnection)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, safeError(err, application.ErrConnection)
+		return nil, safeError(err, errConnection)
 	}
-	return &connection{pool: pool}, nil
+	return pool, nil
 }
+
+// release 只注销仍登记着的同一个池，并在锁外关闭；pgxpool.Close 会等待在途查询归还连接。
+func (i *Instances) release(current *entry) {
+	if current == nil {
+		return
+	}
+	name := current.target.Identity().Name()
+	i.mu.Lock()
+	registered := i.entries[name] == current
+	if registered {
+		delete(i.entries, name)
+	}
+	i.mu.Unlock()
+	if registered {
+		current.pool.Close()
+	}
+}
+
+// Forget 只释放本地连接；不删除数据库，不替代 Instance finalizer。
+func (i *Instances) Forget(name string) {
+	i.mu.Lock()
+	current := i.entries[name]
+	i.mu.Unlock()
+	i.release(current)
+}
+
+// Close 在 manager 停止 worker 后调用；之后的建连请求返回 ErrClosed。
+func (i *Instances) Close() {
+	i.mu.Lock()
+	i.closed = true
+	entries := i.entries
+	i.entries = nil
+	i.mu.Unlock()
+	for _, current := range entries {
+		current.pool.Close()
+	}
+}
+
+var errConnection = errors.New("management connection unavailable")
 
 func safeError(err, fallback error) error {
 	if errors.Is(err, context.Canceled) {
@@ -97,12 +189,11 @@ func safeError(err, fallback error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	var pgerr *pgconn.PgError
-	if errors.As(err, &pgerr) && (pgerr.Code == "28P01" || pgerr.Code == "28000") {
-		return application.ErrAuthentication
+	if pgerr, ok := errors.AsType[*pgconn.PgError](err); ok && (pgerr.Code == "28P01" || pgerr.Code == "28000") {
+		return instance.ErrAuthentication
 	}
 	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-		return application.ErrAuthentication
+		return instance.ErrAuthentication
 	}
 	return fallback
 }

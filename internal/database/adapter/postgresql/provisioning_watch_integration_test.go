@@ -31,7 +31,8 @@ func testProvisioningManager(t *testing.T, f *provisioningFixture) {
 			t.Fatal(err)
 		}
 		backend := &countProvisioningObservations{PostgreSQLBackend: f.service}
-		reconciler := &databasecontroller.DatabaseReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), Credentials: f.store, PostgreSQL: backend}
+		reconciler := &databasecontroller.DatabaseReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), Credentials: f.store, PostgreSQL: backend,
+			Secrets: f.secrets}
 		if err := reconciler.SetupWithManager(manager); err != nil {
 			t.Fatal(err)
 		}
@@ -82,8 +83,9 @@ type countProvisioningObservations struct {
 	reads atomic.Int32
 }
 
-func (b *countProvisioningObservations) InspectResources(ctx context.Context, target instance.ObservationTarget, db *databasedomain.Database) (databasedomain.ResourceFacts, error) {
-	facts, err := b.PostgreSQLBackend.InspectResources(ctx, target, db)
+func (b *countProvisioningObservations) InspectResources(ctx context.Context, target instance.ObservationTarget,
+	credentials instance.ManagementCredentials, db *databasedomain.Database) (databasedomain.ResourceFacts, error) {
+	facts, err := b.PostgreSQLBackend.InspectResources(ctx, target, credentials, db)
 	if err == nil && db.Name() == "watch_supply" {
 		b.reads.Add(1)
 	}

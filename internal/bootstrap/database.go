@@ -8,10 +8,8 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	databasebao "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -42,28 +40,28 @@ func (o databaseOptions) configureManager(options *ctrl.Options) {
 // registerDatabaseControllers 封装 Database 的内部装配，并返回在 manager 停止后执行的清理。
 func registerDatabaseControllers(ctx context.Context, manager ctrl.Manager, options databaseOptions, baoClient *bao.Client) (func(), error) {
 	closeDatabaseConnections := func() {}
-	var backend *application.InstanceService
+	var instances *postgresql.Instances
 	if options.secretNamespace != "" {
-		service, err := setupInstanceObservation(manager, options.secretNamespace, options.rootCert)
-		if err != nil {
+		instances = &postgresql.Instances{RootCert: options.rootCert}
+		if err := wireInstanceController(manager.GetClient(), manager.GetAPIReader(), instances, options.secretNamespace).SetupWithManager(manager); err != nil {
+			instances.Close()
 			return nil, fmt.Errorf("set up Instance observation: %w", err)
 		}
-		closeDatabaseConnections = service.Close
-		backend = service
+		closeDatabaseConnections = instances.Close
 	}
 	if err := wireBindingController(manager.GetClient(), manager.GetAPIReader()).SetupWithManager(ctx, manager); err != nil {
 		closeDatabaseConnections()
 		return nil, fmt.Errorf("set up Database binding controller: %w", err)
 	}
-	if err := registerDatabaseSupplyController(manager, options, baoClient, backend); err != nil {
+	if err := registerDatabaseSupplyController(manager, options, baoClient, instances); err != nil {
 		closeDatabaseConnections()
 		return nil, fmt.Errorf("register Database supply controller: %w", err)
 	}
 	return closeDatabaseConnections, nil
 }
 
-func registerDatabaseSupplyController(manager ctrl.Manager, options databaseOptions, baoClient *bao.Client, backend *application.InstanceService) error {
-	if options.provisionResources && (backend == nil || options.credentialMount == "") {
+func registerDatabaseSupplyController(manager ctrl.Manager, options databaseOptions, baoClient *bao.Client, instances *postgresql.Instances) error {
+	if options.provisionResources && (instances == nil || options.credentialMount == "") {
 		return fmt.Errorf("database resource provisioning requires management Secret namespace and credential mount")
 	}
 	if options.credentialMount == "" {
@@ -78,24 +76,7 @@ func registerDatabaseSupplyController(manager ctrl.Manager, options databaseOpti
 	}
 	var postgres databasecontroller.PostgreSQLBackend
 	if options.provisionResources {
-		postgres = backend
+		postgres = instances
 	}
-	return wireDatabaseController(manager.GetClient(), manager.GetAPIReader(), store, postgres).SetupWithManager(manager)
-}
-
-func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) (*application.InstanceService, error) {
-	credentials, err := kubernetes.NewSecretCredentials(manager.GetAPIReader(), namespace)
-	if err != nil {
-		return nil, err
-	}
-	service, err := application.NewInstanceService(credentials, postgresql.Connector{RootCert: rootCert})
-	if err != nil {
-		return nil, err
-	}
-	reconciler := wireInstanceController(manager.GetClient(), manager.GetAPIReader(), service, namespace)
-	if err := reconciler.SetupWithManager(manager); err != nil {
-		service.Close()
-		return nil, err
-	}
-	return service, nil
+	return wireDatabaseController(manager.GetClient(), manager.GetAPIReader(), store, postgres, options.secretNamespace).SetupWithManager(manager)
 }

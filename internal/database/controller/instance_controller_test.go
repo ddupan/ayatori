@@ -7,8 +7,8 @@ import (
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,43 +18,34 @@ import (
 )
 
 type instanceBackend struct {
-	application.ResourceDatabase
-	checks  instance.ManagementChecks
-	err     error
-	inspect func()
-	closed  int
+	facts     instance.ManagementFacts
+	err       error
+	inspect   func()
+	forgotten int
 }
 
-func (b *instanceBackend) Read(context.Context, instance.CredentialReference) (application.Credentials, error) {
-	return application.NewCredentials("fixture", "test-only-instance-password")
-}
-
-func (b *instanceBackend) Connect(context.Context, instance.Endpoint, application.Credentials) (application.Database, error) {
-	return b, nil
-}
-
-func (b *instanceBackend) InspectMetadata(context.Context) (application.DatabaseMetadata, error) {
-	return application.DatabaseMetadata{Version: "18"}, nil
-}
-
-func (b *instanceBackend) InspectManagement(context.Context) (application.DatabaseMetadata, error) {
+func (b *instanceBackend) InspectManagement(context.Context, instance.ObservationTarget, instance.ManagementCredentials) (instance.ManagementFacts, error) {
 	if b.inspect != nil {
 		b.inspect()
 	}
-	return application.DatabaseMetadata{Version: "18", Management: b.checks}, b.err
+	return b.facts, b.err
 }
 
-func (b *instanceBackend) Close() { b.closed++ }
+func (b *instanceBackend) Forget(string) { b.forgotten++ }
 
-func newInstanceReconciler(t *testing.T, apiClient client.Client, backend *instanceBackend) *InstanceReconciler {
+var nativeManager = instance.ManagementFacts{Version: "18", CreateRole: true, CreateDatabase: true}
+
+func newInstanceReconciler(apiClient client.Client, backend *instanceBackend) *InstanceReconciler {
+	return &InstanceReconciler{Client: apiClient, Reader: apiClient, PostgreSQL: backend,
+		Secrets: ManagementSecrets{Reader: apiClient, Namespace: bindingNamespace}}
+}
+
+func managementSecret(t *testing.T, apiClient client.Client) *corev1.Secret {
 	t.Helper()
-	service, err := application.NewInstanceService(backend, backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(service.Close)
-	resources := &kubernetes.InstanceResources{Client: apiClient, Reader: apiClient}
-	return NewInstanceReconciler(apiClient, &application.InstanceReconciliation{Resources: resources, Observer: service}, resources, "")
+	secret := &corev1.Secret{Data: map[string][]byte{"username": []byte("fixture"), "password": []byte("test-only-instance-password")}}
+	secret.Name, secret.Namespace = "admin", bindingNamespace
+	requireCreate(t, apiClient, secret)
+	return secret
 }
 
 func reconcileInstance(t *testing.T, reconciler *InstanceReconciler, object *databasev1alpha1.PostgreSQLInstance) {
@@ -77,13 +68,16 @@ func assertInstanceReason(t *testing.T, object *databasev1alpha1.PostgreSQLInsta
 
 func TestInstanceObservationAPI(t *testing.T) {
 	apiClient, _, _ := bindingEnvironment(t)
-	backend := &instanceBackend{checks: instance.ManagementChecks{
-		Connection: instance.CheckPassed, Metadata: instance.CheckPassed,
-		Roles: instance.CheckPassed, Databases: instance.CheckPassed,
-		Grants: instance.CheckPassed, Extensions: instance.CheckPassed,
-	}}
-	reconciler := newInstanceReconciler(t, apiClient, backend)
+	backend := &instanceBackend{facts: nativeManager}
+	reconciler := newInstanceReconciler(apiClient, backend)
 	object := readyInstance(t, apiClient, "observed-instance")
+	reconcileInstance(t, reconciler, object)
+	reload(t, apiClient, object)
+	assertInstanceReason(t, object, reasonDependency)
+	if backend.forgotten == 0 {
+		t.Fatal("无法读取管理 Secret 时应释放旧连接")
+	}
+	secret := managementSecret(t, apiClient)
 	backend.inspect = func() {
 		current := &databasev1alpha1.PostgreSQLInstance{}
 		current.Name = object.Name
@@ -104,21 +98,32 @@ func TestInstanceObservationAPI(t *testing.T) {
 	if object.ResourceVersion != before {
 		t.Fatal("相同观察不应反复写入 status")
 	}
-	backend.err = application.ErrAuthentication
+	backend.err = instance.ErrAuthentication
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, "AuthenticationFailed")
-	if backend.closed != 1 || object.Status.PostgreSQLVersion != "" {
-		t.Fatal("观察失败应释放连接并清除旧版本结果")
+	if object.Status.PostgreSQLVersion != "" {
+		t.Fatal("观察失败应清除旧版本结果")
 	}
 	backend.err = nil
-	backend.checks.Grants = instance.CheckUnobserved
+	backend.facts.CreateRole = false
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
-	assertInstanceReason(t, object, "ObservationIncomplete")
-	backend.checks.Grants = instance.CheckPassed
-	// 用新 service/reconciler 恢复；不依赖上轮领域对象或 Ready。
-	reconciler = newInstanceReconciler(t, apiClient, backend)
+	assertInstanceReason(t, object, "InsufficientPrivileges")
+	backend.facts = nativeManager
+	delete(secret.Data, "password")
+	if err := apiClient.Update(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
+	reconcileInstance(t, reconciler, object)
+	reload(t, apiClient, object)
+	assertInstanceReason(t, object, "InvalidCredentials")
+	secret.Data["password"] = []byte("test-only-instance-password")
+	if err := apiClient.Update(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
+	// 用新 reconciler 恢复；不依赖上轮领域对象或 Ready。
+	reconciler = newInstanceReconciler(apiClient, backend)
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, "ManagementReady")
@@ -130,6 +135,7 @@ func TestInstanceObservationAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	backend.facts.Version = "18.1"
 	_, err := reconciler.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)})
 	if !apierrors.IsConflict(err) {
 		t.Fatal("旧观察不应覆盖在途 API 修改")
@@ -142,6 +148,33 @@ func TestInstanceObservationAPI(t *testing.T) {
 	}
 }
 
+func TestInstanceFailurePresentation(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		reason string
+	}{
+		{instance.ErrAuthentication, "AuthenticationFailed"},
+		{instance.ErrCredentialsInvalid, "InvalidCredentials"},
+		{ErrCredentialsUnavailable, instanceDependencyUnavailable},
+		{context.DeadlineExceeded, instanceDependencyUnavailable},
+		{errors.New("private backend detail"), instanceDependencyUnavailable},
+	} {
+		reason, message := observationFailure(test.err)
+		if reason != test.reason || message == "" || message == test.err.Error() {
+			t.Fatal("观察失败没有安全且可诊断的状态")
+		}
+	}
+	for _, failure := range []instance.Failure{
+		instance.NoFailure, instance.ObservationIncomplete, instance.DependencyUnavailable,
+		instance.AuthenticationFailed, instance.InsufficientPrivileges,
+	} {
+		reason, message := managementResult(failure)
+		if reason == "" || message == "" || (reason == "ManagementReady") != (failure == instance.NoFailure) {
+			t.Fatal("领域能力判定与状态不一致")
+		}
+	}
+}
+
 type failedReferenceReader struct{ client.Reader }
 
 func (*failedReferenceReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
@@ -150,8 +183,9 @@ func (*failedReferenceReader) List(context.Context, client.ObjectList, ...client
 
 func TestInstanceDeletionProtection(t *testing.T) {
 	apiClient, _, _ := bindingEnvironment(t)
-	backend := &instanceBackend{}
-	reconciler := newInstanceReconciler(t, apiClient, backend)
+	backend := &instanceBackend{facts: nativeManager}
+	reconciler := newInstanceReconciler(apiClient, backend)
+	managementSecret(t, apiClient)
 	object := readyInstance(t, apiClient, "protected-instance")
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
@@ -166,15 +200,15 @@ func TestInstanceDeletionProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend.inspect = func() { t.Fatal("删除中不应连接 PostgreSQL") }
-	reconciler.Service.Resources.(*kubernetes.InstanceResources).Reader = &failedReferenceReader{Reader: apiClient}
+	reconciler.Reader = &failedReferenceReader{Reader: apiClient}
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, reasonDependency)
-	reconciler.Service.Resources.(*kubernetes.InstanceResources).Reader = apiClient
+	reconciler.Reader = apiClient
 	reconcileInstance(t, reconciler, object)
 	reload(t, apiClient, object)
 	assertInstanceReason(t, object, "InstanceInUse")
-	if object.Status.Phase != string(instance.PhaseDeleting) || backend.closed != 1 {
+	if object.Status.Phase != string(instance.PhaseDeleting) || backend.forgotten == 0 {
 		t.Fatal("删除没有停止本地观察")
 	}
 	if err := apiClient.Delete(t.Context(), database); err != nil {

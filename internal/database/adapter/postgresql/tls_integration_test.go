@@ -26,6 +26,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"os"
@@ -35,7 +36,6 @@ import (
 	"time"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -97,44 +97,46 @@ func TestPostgreSQLTLSHostIdentity(t *testing.T) {
 			t.Fatal("TLS fixture setup failed")
 		}
 	}
-	credentials, err := application.NewCredentials(fixtureUser, fixturePassword)
+	credentials, err := instance.NewManagementCredentials(fixtureUser, fixturePassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := postgresql.Connector{RootCert: certPath}
-	endpoint := target(t, port, instance.TLSVerifyFull).Definition().Endpoint()
-	db, err := connector.Connect(ctx, endpoint, credentials)
-	if err != nil {
+	trusted := &postgresql.Instances{RootCert: certPath}
+	defer trusted.Close()
+	secured := target(t, port, instance.TLSVerifyFull)
+	if facts, err := trusted.InspectManagement(ctx, secured, credentials); err != nil || facts.Version == "" {
 		t.Fatal("trusted DNS SAN connection failed", err)
 	}
-	if metadata, err := db.InspectMetadata(ctx); err != nil || metadata.Version == "" {
-		db.Close()
-		t.Fatal("TLS metadata read failed", err)
-	}
-	db.Close()
-	values := endpoint.Values()
-	values.Host = "127.0.0.1"
-	ipEndpoint, err := instance.NewEndpoint(values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err = connector.Connect(ctx, ipEndpoint, credentials)
-	if err != nil {
+	if _, err := trusted.InspectManagement(ctx, withHost(t, secured, "127.0.0.1"), credentials); err != nil {
 		t.Fatal("trusted IP SAN connection failed", err)
 	}
-	db.Close()
-	values.Host = "wrong.invalid"
-	wrongEndpoint, err := instance.NewEndpoint(values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if db, err := connector.Connect(ctx, wrongEndpoint, credentials); err == nil {
-		db.Close()
+	if _, err := trusted.InspectManagement(ctx, withHost(t, secured, "wrong.invalid"), credentials); err == nil {
 		t.Fatal("wrong TLS hostname accepted")
 	}
 	otherCA, _ := fixtureCertificate(t)
-	if db, err := (postgresql.Connector{RootCert: otherCA}).Connect(ctx, endpoint, credentials); err == nil {
-		db.Close()
+	untrusted := &postgresql.Instances{RootCert: otherCA}
+	defer untrusted.Close()
+	if _, err := untrusted.InspectManagement(ctx, secured, credentials); !errors.Is(err, instance.ErrAuthentication) {
 		t.Fatal("wrong CA accepted")
 	}
+}
+
+// withHost 只替换 TLS 校验使用的主机名，地址和其余配置不变。
+func withHost(t *testing.T, original instance.ObservationTarget, host string) instance.ObservationTarget {
+	t.Helper()
+	values := original.Definition().Endpoint().Values()
+	values.Host = host
+	endpoint, err := instance.NewEndpoint(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := instance.NewDefinition(endpoint, original.Definition().AdminCredential())
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := instance.NewObservationTarget(original.Identity(), original.Revision(), definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return changed
 }
