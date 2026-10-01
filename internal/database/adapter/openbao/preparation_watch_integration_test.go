@@ -103,9 +103,8 @@ func startPreparationManager(t *testing.T, f *preparationFixture) func() {
 	if err := binder.SetupWithManager(t.Context(), manager); err != nil {
 		t.Fatal(err)
 	}
-	credentialResources := &kubernetes.CredentialResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
-	preparation := &application.CredentialPreparation{Resources: credentialResources, Store: fixtureStore(t, f.bao)}
-	if err := databasecontroller.NewCredentialReconciler(manager.GetClient(), preparation).SetupWithManager(manager); err != nil {
+	preparation := &databasecontroller.DatabaseReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), Credentials: fixtureStore(t, f.bao)}
+	if err := preparation.SetupWithManager(manager); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

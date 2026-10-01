@@ -37,13 +37,13 @@ type Connector struct {
 	RootCert string
 }
 
-type database struct {
+type connection struct {
 	pool *pgxpool.Pool
 }
 
-func (*database) String() string     { return "[redacted PostgreSQL database]" }
-func (d *database) GoString() string { return d.String() }
-func (d *database) Close() {
+func (*connection) String() string     { return "[redacted PostgreSQL database]" }
+func (d *connection) GoString() string { return d.String() }
+func (d *connection) Close() {
 	d.pool.Close()
 }
 
@@ -87,7 +87,7 @@ func (c Connector) Connect(ctx context.Context, endpoint instance.Endpoint, cred
 		pool.Close()
 		return nil, safeError(err, application.ErrConnection)
 	}
-	return &database{pool: pool}, nil
+	return &connection{pool: pool}, nil
 }
 
 func safeError(err, fallback error) error {

@@ -24,7 +24,7 @@ import (
 const preparationNamespace = "credential-preparation"
 
 type preparationFixture struct {
-	api    client.Client
+	api    client.WithWatch
 	config *rest.Config
 	scheme *runtime.Scheme
 	bao    *bao.Client
@@ -49,7 +49,7 @@ func newPreparationFixture(t *testing.T) *preparationFixture {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	api, err := client.New(config, client.Options{Scheme: scheme})
+	api, err := client.NewWithWatch(config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,11 +95,32 @@ func (f *preparationFixture) bound(t *testing.T, name string) (*databasev1alpha1
 	return database, tenant
 }
 
-func (f *preparationFixture) service(t *testing.T) application.CredentialPreparation {
+func (f *preparationFixture) reconciler(t *testing.T) *databasecontroller.DatabaseReconciler {
 	t.Helper()
-	return application.CredentialPreparation{
-		Resources: &kubernetes.CredentialResources{Client: f.api, Reader: f.api}, Store: fixtureStore(t, f.bao),
+	return &databasecontroller.DatabaseReconciler{Client: f.api, Reader: f.api, Credentials: fixtureStore(t, f.bao)}
+}
+
+// settle 逐轮协调直到不再写入 status；每轮最多一次外部写入，返回第一处错误。
+func (f *preparationFixture) settle(t *testing.T, reconciler *databasecontroller.DatabaseReconciler, database *databasev1alpha1.PostgreSQLDatabase) error {
+	t.Helper()
+	for range 10 {
+		current := &databasev1alpha1.PostgreSQLDatabase{}
+		if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), current); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reconciler.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(database)}); err != nil {
+			return err
+		}
+		after := &databasev1alpha1.PostgreSQLDatabase{}
+		if err := f.api.Get(t.Context(), client.ObjectKeyFromObject(database), after); err != nil {
+			t.Fatal(err)
+		}
+		if after.ResourceVersion == current.ResourceVersion {
+			return nil
+		}
 	}
+	t.Fatal("协调未在 10 轮内稳定")
+	return nil
 }
 
 func (f *preparationFixture) status(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, version int64, reason string) {

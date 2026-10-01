@@ -15,24 +15,14 @@ func wireBindingController(writer client.Client, reader client.Reader) *database
 	return databasecontroller.NewBindingReconciler(writer, service, resources)
 }
 
-func wireCredentialController(writer client.Client, reader client.Reader, store application.CredentialStore) *databasecontroller.CredentialReconciler {
-	resources := &kubernetes.CredentialResources{Client: writer, Reader: reader}
-	service := &application.CredentialPreparation{Resources: resources, Store: store}
-	return databasecontroller.NewCredentialReconciler(writer, service)
-}
-
 func wireInstanceController(writer client.Client, reader client.Reader, observer application.InstanceObserver, namespace string) *databasecontroller.InstanceReconciler {
 	resources := &kubernetes.InstanceResources{Client: writer, Reader: reader}
 	service := &application.InstanceReconciliation{Resources: resources, Observer: observer}
 	return databasecontroller.NewInstanceReconciler(writer, service, resources, namespace)
 }
 
-func wireProvisioningController(writer client.Client, reader client.Reader, store application.CredentialStore, backend application.ProvisioningBackend) *databasecontroller.ProvisioningReconciler {
-	resources := &kubernetes.ProvisioningResources{Client: writer, Reader: reader}
-	credentialResources := &kubernetes.CredentialResources{Client: writer, Reader: reader}
-	service := &application.DatabaseReconciliation{
-		Credentials:  &application.CredentialPreparation{Resources: credentialResources, Store: store},
-		Provisioning: &application.DatabaseProvisioning{Resources: resources, Credentials: store, Backend: backend},
-	}
-	return databasecontroller.NewProvisioningReconciler(writer, service)
+// wireDatabaseController 装配 Database 的唯一 status 写入者；postgres 为 nil 时只准备凭据。
+func wireDatabaseController(writer client.Client, reader client.Reader, credentials databasecontroller.CredentialBackend,
+	postgres databasecontroller.PostgreSQLBackend) *databasecontroller.DatabaseReconciler {
+	return &databasecontroller.DatabaseReconciler{Client: writer, Reader: reader, Credentials: credentials, PostgreSQL: postgres}
 }

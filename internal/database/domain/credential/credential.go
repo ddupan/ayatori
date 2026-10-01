@@ -83,6 +83,9 @@ func (c ApplicationCredential) SecretData() map[string]any {
 	}
 }
 
+// Password 只供创建登录角色的数据库边界使用，禁止记录日志。
+func (c ApplicationCredential) Password() string { return c.password }
+
 func (c ApplicationCredential) Validate() error {
 	_, err := NewApplicationCredential(c.username, c.password, c.database, c.endpoint)
 	return err

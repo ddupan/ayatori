@@ -39,14 +39,17 @@ func TestDatabaseExplicitWiring(t *testing.T) {
 	if !ok || resources.Reader != directReader || resources.Client != writer || reconciler.Service.Observer != observer || reconciler.Presenter != resources {
 		t.Fatal("Instance 的服务或读取边界未按依赖图注入")
 	}
-	provisioner := wireProvisioningController(writer, directReader, nil, observer)
-	provisioningResources, ok := provisioner.Service.Provisioning.Resources.(*kubernetes.ProvisioningResources)
-	if !ok || provisioningResources.Client != writer || provisioningResources.Reader != directReader || provisioner.Service.Provisioning.Backend != observer {
+	databases := wireDatabaseController(writer, directReader, nil, observer)
+	if databases.Client != writer || databases.Reader != directReader || databases.PostgreSQL != observer {
 		t.Fatal("资源供应必须复用已有 Instance 管理服务和 API 客户端")
+	}
+	if wireDatabaseController(writer, directReader, nil, nil).PostgreSQL != nil {
+		t.Fatal("未启用资源供应时不得注入 PostgreSQL 后端")
 	}
 }
 
-// 防止领域重新依赖用例/存储，也防止 controller 再次私自构造具体 adapter。
+// 防止领域重新依赖用例/存储，也防止 controller 私自构造后端 adapter。
+// Reconciler 本身就是 Kubernetes adapter，与 adapter/kubernetes 同层，允许复用其映射。
 func TestDatabaseLayerImports(t *testing.T) {
 	for _, layer := range []string{"domain", controllerLayer} {
 		err := filepath.WalkDir(filepath.Join("../database", layer), func(path string, entry fs.DirEntry, err error) error {
@@ -65,8 +68,9 @@ func TestDatabaseLayerImports(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if strings.Contains(name, "/database/adapter/") || (layer == "domain" &&
-					(strings.Contains(name, "/database/application") || strings.Contains(name, "k8s.io/") || strings.Contains(name, "/internal/infra/"))) {
+				backend := strings.Contains(name, "/database/adapter/") && !strings.HasSuffix(name, "/database/adapter/kubernetes")
+				if backend || (layer == "domain" && (strings.Contains(name, "/database/adapter/") ||
+					(strings.Contains(name, "/database/application") || strings.Contains(name, "k8s.io/") || strings.Contains(name, "/internal/infra/")))) {
 					t.Errorf("%s 不得导入 %s", path, name)
 				}
 			}

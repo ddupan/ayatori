@@ -7,13 +7,24 @@ import (
 )
 
 func instanceRecord(object *databasev1alpha1.PostgreSQLInstance) (*application.InstanceRecord, error) {
-	identity, err := instance.NewIdentity(string(object.UID), object.Name)
+	target, err := InstanceTarget(object)
 	if err != nil {
 		return nil, err
 	}
+	return &application.InstanceRecord{
+		Target: target, Revision: object.ResourceVersion, Deleting: !object.DeletionTimestamp.IsZero(),
+	}, nil
+}
+
+// InstanceTarget 把 Instance CR 映射为观察与管理连接目标。
+func InstanceTarget(object *databasev1alpha1.PostgreSQLInstance) (instance.ObservationTarget, error) {
+	identity, err := instance.NewIdentity(string(object.UID), object.Name)
+	if err != nil {
+		return instance.ObservationTarget{}, err
+	}
 	revision, err := instance.NewRevision(object.Generation)
 	if err != nil {
-		return nil, err
+		return instance.ObservationTarget{}, err
 	}
 	spec := object.Spec
 	endpoint, err := instance.NewEndpoint(instance.EndpointValues{
@@ -22,24 +33,18 @@ func instanceRecord(object *databasev1alpha1.PostgreSQLInstance) (*application.I
 		TLSMode: instance.TLSMode(spec.Endpoint.SSLMode),
 	})
 	if err != nil {
-		return nil, err
+		return instance.ObservationTarget{}, err
 	}
 	credential, err := instance.NewCredentialReference(instance.CredentialReferenceValues{
 		Name:        string(spec.AdminCredentialRef.Name),
 		UsernameKey: spec.AdminCredentialRef.UsernameKey, PasswordKey: spec.AdminCredentialRef.PasswordKey,
 	})
 	if err != nil {
-		return nil, err
+		return instance.ObservationTarget{}, err
 	}
 	definition, err := instance.NewDefinition(endpoint, credential)
 	if err != nil {
-		return nil, err
+		return instance.ObservationTarget{}, err
 	}
-	target, err := instance.NewObservationTarget(identity, revision, definition)
-	if err != nil {
-		return nil, err
-	}
-	return &application.InstanceRecord{
-		Target: target, Revision: object.ResourceVersion, Deleting: !object.DeletionTimestamp.IsZero(),
-	}, nil
+	return instance.NewObservationTarget(identity, revision, definition)
 }

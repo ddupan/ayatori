@@ -30,15 +30,15 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 )
 
 var (
-	ErrInvalidLocation = application.ErrCredentialLocation
-	ErrUnavailable     = application.ErrCredentialUnavailable
-	ErrNotFound        = application.ErrCredentialNotFound
-	ErrConflict        = application.ErrCredentialConflict
-	ErrUncertain       = application.ErrCredentialUncertain
+	ErrInvalidLocation = errors.New("credential location is outside the configured scope")
+	ErrUnavailable     = database.ErrUnavailable
+	ErrNotFound        = database.ErrNotFound
+	ErrConflict        = database.ErrConflict
+	ErrUncertain       = database.ErrUncertain
 )
 
 var pathSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

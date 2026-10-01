@@ -15,7 +15,7 @@ import (
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/provisioning"
+	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	bao "github.com/openbao/openbao/api/v2"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,11 +26,10 @@ import (
 
 type provisioningFixture struct {
 	*credentialFixture
-	api       client.Client
-	scheme    *runtime.Scheme
-	store     *openbao.Credentials
-	resources *kubernetes.ProvisioningResources
-	usecase   application.DatabaseProvisioning
+	api        client.WithWatch
+	scheme     *runtime.Scheme
+	store      *openbao.Credentials
+	reconciler *databasecontroller.DatabaseReconciler
 }
 
 func newProvisioningFixture(t *testing.T) *provisioningFixture {
@@ -44,7 +43,7 @@ func newProvisioningFixture(t *testing.T) *provisioningFixture {
 	if err := databasev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	api, err := client.New(f.config, client.Options{Scheme: scheme})
+	api, err := client.NewWithWatch(f.config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,9 +70,8 @@ func newProvisioningFixture(t *testing.T) *provisioningFixture {
 		t.Fatal("实际管理账号未就绪")
 	}
 	store := provisioningBao(t)
-	resources := &kubernetes.ProvisioningResources{Client: api, Reader: api}
-	return &provisioningFixture{credentialFixture: f, api: api, scheme: scheme, store: store, resources: resources,
-		usecase: application.DatabaseProvisioning{Resources: resources, Credentials: store, Backend: f.service}}
+	return &provisioningFixture{credentialFixture: f, api: api, scheme: scheme, store: store,
+		reconciler: &databasecontroller.DatabaseReconciler{Client: api, Reader: api, Credentials: store, PostgreSQL: f.service}}
 }
 
 // 三后端组合验收只启动自己的 dev Bao；不读取环境 token 或外部地址。
@@ -154,22 +152,33 @@ func (f *provisioningFixture) bound(t *testing.T, name string) *databasev1alpha1
 	if err := f.api.Get(f.ctx, client.ObjectKey{Name: string(tenant.Status.DatabaseRef.Name)}, database); err != nil {
 		t.Fatal(err)
 	}
-	prepare := application.CredentialPreparation{Resources: &kubernetes.CredentialResources{Client: f.api, Reader: f.api}, Store: f.store}
-	if err := prepare.Reconcile(f.ctx, database.Name); err != nil {
-		t.Fatal(err)
+	// 先只准备凭据，之后每次 reconcile 恰好推进一步 PostgreSQL 资源。
+	prepare := &databasecontroller.DatabaseReconciler{Client: f.api, Reader: f.api, Credentials: f.store}
+	for range 3 {
+		if _, err := prepare.Reconcile(f.ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(database)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(database), database); err != nil || database.Status.CredentialVersion != 1 {
+		t.Fatal("凭据未准备完成")
 	}
 	return database
 }
 
-func (f *provisioningFixture) reconcile(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase provisioning.Phase) {
+func (f *provisioningFixture) reconcile(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase databasedomain.ResourcePhase) {
 	t.Helper()
-	if err := f.usecase.Reconcile(f.ctx, database.Name); err != nil {
+	if err := reconcileOnce(f.ctx, f.reconciler, database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, phase)
 }
 
-func (f *provisioningFixture) status(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase provisioning.Phase) {
+func reconcileOnce(ctx context.Context, reconciler *databasecontroller.DatabaseReconciler, object *databasev1alpha1.PostgreSQLDatabase) error {
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)})
+	return err
+}
+
+func (f *provisioningFixture) status(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase databasedomain.ResourcePhase) {
 	t.Helper()
 	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(database), database); err != nil {
 		t.Fatal(err)

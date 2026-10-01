@@ -76,10 +76,11 @@ func registerDatabaseSupplyController(manager ctrl.Manager, options databaseOpti
 	if err != nil {
 		return err
 	}
+	var postgres databasecontroller.PostgreSQLBackend
 	if options.provisionResources {
-		return wireProvisioningController(manager.GetClient(), manager.GetAPIReader(), store, backend).SetupWithManager(manager)
+		postgres = backend
 	}
-	return wireCredentialController(manager.GetClient(), manager.GetAPIReader(), store).SetupWithManager(manager)
+	return wireDatabaseController(manager.GetClient(), manager.GetAPIReader(), store, postgres).SetupWithManager(manager)
 }
 
 func setupInstanceObservation(manager ctrl.Manager, namespace, rootCert string) (*application.InstanceService, error) {
