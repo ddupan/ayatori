@@ -67,7 +67,7 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	options.database.credentialMount = "secret"
-	if err := setupCredentialPreparation(manager, options.database, fixtureClient); err != nil {
+	if err := registerDatabaseSupplyController(manager, options.database, fixtureClient, nil); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

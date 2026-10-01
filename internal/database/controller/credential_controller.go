@@ -35,12 +35,14 @@ func (r *CredentialReconciler) SetupWithManager(manager ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		Named("database-credentials").For(&databasev1alpha1.PostgreSQLDatabase{}).
-		Watches(&databasev1alpha1.PostgreSQLTenant{}, handler.EnqueueRequestsFromMapFunc(r.requestsForTenant)).
-		Watches(&databasev1alpha1.PostgreSQLInstance{}, handler.EnqueueRequestsFromMapFunc(r.requestsForInstance)).
+		Watches(&databasev1alpha1.PostgreSQLTenant{}, handler.EnqueueRequestsFromMapFunc(databaseRequestsForTenant)).
+		Watches(&databasev1alpha1.PostgreSQLInstance{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []ctrl.Request {
+			return databaseRequestsForInstance(ctx, r.Client, object)
+		})).
 		Complete(r)
 }
 
-func (r *CredentialReconciler) requestsForTenant(_ context.Context, object client.Object) []ctrl.Request {
+func databaseRequestsForTenant(_ context.Context, object client.Object) []ctrl.Request {
 	tenant := object.(*databasev1alpha1.PostgreSQLTenant)
 	if tenant.Status.DatabaseRef == nil {
 		return nil
@@ -48,9 +50,9 @@ func (r *CredentialReconciler) requestsForTenant(_ context.Context, object clien
 	return []ctrl.Request{{Name: string(tenant.Status.DatabaseRef.Name)}}
 }
 
-func (r *CredentialReconciler) requestsForInstance(ctx context.Context, object client.Object) []ctrl.Request {
+func databaseRequestsForInstance(ctx context.Context, cache client.Client, object client.Object) []ctrl.Request {
 	databases := &databasev1alpha1.PostgreSQLDatabaseList{}
-	if err := r.Client.List(ctx, databases); err != nil {
+	if err := cache.List(ctx, databases); err != nil {
 		ctrl.LoggerFrom(ctx).Error(err, "无法映射 Instance 凭据准备事件；等待低频重试")
 		return nil
 	}

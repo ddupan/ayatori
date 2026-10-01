@@ -1,6 +1,6 @@
 # 部署与配置
 
-> 本页区分已实现的 Instance 观测、认证和凭据准备配置，与尚未接入的 PostgreSQL 供应/交付合同。
+> 本页区分已实现的 Instance 观测、认证、凭据准备和资源创建配置，与尚未接入的完整供应/交付合同。
 > 完整 Database 服务仍不可部署使用；当前可执行入口见 [模块说明](README.md)。
 
 | 项目 | 内容 |
@@ -46,6 +46,7 @@ Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径�
 | `--openbao-auth-role` | 已实现，启用时必填 | OpenBao 登录 role |
 | `--openbao-ca-cert` | 已实现，默认系统信任根 | OpenBao 公开 CA PEM 路径 |
 | `--database-credential-mount` | 已实现，默认空 | 显式设置后启用应用凭据准备，要求已配置 OpenBao 认证 |
+| `--database-provision-resources` | 已实现，默认 false | 启用角色/数据库及 ACL 创建；要求管理 Secret namespace、凭据 mount 和认证配置，先升级 CRD |
 | `--openbao-service-account-namespace` | 已实现，启用时必填 | TokenRequest 目标 SA 的固定 namespace |
 | `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
 | `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience，必须匹配 OpenBao role |

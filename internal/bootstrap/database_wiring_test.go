@@ -39,6 +39,11 @@ func TestDatabaseExplicitWiring(t *testing.T) {
 	if !ok || resources.Reader != directReader || resources.Client != writer || reconciler.Service.Observer != observer || reconciler.Presenter != resources {
 		t.Fatal("Instance 的服务或读取边界未按依赖图注入")
 	}
+	provisioner := wireProvisioningController(writer, directReader, nil, observer)
+	provisioningResources, ok := provisioner.Service.Provisioning.Resources.(*kubernetes.ProvisioningResources)
+	if !ok || provisioningResources.Client != writer || provisioningResources.Reader != directReader || provisioner.Service.Provisioning.Backend != observer {
+		t.Fatal("资源供应必须复用已有 Instance 管理服务和 API 客户端")
+	}
 }
 
 // 防止领域重新依赖用例/存储，也防止 controller 再次私自构造具体 adapter。

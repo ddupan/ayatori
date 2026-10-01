@@ -26,3 +26,13 @@ func wireInstanceController(writer client.Client, reader client.Reader, observer
 	service := &application.InstanceReconciliation{Resources: resources, Observer: observer}
 	return databasecontroller.NewInstanceReconciler(writer, service, resources, namespace)
 }
+
+func wireProvisioningController(writer client.Client, reader client.Reader, store application.CredentialStore, backend application.ProvisioningBackend) *databasecontroller.ProvisioningReconciler {
+	resources := &kubernetes.ProvisioningResources{Client: writer, Reader: reader}
+	credentialResources := &kubernetes.CredentialResources{Client: writer, Reader: reader}
+	service := &application.DatabaseReconciliation{
+		Credentials:  &application.CredentialPreparation{Resources: credentialResources, Store: store},
+		Provisioning: &application.DatabaseProvisioning{Resources: resources, Credentials: store, Backend: backend},
+	}
+	return databasecontroller.NewProvisioningReconciler(writer, service)
+}

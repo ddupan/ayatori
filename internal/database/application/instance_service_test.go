@@ -37,6 +37,7 @@ func (s *sourceStub) Read(context.Context, instance.CredentialReference) (Creden
 }
 
 type databaseStub struct {
+	ResourceDatabase
 	closes   int
 	err      error
 	metadata DatabaseMetadata

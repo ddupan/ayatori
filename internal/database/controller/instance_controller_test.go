@@ -18,6 +18,7 @@ import (
 )
 
 type instanceBackend struct {
+	application.ResourceDatabase
 	checks  instance.ManagementChecks
 	err     error
 	inspect func()

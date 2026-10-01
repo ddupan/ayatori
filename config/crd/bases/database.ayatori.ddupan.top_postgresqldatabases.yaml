@@ -221,6 +221,12 @@ spec:
                 format: int64
                 minimum: 1
                 type: integer
+              databaseOID:
+                description: DatabaseOID 只在数据库创建并回读成功后保存；缺失不代表允许认领已有对象。
+                format: int64
+                maximum: 4294967295
+                minimum: 1
+                type: integer
               instanceUID:
                 description: InstanceUID 记录观察时的实例身份，不把同名新实例视为原目标。
                 type: string
@@ -230,11 +236,28 @@ spec:
               phase:
                 description: Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
                 type: string
+              roleOID:
+                description: RoleOID 只在角色创建提交并回读成功后保存，后续不按同名认领。
+                format: int64
+                maximum: 4294967295
+                minimum: 1
+                type: integer
             type: object
         required:
         - spec
         type: object
         x-kubernetes-validations:
+        - message: roleOID requires confirmed credentials and instanceUID
+          rule: '!has(self.status) || !has(self.status.roleOID) || (has(self.status.credentialVersion)
+            && has(self.status.instanceUID))'
+        - message: databaseOID requires roleOID
+          rule: '!has(self.status) || !has(self.status.databaseOID) || has(self.status.roleOID)'
+        - message: confirmed roleOID cannot change or be removed
+          rule: '!(has(oldSelf.status) && has(oldSelf.status.roleOID)) || (has(self.status)
+            && has(self.status.roleOID) && self.status.roleOID == oldSelf.status.roleOID)'
+        - message: confirmed databaseOID cannot change or be removed
+          rule: '!(has(oldSelf.status) && has(oldSelf.status.databaseOID)) || (has(self.status)
+            && has(self.status.databaseOID) && self.status.databaseOID == oldSelf.status.databaseOID)'
         - message: credentialVersion requires credentialRef
           rule: '!has(self.status) || !has(self.status.credentialVersion) || has(self.status.credentialRef)'
         - message: recorded credentialRef cannot change or be removed

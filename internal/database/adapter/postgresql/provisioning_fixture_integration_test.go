@@ -1,0 +1,184 @@
+//go:build integration
+
+package postgresql_test
+
+import (
+	"context"
+	"os/exec"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/provisioning"
+	bao "github.com/openbao/openbao/api/v2"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+)
+
+type provisioningFixture struct {
+	*credentialFixture
+	api       client.Client
+	scheme    *runtime.Scheme
+	store     *openbao.Credentials
+	resources *kubernetes.ProvisioningResources
+	usecase   application.DatabaseProvisioning
+}
+
+func newProvisioningFixture(t *testing.T) *provisioningFixture {
+	t.Helper()
+	f := newCredentialFixture(t)
+	useNativeManager(t, f)
+	if _, err := envtest.InstallCRDs(f.config, envtest.CRDInstallOptions{Paths: []string{"../../../../config/crd/bases"}, ErrorIfPathMissing: true}); err != nil {
+		t.Fatal(err)
+	}
+	scheme := runtime.NewScheme()
+	if err := databasev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	api, err := client.New(f.config, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := &databasev1alpha1.PostgreSQLInstance{Name: "supply-instance", Spec: databasev1alpha1.PostgreSQLInstanceSpec{
+		Endpoint:           databasev1alpha1.PostgreSQLEndpoint{Host: fixtureHost, HostAddr: fixtureAddress, Port: int32(f.port), SSLMode: "disable"},
+		AdminCredentialRef: databasev1alpha1.AdminCredentialReference{Name: secretName, UsernameKey: managementUsernameKey, PasswordKey: managementPasswordKey},
+	}}
+	if err := api.Create(f.ctx, object); err != nil {
+		t.Fatal(err)
+	}
+	instanceResources := &kubernetes.InstanceResources{Client: api, Reader: api}
+	instanceService := &application.InstanceReconciliation{Resources: instanceResources, Observer: f.service}
+	result, err := instanceService.Reconcile(f.ctx, object.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instanceResources.PresentInstance(f.ctx, result); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Get(f.ctx, client.ObjectKeyFromObject(object), object); err != nil {
+		t.Fatal(err)
+	}
+	if !meta.IsStatusConditionTrue(object.Status.Conditions, "Ready") {
+		t.Fatal("实际管理账号未就绪")
+	}
+	store := provisioningBao(t)
+	resources := &kubernetes.ProvisioningResources{Client: api, Reader: api}
+	return &provisioningFixture{credentialFixture: f, api: api, scheme: scheme, store: store, resources: resources,
+		usecase: application.DatabaseProvisioning{Resources: resources, Credentials: store, Backend: f.service}}
+}
+
+// 三后端组合验收只启动自己的 dev Bao；不读取环境 token 或外部地址。
+func provisioningBao(t *testing.T) *openbao.Credentials {
+	t.Helper()
+	const image = "openbao/openbao@sha256:5b2486ab0fb90bbc788cc345b0a08616dfb375873ee8be5df3a2fd4d378a67e0"
+	const token = "AYATORI-TEST-ONLY-supply-token"
+	prepare, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	if exec.CommandContext(prepare, "docker", "image", "inspect", image).Run() != nil {
+		if output, err := exec.CommandContext(prepare, "docker", "pull", image).CombinedOutput(); err != nil {
+			t.Fatalf("隔离 Bao 镜像准备失败：%s", output)
+		}
+	}
+	ctx, stop := context.WithTimeout(t.Context(), time.Minute)
+	defer stop()
+	output, err := exec.CommandContext(ctx, "docker", "run", "--pull=never", "--rm", "-d", "-p", "127.0.0.1::8200", image,
+		"server", "-dev", "-dev-root-token-id="+token, "-dev-listen-address=0.0.0.0:8200").Output()
+	if err != nil {
+		t.Fatal("隔离 Bao 启动失败")
+	}
+	id := strings.TrimSpace(string(output))
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(id) {
+		t.Fatal("无效容器 ID")
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if exec.CommandContext(cleanup, "docker", "rm", "-f", id).Run() != nil {
+			t.Error("隔离 Bao 清理失败")
+		}
+	})
+	output, err = exec.CommandContext(ctx, "docker", "inspect", "--format", `{{(index (index .NetworkSettings.Ports "8200/tcp") 0).HostPort}}`, id).Output()
+	if err != nil {
+		t.Fatal("隔离 Bao 端口不可读")
+	}
+	backend, err := bao.NewClient(&bao.Config{Address: "http://127.0.0.1:" + strings.TrimSpace(string(output)), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal("隔离 Bao client 构造失败")
+	}
+	backend.SetToken(token)
+	for {
+		if _, err := backend.Sys().HealthWithContext(ctx); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("隔离 Bao 健康检查超时")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	store, err := openbao.NewCredentials(backend, "secret", "applications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func (f *provisioningFixture) bound(t *testing.T, name string) *databasev1alpha1.PostgreSQLDatabase {
+	t.Helper()
+	tenant := &databasev1alpha1.PostgreSQLTenant{Name: strings.ReplaceAll(name, "_", "-"), Namespace: controllerNamespace,
+		Spec: databasev1alpha1.PostgreSQLTenantSpec{Provision: &databasev1alpha1.DatabaseProvisionRequest{
+			InstanceRef: databasev1alpha1.InstanceReference{Name: "supply-instance"},
+			Database:    databasev1alpha1.PostgreSQLIdentifier(name), LoginRole: databasev1alpha1.PostgreSQLIdentifier(name),
+		}}}
+	if err := f.api.Create(f.ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	resources := &kubernetes.BindingResources{Client: f.api, Reader: f.api}
+	binder := databasecontroller.NewBindingReconciler(f.api, &application.BindingService{Resources: resources}, resources)
+	if _, err := binder.Reconcile(f.ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(tenant), tenant); err != nil {
+		t.Fatal(err)
+	}
+	database := &databasev1alpha1.PostgreSQLDatabase{}
+	if err := f.api.Get(f.ctx, client.ObjectKey{Name: string(tenant.Status.DatabaseRef.Name)}, database); err != nil {
+		t.Fatal(err)
+	}
+	prepare := application.CredentialPreparation{Resources: &kubernetes.CredentialResources{Client: f.api, Reader: f.api}, Store: f.store}
+	if err := prepare.Reconcile(f.ctx, database.Name); err != nil {
+		t.Fatal(err)
+	}
+	return database
+}
+
+func (f *provisioningFixture) reconcile(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase provisioning.Phase) {
+	t.Helper()
+	if err := f.usecase.Reconcile(f.ctx, database.Name); err != nil {
+		t.Fatal(err)
+	}
+	f.status(t, database, phase)
+}
+
+func (f *provisioningFixture) status(t *testing.T, database *databasev1alpha1.PostgreSQLDatabase, phase provisioning.Phase) {
+	t.Helper()
+	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(database), database); err != nil {
+		t.Fatal(err)
+	}
+	condition := meta.FindStatusCondition(database.Status.Conditions, "ResourcesReady")
+	if condition == nil || condition.Reason != string(phase) {
+		t.Fatalf("期望资源阶段 %s，实际 %v", phase, condition)
+	}
+	if meta.IsStatusConditionTrue(database.Status.Conditions, "Ready") {
+		t.Fatal("角色建库不代表扩展与交付完成")
+	}
+}

@@ -1,7 +1,7 @@
 # Database 模块
 
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
-管理能力观测；尚未完成 Database 供应/导入、Tenant 凭据交付与资源回收链路。
+管理能力观测、凭据准备及显式启用的角色/数据库创建；扩展、导入、Tenant 交付与回收尚未完成。
 
 ## 当前设计（2026-09-24）
 
@@ -12,7 +12,7 @@ Retain 后人工重新绑定与资源侧 Delete。撤销 PostgreSQL ownership re
 依据 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，当前合同见
 [系统规格](specification.md)。下面的迁移来源与已存在代码不反向约束新设计。
 registry adapter、专属迁移/测试及 Instance 的 registry 判定现已撤除；Instance 根据完整管理
-能力观察直接判定 Ready。Database 资源与绑定已接入，导入、角色/凭据供应及回收仍未完成。wiki 同步位置见
+能力观察直接判定 Ready。Database 资源与绑定、角色/凭据供应已接入，导入及回收仍未完成。wiki 同步位置见
 `homelab-wiki/services/postgresql-tenant-operator.md`，跨仓库发布状态由 wiki 的同步记录维护。
 
 ## 来源基线
@@ -201,13 +201,57 @@ application 保留 I/O 顺序、消费方接口及并发快照，不再复用绑
 同样可能保守地要求人工处理，不承诺无损接续；多副本部署应启用既有 leader election。
 
 成功只设置 `CredentialsReady=True`，Database Ready 仍为 False/ProvisioningIncomplete，
-Tenant 仍未完成交付。本切片没有 PostgreSQL role/database 创建、扩展安装、ESO 投射、
-Retain 释放或 Delete 清理，也不会解除 finalizer。不要作为完整 DBaaS 部署。
+Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
+扩展安装、ESO 投射、Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
 
 单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、并发、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
 及重启。该 fixture 只声明 Instance 前置 Ready，真实 PostgreSQL 管理能力由既有 Instance
 集成测试覆盖，不把凭据准备验收当成实际建库或应用登录验收。
+
+## PostgreSQL 资源创建闭环
+
+在管理 Secret、OpenBao 认证和凭据准备配置之上，显式设置 `--database-provision-resources`
+才启用外部角色/数据库写入；默认关闭。升级时先安装新 CRD，供应字段见
+[API 合同](api-reference.md#当前-api-切片)。只处理 Provision 来源，导入资源不进入创建流程。
+
+`DatabaseProvisioning` 在每轮验证双向绑定、UID、删除/Released 状态、保护和当前 Instance
+Ready，读取固定位置的已确认凭据。所有 SQL 操作复用 InstanceService 已有的管理连接及
+Secret 刷新机制，不再开一个管理连接池。执行前重新查询非 superuser 管理能力；外部操作
+前后直接回读 API 快照，发生并发变更则停止确认，不盲目覆盖 status。
+启用资源创建时，`DatabaseReconciliation` 在同一条 reconcile 中先运行凭据准备/检查，
+再运行资源供应用例，不同时注册独立凭据 controller，避免两个 worker 争写同一资源状态。
+
+创建分为三个可观察步骤：
+
+1. 保存 CreatingRole，事务内创建无管理特权的 LOGIN owner 并授予管理账号 SET 权限；
+   提交并回读成功后保存 `status.roleOID`。
+2. 保存 CreatingDatabase，创建以已确认角色为 owner 且 `ALLOW_CONNECTIONS false` 的数据库；
+   回读成功后保存 `status.databaseOID`。
+3. 在已确认对象上以 owner 收紧 ACL：撤销 PUBLIC CONNECT、授予 owner CONNECT，再开放
+   连接入口。ACL 收敛可幂等重试，不重置密码或更换 owner。
+
+OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 或认领机制。未知同名对象、
+已确认对象消失/被重建、owner/角色特权漂移均报 Conflict。CreatingRole/CreatingDatabase
+未留下对应 OID 时，下轮保守停止；即使请求可能尚未发出，也不尝试推断或自动补记。
+角色创建在同一事务内完成，提交前失败随事务回滚，按可恢复处理；只有提交本身或
+非事务的 CREATE DATABASE 结果不确定、创建成功后确认写入失败才交给人工处理。诊断包含 Database、Instance、
+实际 database/role、失败步骤；确认 OID 独立保留。依赖或明确权限拒绝可等待恢复。
+OID 不是跨集群/备份恢复的稳定身份，恢复后须人工核对，不能靠匹配 OID 推导管理权。
+
+`ResourcesReady=True` 仅表示角色、数据库及连接 ACL 已确认，不代表扩展或 Tenant 交付完成；
+Database/Tenant 总体 Ready 仍为 False。当前不轮换密码、不做运行期应用登录健康检查，也不
+撤销其他数据库的 PUBLIC 权限。管理员须保证共享实例中其他数据库的接入策略满足隔离要求。
+
+真实 API server + PostgreSQL + OpenBao 测试覆盖实际密码登录、owner 建表、应用管理权限拒绝、
+无关账号连接拒绝、重试/重启、权限恢复、同名冲突、角色重建、并发授权、创建结果丢失、
+确认持久化失败、删除停止与实际 manager 的观察链路。保留外部操作/API 写入间的非原子边界，
+不承诺控制面与数据库之间的事务或对任意管理员并发 DDL 的无损恢复。
+
+遵循 PostgreSQL 官方的
+[CREATE DATABASE 非事务与 owner 权限合同](https://www.postgresql.org/docs/17/sql-createdatabase.html)
+和 [CREATEROLE 的成员授权](https://www.postgresql.org/docs/17/role-attributes.html)。
+不新增 controller 通用生命周期框架，继续采用既有直接观察、resourceVersion 保护和条件报告。
 
 ## OpenBao Kubernetes 认证会话
 
