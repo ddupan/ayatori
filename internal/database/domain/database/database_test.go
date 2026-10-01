@@ -88,7 +88,6 @@ func TestCredentialResume(t *testing.T) {
 	}{
 		{"尚未创建", database.CredentialPinned, 0, database.CreateCredential, database.CredentialPinned},
 		{"依赖恢复", database.CredentialUnavailable, 0, database.CreateCredential, database.CredentialUnavailable},
-		{"中断创建", database.CredentialCreating, 0, database.Wait, database.CredentialConflict},
 		{"未确认冲突", database.CredentialConflict, 0, database.Wait, database.CredentialConflict},
 		{"已确认后读取失败", database.CredentialUnavailable, 1, database.VerifyCredential, database.CredentialUnavailable},
 		{"已确认后冲突重验", database.CredentialConflict, 1, database.VerifyCredential, database.CredentialConflict},
@@ -128,11 +127,11 @@ func TestCredentialLocationAndCreation(t *testing.T) {
 		t.Fatal("配置变化必须停止，不迁移已固定位置")
 	}
 	for _, existing := range []error{nil, credential.ErrApplicationCredentialInvalid} {
-		if _, ok := database.Reconstitute(pinned, dependencies).BeginCredentialCreation(existing); ok {
+		if _, ok := database.Reconstitute(pinned, dependencies).GenerateCredential(existing); ok {
 			t.Fatal("固定位置已有值时不得生成凭据")
 		}
 	}
-	if _, ok := database.Reconstitute(pinned, dependencies).BeginCredentialCreation(database.ErrUnavailable); ok {
+	if _, ok := database.Reconstitute(pinned, dependencies).GenerateCredential(database.ErrUnavailable); ok {
 		t.Fatal("无法确认位置为空时不得生成凭据")
 	}
 	for _, test := range []struct {
@@ -142,16 +141,16 @@ func TestCredentialLocationAndCreation(t *testing.T) {
 		want    database.CredentialPhase
 	}{
 		{"明确权限拒绝", 0, database.ErrUnavailable, database.CredentialUnavailable},
-		{"结果不确定", 0, database.ErrUncertain, database.CredentialConflict},
+		{"结果不确定交给下一轮观察", 0, database.ErrUncertain, database.CredentialUnavailable},
 		{"并发冲突", 0, database.ErrConflict, database.CredentialConflict},
 		{"非首次版本", 2, nil, database.CredentialConflict},
 		{"首次创建回读", 1, nil, database.CredentialPrepared},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			creating := database.Reconstitute(pinned, dependencies)
-			value, ok := creating.BeginCredentialCreation(database.ErrNotFound)
-			if !ok || creating.Snapshot().Credential.Phase != database.CredentialCreating || value.Password() == "" {
-				t.Fatal("位置为空时应生成凭据并进入检查点")
+			value, ok := creating.GenerateCredential(database.ErrNotFound)
+			if !ok || value.Password() == "" {
+				t.Fatal("位置为空时应生成凭据")
 			}
 			creating.CredentialCreated(test.version, test.err)
 			state := creating.Snapshot().Credential
@@ -162,98 +161,90 @@ func TestCredentialLocationAndCreation(t *testing.T) {
 	}
 }
 
-func TestResourceResumeAndIdentity(t *testing.T) {
+func TestResourceIdentity(t *testing.T) {
+	const manager, role, owned = 5, 11, 22
 	for _, test := range []struct {
 		name   string
 		state  database.ResourceState
-		resume bool
+		facts  database.ResourceFacts
+		accept bool
 	}{
-		{"初次", database.ResourceState{}, true},
-		{"角色创建不确定", database.ResourceState{Phase: database.ResourceCreatingRole}, false},
-		{"库创建不确定", database.ResourceState{RoleOID: 11, Phase: database.ResourceCreatingDatabase}, false},
-		{"已确认角色", database.ResourceState{RoleOID: 11, Phase: database.ResourcePending}, true},
-		{"已确认资源暂不可用", database.ResourceState{RoleOID: 11, DatabaseOID: 22, Phase: database.ResourceUnavailable}, true},
-		{"冲突保持", database.ResourceState{RoleOID: 11, Phase: database.ResourceConflict, Message: "首次诊断"}, false},
+		{"空实例", database.ResourceState{}, database.ResourceFacts{ManagerOID: manager}, true},
+		{"已确认库仍归管理账号", database.ResourceState{DatabaseOID: owned}, database.ResourceFacts{DatabaseOID: owned, OwnerOID: manager, ManagerOID: manager}, true},
+		{"已移交", database.ResourceState{DatabaseOID: owned, RoleOID: role}, database.ResourceFacts{DatabaseOID: owned, RoleOID: role, OwnerOID: role, ManagerOID: manager}, true},
+		{"未知同名库", database.ResourceState{}, database.ResourceFacts{DatabaseOID: owned, OwnerOID: manager, ManagerOID: manager}, false},
+		{"未知同名角色", database.ResourceState{DatabaseOID: owned}, database.ResourceFacts{DatabaseOID: owned, RoleOID: role, OwnerOID: manager, ManagerOID: manager}, false},
+		{"库消失", database.ResourceState{DatabaseOID: owned}, database.ResourceFacts{ManagerOID: manager}, false},
+		{"角色重建", database.ResourceState{DatabaseOID: owned, RoleOID: role}, database.ResourceFacts{DatabaseOID: owned, RoleOID: 12, OwnerOID: manager, ManagerOID: manager}, false},
+		{"owner 为他人", database.ResourceState{DatabaseOID: owned, RoleOID: role}, database.ResourceFacts{DatabaseOID: owned, RoleOID: role, OwnerOID: 99, ManagerOID: manager}, false},
+		{"未确认角色时 owner 不能是他人", database.ResourceState{DatabaseOID: owned}, database.ResourceFacts{DatabaseOID: owned, OwnerOID: 0, ManagerOID: manager}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			snapshot, dependencies := fixture(t)
-			snapshot.Credential = database.CredentialState{Location: &testLocation, Version: 1, Phase: database.CredentialPrepared}
 			snapshot.Resources = test.state
-			db := database.Reconstitute(snapshot, dependencies)
-			if (db.PlanResources() == database.InspectResources) != test.resume {
-				t.Fatal("恢复决策错误")
-			}
-			state := db.Snapshot().Resources
-			if state.RoleOID != test.state.RoleOID || state.DatabaseOID != test.state.DatabaseOID {
-				t.Fatal("恢复丢失确认")
-			}
-			if !test.resume && state.Phase != database.ResourceConflict {
-				t.Fatal("不确定创建未转冲突")
-			}
-			if test.state.Phase == database.ResourceConflict && state != test.state {
-				t.Fatal("冲突诊断被覆盖")
+			if err := database.Reconstitute(snapshot, dependencies).CheckResources(test.facts); (err == nil) != test.accept {
+				t.Fatalf("身份判定错误：%v", err)
 			}
 		})
-	}
-
-	snapshot, dependencies := fixture(t)
-	snapshot.Resources = database.ResourceState{RoleOID: 11, DatabaseOID: 22}
-	db := database.Reconstitute(snapshot, dependencies)
-	if err := db.CheckResources(database.ResourceFacts{RoleOID: 11, DatabaseOID: 22, OwnerOID: 11}); err != nil {
-		t.Fatal(err)
-	}
-	for _, facts := range []database.ResourceFacts{
-		{}, {RoleOID: 12, DatabaseOID: 22, OwnerOID: 12}, {RoleOID: 11, DatabaseOID: 23, OwnerOID: 11}, {RoleOID: 11, DatabaseOID: 22, OwnerOID: 99},
-	} {
-		if db.CheckResources(facts) == nil {
-			t.Fatal("对象身份或 owner 漂移被接受")
-		}
-	}
-	unconfirmed, _ := fixture(t)
-	if database.Reconstitute(unconfirmed, dependencies).CheckResources(database.ResourceFacts{RoleOID: 11}) == nil {
-		t.Fatal("未确认同名对象被认领")
 	}
 }
 
 func TestResourceSteps(t *testing.T) {
+	const manager, role, owned = 5, 11, 22
 	snapshot, dependencies := fixture(t)
 	snapshot.Credential = database.CredentialState{Location: &testLocation, Version: 1, Phase: database.CredentialPending}
-	db := database.Reconstitute(snapshot, dependencies)
-	if db.PlanResources() != database.Wait {
+	if database.Reconstitute(snapshot, dependencies).PlanResources() != database.Wait {
 		t.Fatal("凭据未在本轮验证时不得观察 PostgreSQL")
 	}
 	snapshot.Credential.Phase = database.CredentialPrepared
-	db = database.Reconstitute(snapshot, dependencies)
-	if db.PlanResources() != database.InspectResources || db.ObserveResources(database.ResourceFacts{}, nil) != database.CreateRole {
-		t.Fatal("空实例应先创建角色")
+	db := database.Reconstitute(snapshot, dependencies)
+	if db.PlanResources() != database.InspectResources {
+		t.Fatal("凭据可用时应观察 PostgreSQL")
 	}
-	db.BeginRoleCreation()
-	db.RoleCreated(11, nil)
-	if db.ObserveResources(database.ResourceFacts{RoleOID: 11}, nil) != database.CreateDatabase {
-		t.Fatal("角色确认后应创建数据库")
+	facts := database.ResourceFacts{ManagerOID: manager}
+	for _, step := range []struct {
+		want   database.Action
+		record func()
+	}{
+		{database.CreateDatabase, func() {
+			db.DatabaseCreated(owned, nil)
+			facts.DatabaseOID, facts.OwnerOID, facts.PublicConnect, facts.ManagerConnect = owned, manager, true, true
+		}},
+		{database.RevokePublicConnect, func() { db.Converged("撤销", nil); facts.PublicConnect = false }},
+		// 应用角色最后创建：此时 PUBLIC 已撤销，数据库仍归管理账号。
+		{database.CreateRole, func() { db.RoleCreated(role, nil); facts.RoleOID = role }},
+		{database.TransferOwnership, func() { db.Converged("移交", nil); facts.OwnerOID = role }},
+	} {
+		if action := db.ObserveResources(facts, nil); action != step.want {
+			t.Fatalf("期望步骤 %v，实际 %v", step.want, action)
+		}
+		step.record()
 	}
-	db.BeginDatabaseCreation()
-	db.DatabaseCreated(22, nil)
-	if db.ObserveResources(database.ResourceFacts{RoleOID: 11, DatabaseOID: 22, OwnerOID: 11}, nil) != database.OpenAccess {
-		t.Fatal("对象确认后应收敛访问权限")
+	if db.ObserveResources(facts, nil) != database.Wait || db.Snapshot().Resources.Phase != database.ResourceAvailable {
+		t.Fatal("全部收敛后应 Available")
 	}
-	db.AccessOpened(nil)
-	if state := db.Snapshot().Resources; state.Phase != database.ResourceAvailable || state.RoleOID != 11 || state.DatabaseOID != 22 {
-		t.Fatal("访问收敛后应 Available 且保留确认")
+	facts.ManagerConnect = false
+	if db.ObserveResources(facts, nil) != database.TransferOwnership {
+		t.Fatal("管理账号失去 CONNECT 时应重新收敛")
 	}
+
 	for _, test := range []struct {
 		err  error
 		want database.ResourcePhase
 	}{
 		{database.ErrUnavailable, database.ResourceUnavailable},
-		{database.ErrUncertain, database.ResourceConflict},
-		{nil, database.ResourceConflict}, // 成功但无 OID 视为不确定
+		{database.ErrUncertain, database.ResourceUnavailable},
+		{database.ErrConflict, database.ResourceConflict},
+		{nil, database.ResourceUnavailable}, // 成功但无 OID 视为不确定，交给下一轮观察
 	} {
 		failed := database.Reconstitute(snapshot, dependencies)
-		failed.BeginRoleCreation()
-		failed.RoleCreated(0, test.err)
-		if state := failed.Snapshot().Resources; state.Phase != test.want || state.RoleOID != 0 {
+		failed.DatabaseCreated(0, test.err)
+		if state := failed.Snapshot().Resources; state.Phase != test.want || state.DatabaseOID != 0 {
 			t.Fatalf("创建失败分类错误：%v", test.err)
 		}
+	}
+	snapshot.Resources.Phase = database.ResourceConflict
+	if database.Reconstitute(snapshot, dependencies).PlanResources() != database.Wait {
+		t.Fatal("冲突需人工处理，不自动重入")
 	}
 }

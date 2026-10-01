@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
@@ -18,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -41,9 +41,10 @@ type CredentialBackend interface {
 // PostgreSQLBackend 只返回 catalog 事实和 database 包定义的结果分类。
 type PostgreSQLBackend interface {
 	InspectResources(context.Context, instance.ObservationTarget, *database.Database) (database.ResourceFacts, error)
+	CreateDatabase(context.Context, instance.ObservationTarget, *database.Database) (uint32, error)
+	RevokePublicConnect(context.Context, instance.ObservationTarget, *database.Database) error
 	CreateLoginRole(context.Context, instance.ObservationTarget, *database.Database, credential.ApplicationCredential) (uint32, error)
-	CreateOwnedDatabase(context.Context, instance.ObservationTarget, *database.Database) (uint32, error)
-	ConfigureAccess(context.Context, instance.ObservationTarget, *database.Database) error
+	TransferOwnership(context.Context, instance.ObservationTarget, *database.Database) error
 }
 
 // DatabaseReconciler 是 PostgreSQLDatabase 的唯一 status 写入者：先准备凭据，
@@ -55,13 +56,11 @@ type DatabaseReconciler struct {
 	PostgreSQL  PostgreSQLBackend
 }
 
-// 绑定、外部写入前后都要重新判断的本轮事实；Revision 之外的依赖变化同样停止本轮。
+// databaseState 是本轮从 API 直接读取的事实。
 type databaseState struct {
-	object             *databasev1alpha1.PostgreSQLDatabase
-	dependencies       database.Dependencies
-	tenantGeneration   int64
-	instanceGeneration int64
-	target             instance.ObservationTarget
+	object       *databasev1alpha1.PostgreSQLDatabase
+	dependencies database.Dependencies
+	target       instance.ObservationTarget
 }
 
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -82,6 +81,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	return ctrl.Result{RequeueAfter: dependencyRetry}, nil
 }
 
+// reconcile 每轮最多执行一次外部写入，再记录结果。不使用持久检查点：结果丢失时，
+// 下一轮会观察到未记录的同名对象或凭据而转为冲突；controller-runtime 对同一对象串行协调。
 func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState, db *database.Database) error {
 	location, err := r.Credentials.ProvisionLocation(db.UID())
 	var value credential.ApplicationCredential
@@ -89,90 +90,32 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	case database.Save:
 		return r.save(ctx, state, db)
 	case database.CreateCredential:
-		return r.createCredential(ctx, state, db)
+		_, existing := r.Credentials.ReadCredential(ctx, db.CredentialLocation(), 0)
+		if generated, ok := db.GenerateCredential(existing); ok {
+			version, err := r.Credentials.CreateCredential(ctx, db.CredentialLocation(), generated)
+			db.CredentialCreated(version, err)
+		}
+		return r.save(ctx, state, db)
 	case database.VerifyCredential:
 		value, err = r.Credentials.ReadCredential(ctx, db.CredentialLocation(), db.CredentialVersion())
-		if db.VerifyCredential(value, err) {
-			if err := r.checkCurrent(ctx, state); err != nil {
-				return err
-			}
-		}
+		db.VerifyCredential(value, err)
 	}
 	if r.PostgreSQL == nil || db.PlanResources() == database.Wait {
 		return r.save(ctx, state, db)
 	}
 	facts, err := r.PostgreSQL.InspectResources(ctx, state.target, db)
-	action := db.ObserveResources(facts, err)
-	if action == database.Wait {
-		return r.save(ctx, state, db)
-	}
-	if err := r.checkCurrent(ctx, state); err != nil {
-		return err
-	}
-	switch action {
-	case database.CreateRole:
-		db.BeginRoleCreation()
-		return r.create(ctx, state, db, func() (uint32, error) {
-			return r.PostgreSQL.CreateLoginRole(ctx, state.target, db, value)
-		}, db.RoleCreated)
+	switch db.ObserveResources(facts, err) {
 	case database.CreateDatabase:
-		db.BeginDatabaseCreation()
-		return r.create(ctx, state, db, func() (uint32, error) {
-			return r.PostgreSQL.CreateOwnedDatabase(ctx, state.target, db)
-		}, db.DatabaseCreated)
-	default:
-		err := r.PostgreSQL.ConfigureAccess(ctx, state.target, db)
-		db.AccessOpened(err)
-		if err == nil {
-			if err := r.checkCurrent(ctx, state); err != nil {
-				return err
-			}
-		}
-		return r.save(ctx, state, db)
+		db.DatabaseCreated(r.PostgreSQL.CreateDatabase(ctx, state.target, db))
+	case database.RevokePublicConnect:
+		db.Converged("撤销 PUBLIC CONNECT", r.PostgreSQL.RevokePublicConnect(ctx, state.target, db))
+	case database.CreateRole:
+		// PlanResources 只在本轮凭据验证成功后放行，value 此时一定是已确认凭据。
+		db.RoleCreated(r.PostgreSQL.CreateLoginRole(ctx, state.target, db, value))
+	case database.TransferOwnership:
+		db.Converged("移交数据库 owner", r.PostgreSQL.TransferOwnership(ctx, state.target, db))
 	}
-}
-
-// createCredential 先持久化 Creating 检查点再写外部后端；确认保存失败后由下一轮转为人工冲突。
-func (r *DatabaseReconciler) createCredential(ctx context.Context, state *databaseState, db *database.Database) error {
-	_, existing := r.Credentials.ReadCredential(ctx, db.CredentialLocation(), 0)
-	value, ok := db.BeginCredentialCreation(existing)
-	if !ok {
-		return r.save(ctx, state, db)
-	}
-	if err := r.saveCheckpoint(ctx, state, db); err != nil {
-		return err
-	}
-	version, err := r.Credentials.CreateCredential(ctx, db.CredentialLocation(), value)
-	if err == nil {
-		if err := r.checkCurrent(ctx, state); err != nil {
-			return err
-		}
-	}
-	db.CredentialCreated(version, err)
 	return r.save(ctx, state, db)
-}
-
-// create 执行一次 PostgreSQL 创建：检查点保存、执行、回查 API，再保存确认 OID。
-func (r *DatabaseReconciler) create(ctx context.Context, state *databaseState, db *database.Database,
-	execute func() (uint32, error), confirm func(uint32, error)) error {
-	if err := r.saveCheckpoint(ctx, state, db); err != nil {
-		return err
-	}
-	oid, err := execute()
-	if err == nil {
-		if err := r.checkCurrent(ctx, state); err != nil {
-			return err
-		}
-	}
-	confirm(oid, err)
-	return r.save(ctx, state, db)
-}
-
-func (r *DatabaseReconciler) saveCheckpoint(ctx context.Context, state *databaseState, db *database.Database) error {
-	if err := r.save(ctx, state, db); err != nil {
-		return err
-	}
-	return r.checkCurrent(ctx, state)
 }
 
 func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseState, error) {
@@ -194,7 +137,6 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 			facts := kubernetes.BindingTenant(tenant)
 			state.dependencies.Tenant = &facts
 			state.dependencies.TenantProtected = controllerutil.ContainsFinalizer(tenant, kubernetes.TenantFinalizer)
-			state.tenantGeneration = tenant.Generation
 		}
 	}
 	owner := &databasev1alpha1.PostgreSQLInstance{}
@@ -205,7 +147,7 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 	if err != nil {
 		return nil, err
 	}
-	state.target, state.instanceGeneration = target, owner.Generation
+	state.target = target
 	state.dependencies.Instance = &database.Instance{
 		Identity: binding.Identity{Name: owner.Name, UID: string(owner.UID)},
 		Deleting: !owner.DeletionTimestamp.IsZero(), Ready: kubernetes.CurrentReady(owner.Generation, owner.Status.Conditions),
@@ -214,48 +156,45 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 	return state, nil
 }
 
-// checkCurrent 在外部操作前后回读 API，拒绝陈旧快照；它不是跨系统事务。
-func (r *DatabaseReconciler) checkCurrent(ctx context.Context, state *databaseState) error {
-	current, err := r.load(ctx, state.object.Name)
-	if err != nil {
-		return err
-	}
-	if current == nil || current.object.UID != state.object.UID || current.object.ResourceVersion != state.object.ResourceVersion ||
-		current.tenantGeneration != state.tenantGeneration || current.instanceGeneration != state.instanceGeneration ||
-		!reflect.DeepEqual(current.dependencies, state.dependencies) {
-		return apierrors.NewConflict(databasev1alpha1.GroupVersion.WithResource("postgresqldatabases").GroupResource(),
-			state.object.Name, errors.New("供应快照已变化；停止本轮并重新观察"))
-	}
-	return nil
-}
-
-// save 用本轮读取的 resourceVersion 写 status；并发写入由 API server 拒绝。
+// save 记录本轮结果。OID 与凭据版本是已经发生的外部事实，resourceVersion 冲突时
+// 重新读取后再写，而不是丢弃；controller 是这些 status 字段的唯一写入者。
 func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db *database.Database) error {
-	object, desired := state.object, db.Snapshot()
-	previous := object.Status.DeepCopy()
-	presentCredential(object, desired.Credential)
-	if r.PostgreSQL != nil {
-		presentResources(object, desired.Resources)
-	}
-	meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
-		Type: readyCondition, Status: metav1.ConditionFalse, Reason: "ProvisioningIncomplete",
-		Message: "凭据准备与角色建库不代表扩展、应用登录或 Tenant 交付已经完成", ObservedGeneration: object.Generation,
-	})
-	object.Status.ObservedGeneration = object.Generation
-	if equality.Semantic.DeepEqual(*previous, object.Status) {
+	desired := db.Snapshot()
+	object := state.object
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		previous := object.Status.DeepCopy()
+		presentCredential(object, desired.Credential)
+		if r.PostgreSQL != nil {
+			presentResources(object, desired.Resources)
+		}
+		meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
+			Type: readyCondition, Status: metav1.ConditionFalse, Reason: "ProvisioningIncomplete",
+			Message: "凭据准备与角色建库不代表扩展、应用登录或 Tenant 交付已经完成", ObservedGeneration: object.Generation,
+		})
+		object.Status.ObservedGeneration = object.Generation
+		if equality.Semantic.DeepEqual(*previous, object.Status) {
+			return nil
+		}
+		if err := r.Client.Status().Update(ctx, object); err != nil {
+			if apierrors.IsConflict(err) {
+				object = &databasev1alpha1.PostgreSQLDatabase{}
+				if err := r.Reader.Get(ctx, client.ObjectKeyFromObject(state.object), object); err != nil {
+					return err
+				}
+				return apierrors.NewConflict(databasev1alpha1.GroupVersion.WithResource("postgresqldatabases").GroupResource(),
+					object.Name, errors.New("status 已被并发更新，重新读取后重试"))
+			}
+			return err
+		}
+		// 旧 CRD 会裁剪未知 status 字段。不能把 HTTP 成功当作确认已保存后继续写后端。
+		saved := snapshot(object)
+		if !equality.Semantic.DeepEqual(saved.Credential.Location, desired.Credential.Location) ||
+			saved.Credential.Version != desired.Credential.Version ||
+			(r.PostgreSQL != nil && (saved.Resources.RoleOID != desired.Resources.RoleOID || saved.Resources.DatabaseOID != desired.Resources.DatabaseOID)) {
+			return fmt.Errorf("凭据位置、版本或资源 OID 未被 API 保留；请先升级 Database CRD，未继续外部操作")
+		}
 		return nil
-	}
-	if err := r.Client.Status().Update(ctx, object); err != nil {
-		return err
-	}
-	// 旧 CRD 会裁剪未知 status 字段。不能把 HTTP 成功当作确认已保存后继续写后端。
-	saved := snapshot(object)
-	if !equality.Semantic.DeepEqual(saved.Credential.Location, desired.Credential.Location) ||
-		saved.Credential.Version != desired.Credential.Version ||
-		(r.PostgreSQL != nil && (saved.Resources.RoleOID != desired.Resources.RoleOID || saved.Resources.DatabaseOID != desired.Resources.DatabaseOID)) {
-		return fmt.Errorf("凭据位置、版本或资源 OID 未被 API 保留；请先升级 Database CRD，未继续外部操作")
-	}
-	return nil
+	})
 }
 
 func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
@@ -312,7 +251,6 @@ func presentResources(object *databasev1alpha1.PostgreSQLDatabase, state databas
 var credentialReasons = map[database.CredentialPhase]string{
 	database.CredentialPending:       "PreparationPending",
 	database.CredentialPinned:        "LocationPinned",
-	database.CredentialCreating:      "CreationStarted",
 	database.CredentialPrepared:      "CredentialPrepared",
 	database.CredentialConflict:      "Conflict",
 	database.CredentialUnavailable:   "DependencyUnavailable",

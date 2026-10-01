@@ -45,14 +45,14 @@ server 校验；独立的凭据准备用例在显式启用后填写这些字段�
 未确认的已有值必须报 Conflict，不能用读取成功补记版本；已确认版本的恢复读取检查最新
 KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生成替代密码。第一版不提供轮换入口。
 `CredentialsReady` 条件只描述凭据准备结果；它不授权实际数据库交付。
-`CreationStarted` 且无确认版本表示创建未完成确认，重入时停在 Conflict；不尝试推断
-进程中断前请求是否发出。完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。
+创建结果丢失时，下一轮读到未确认的已有值即停在 Conflict；位置仍为空则重试。
+完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。
 
-角色/数据库 OID 为 1–4294967295，写入后不可修改或移除。角色确认要求已有凭据确认与
-Instance UID；数据库确认要求先有角色确认。`ResourcesReady` 的 CreatingRole/CreatingDatabase
-没有相应 OID 时，下轮转 Conflict；依赖故障不清空确认。旧 CRD 裁剪 OID 会阻止继续下一步，
+角色/数据库 OID 为 1–4294967295，写入后不可修改或移除。数据库确认要求已有凭据确认与
+Instance UID；角色在数据库之后创建，角色确认要求先有数据库确认。同名对象存在而没有相应
+OID 时转 Conflict；依赖故障不清空确认。旧 CRD 裁剪 OID 会阻止继续下一步，
 但不能回滚已发出的外部创建，因此必须先升级 CRD 再启用供应。
-`ResourcesReady=True/Available` 只表示角色、数据库和 ACL 已确认，总体 Ready 仍不放行。
+`ResourcesReady=True/Available` 只表示数据库、角色、owner 移交与 ACL 已收敛，总体 Ready 仍不放行。
 详见[资源创建闭环](README.md#postgresql-资源创建闭环)。
 
 示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、

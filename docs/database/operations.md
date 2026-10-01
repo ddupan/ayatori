@@ -15,8 +15,8 @@ Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理�
 凭据准备现在可单独启用，见[部署参数](deployment.md)。观察 Database 的
 `CredentialsReady`、固定 `status.credentialRef` 和 `status.credentialVersion`，不要导出
 凭据内容。Prepared 只代表 Bao 凭据可用，不代表已建库或 Tenant Ready。
-`CreationStarted` 在创建结果确认前持久化；重启或失败留下该状态时报告 Conflict。
-这包括“状态已写但请求还没发出”的保守停止；不要因为当前位置暂时为空就重试生成密码。
+创建结果丢失或确认保存失败后，下一轮读到未确认的已有值即报告 Conflict；不要因为想重试
+就清空固定位置或生成新密码。
 无确认版本的 Conflict 不会自行消失，后端恢复也不自动重入；应暂停该 controller、等待
 在途请求结束后核实版本历史、残留与绑定，再决定清理或显式导入。不要清空整个 status
 或更改固定引用来绕过保护。导入和完整人工恢复入口仍待对应切片实现。

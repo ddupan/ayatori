@@ -237,7 +237,7 @@ spec:
                 description: Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
                 type: string
               roleOID:
-                description: RoleOID 只在角色创建提交并回读成功后保存，后续不按同名认领。
+                description: RoleOID 只在角色创建并回读成功后保存，后续不按同名认领；角色在数据库之后创建。
                 format: int64
                 maximum: 4294967295
                 minimum: 1
@@ -247,11 +247,11 @@ spec:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: roleOID requires confirmed credentials and instanceUID
-          rule: '!has(self.status) || !has(self.status.roleOID) || (has(self.status.credentialVersion)
+        - message: databaseOID requires confirmed credentials and instanceUID
+          rule: '!has(self.status) || !has(self.status.databaseOID) || (has(self.status.credentialVersion)
             && has(self.status.instanceUID))'
-        - message: databaseOID requires roleOID
-          rule: '!has(self.status) || !has(self.status.databaseOID) || has(self.status.roleOID)'
+        - message: roleOID requires databaseOID
+          rule: '!has(self.status) || !has(self.status.roleOID) || has(self.status.databaseOID)'
         - message: confirmed roleOID cannot change or be removed
           rule: '!(has(oldSelf.status) && has(oldSelf.status.roleOID)) || (has(self.status)
             && has(self.status.roleOID) && self.status.roleOID == oldSelf.status.roleOID)'

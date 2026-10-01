@@ -38,7 +38,7 @@ type PostgreSQLDatabaseStatus struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	CredentialVersion int64 `json:"credentialVersion,omitempty"`
-	// RoleOID 只在角色创建提交并回读成功后保存，后续不按同名认领。
+	// RoleOID 只在角色创建并回读成功后保存，后续不按同名认领；角色在数据库之后创建。
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=4294967295
 	// +optional
@@ -60,8 +60,8 @@ type PostgreSQLDatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
-// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.roleOID) || (has(self.status.credentialVersion) && has(self.status.instanceUID))",message="roleOID requires confirmed credentials and instanceUID"
-// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.databaseOID) || has(self.status.roleOID)",message="databaseOID requires roleOID"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.databaseOID) || (has(self.status.credentialVersion) && has(self.status.instanceUID))",message="databaseOID requires confirmed credentials and instanceUID"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.roleOID) || has(self.status.databaseOID)",message="roleOID requires databaseOID"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.roleOID)) || (has(self.status) && has(self.status.roleOID) && self.status.roleOID == oldSelf.status.roleOID)",message="confirmed roleOID cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.databaseOID)) || (has(self.status) && has(self.status.databaseOID) && self.status.databaseOID == oldSelf.status.databaseOID)",message="confirmed databaseOID cannot change or be removed"
 // +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.credentialVersion) || has(self.status.credentialRef)",message="credentialVersion requires credentialRef"

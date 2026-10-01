@@ -52,8 +52,8 @@ type entry struct {
 }
 
 // InstanceService 由原 Service 迁移：连接复用与释放属于应用装配，不属于 SQL adapter。
-// 保留原实现串行操作的约束，防止 Close 与查询并发；controller 停止 worker 后调用 Close。
 // 不缓存能力观察，不把连接存活等同于 Ready。凭据每轮重新读取，而非只在引用变化时读取。
+// pgxpool 本身支持并发；mu 只保护连接登记，Secret 读取、建连、查询与关闭都在锁外执行。
 type InstanceService struct {
 	mu        sync.Mutex
 	source    CredentialReader
@@ -94,13 +94,10 @@ func (s *InstanceService) ObserveManagement(ctx context.Context, target instance
 }
 
 func (s *InstanceService) observe(ctx context.Context, target instance.ObservationTarget, management bool) (InstanceObservation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	current, err := s.connection(ctx, target)
 	if err != nil {
 		return InstanceObservation{}, err
 	}
-	name := target.Identity().Name()
 	var metadata DatabaseMetadata
 	if management {
 		metadata, err = current.database.InspectManagement(ctx)
@@ -109,77 +106,97 @@ func (s *InstanceService) observe(ctx context.Context, target instance.Observati
 		metadata.Management = instance.ManagementChecks{}
 	}
 	if err != nil {
-		s.release(name)
+		s.release(current)
 		return InstanceObservation{}, err
 	}
 	if metadata.Version == "" {
-		s.release(name)
+		s.release(current)
 		return InstanceObservation{}, ErrObservation
 	}
-	if err := s.checkCredentials(ctx, target, current.credentials); err != nil {
+	if err := s.checkCredentials(ctx, current); err != nil {
 		return InstanceObservation{}, err
 	}
 	return InstanceObservation{target: target, version: metadata.Version,
 		extensions: instance.ObserveExtensionSupport(metadata.AvailableExtensions), management: metadata.Management}, nil
 }
 
-// connection 由持有 mu 的调用者使用；不缓存观察结果或管理权限。
+// connection 返回当前目标与有效凭据对应的连接池；不缓存观察结果或管理权限。
 func (s *InstanceService) connection(ctx context.Context, target instance.ObservationTarget) (*entry, error) {
 	if err := target.Validate(); err != nil {
 		return nil, err
 	}
-	if s.closed {
-		return nil, ErrClosed
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	// 先读取有效凭据。读取失败时不得继续使用缓存中的旧连接。
+	// 先读取有效凭据。读取失败时不得继续使用登记中的旧连接。
 	name := target.Identity().Name()
 	credentials, err := s.source.Read(ctx, target.Definition().AdminCredential())
+	if err == nil && (credentials.username == "" || credentials.password == "") {
+		err = ErrCredentialsInvalid
+	}
 	if err != nil {
-		s.release(name)
+		s.release(s.lookup(name))
 		return nil, credentialError(err)
 	}
-	if credentials.username == "" || credentials.password == "" {
-		s.release(name)
-		return nil, ErrCredentialsInvalid
+	current, closed := s.registered(name)
+	if closed {
+		return nil, ErrClosed
 	}
-
 	// 连接身份与有效值均未变化时复用 pgxpool；generation 本身不要求换池。
-	current := s.entries[name]
-	if current != nil && (current.target.Identity() != target.Identity() ||
-		current.target.Definition() != target.Definition() || current.credentials != credentials) {
-		s.release(name)
-		current = nil
+	if current != nil && current.serves(target, credentials) {
+		return current, nil
 	}
-	if current == nil {
-		database, err := s.connector.Connect(ctx, target.Definition().Endpoint(), credentials)
-		if err != nil {
-			return nil, err
-		}
-		current = &entry{
-			target:      target,
-			credentials: credentials,
-			database:    database,
-		}
-		s.entries[name] = current
+	s.release(current)
+	database, err := s.connector.Connect(ctx, target.Definition().Endpoint(), credentials)
+	if err != nil {
+		return nil, err
 	}
-
-	return current, nil
+	created := &entry{target: target, credentials: credentials, database: database}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		database.Close()
+		return nil, ErrClosed
+	}
+	// 并发建连时只保留一个池；落后者关闭自己新建的池并复用已登记的。
+	if existing := s.entries[name]; existing != nil && existing.serves(target, credentials) {
+		s.mu.Unlock()
+		database.Close()
+		return existing, nil
+	}
+	replaced := s.entries[name]
+	s.entries[name] = created
+	s.mu.Unlock()
+	if replaced != nil {
+		replaced.database.Close()
+	}
+	return created, nil
 }
 
-func (s *InstanceService) checkCredentials(ctx context.Context, target instance.ObservationTarget, credentials Credentials) error {
-	name := target.Identity().Name()
-	// 回读后再检查凭据，避免把轮换前取得的结果交给新凭据的调用链。
-	latest, err := s.source.Read(ctx, target.Definition().AdminCredential())
+func (e *entry) serves(target instance.ObservationTarget, credentials Credentials) bool {
+	return e.target.Identity() == target.Identity() && e.target.Definition() == target.Definition() && e.credentials == credentials
+}
+
+func (s *InstanceService) lookup(name string) *entry {
+	current, _ := s.registered(name)
+	return current
+}
+
+func (s *InstanceService) registered(name string) (*entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entries[name], s.closed
+}
+
+// checkCredentials 在查询后再读一次凭据，避免把轮换前取得的结果交给新凭据的调用链。
+func (s *InstanceService) checkCredentials(ctx context.Context, current *entry) error {
+	latest, err := s.source.Read(ctx, current.target.Definition().AdminCredential())
 	if err != nil {
-		s.release(name)
+		s.release(current)
 		return credentialError(err)
 	}
-	if latest != credentials {
-		s.release(name)
+	if latest != current.credentials {
+		s.release(current)
 		return ErrCredentialsChanged
 	}
 	return nil
@@ -194,23 +211,34 @@ func credentialError(err error) error {
 
 // Forget 只释放本地连接；不删除数据库，不替代 Instance finalizer。
 func (s *InstanceService) Forget(name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.release(name)
+	s.release(s.lookup(name))
 }
 
-func (s *InstanceService) release(name string) {
-	if current := s.entries[name]; current != nil {
+// release 只注销仍登记着的同一个池，并在锁外关闭；pgxpool.Close 会等待在途查询归还连接。
+func (s *InstanceService) release(current *entry) {
+	if current == nil {
+		return
+	}
+	name := current.target.Identity().Name()
+	s.mu.Lock()
+	registered := s.entries[name] == current
+	if registered {
+		delete(s.entries, name)
+	}
+	s.mu.Unlock()
+	if registered {
 		current.database.Close()
 	}
-	delete(s.entries, name)
 }
 
+// Close 在 manager 停止 worker 后调用；之后的建连请求返回 ErrClosed。
 func (s *InstanceService) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.closed = true
-	for name := range s.entries {
-		s.release(name)
+	entries := s.entries
+	s.entries = make(map[string]*entry)
+	s.mu.Unlock()
+	for _, current := range entries {
+		current.database.Close()
 	}
 }

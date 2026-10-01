@@ -19,7 +19,9 @@ package application
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
@@ -250,5 +252,59 @@ func TestInstanceAssemblyFailureRecovery(t *testing.T) {
 	}
 	if _, err := service.ObserveVersion(ctx, target); !errors.Is(err, ErrClosed) {
 		t.Fatal("closed service accepted work")
+	}
+}
+
+// barrierDatabase 只有在两个查询同时进行时才返回；若操作仍被全局锁串行，测试超时失败。
+type barrierDatabase struct {
+	*databaseStub
+	arrived *sync.WaitGroup
+}
+
+func (d barrierDatabase) InspectMetadata(ctx context.Context) (DatabaseMetadata, error) {
+	d.arrived.Done()
+	both := make(chan struct{})
+	go func() { d.arrived.Wait(); close(both) }()
+	select {
+	case <-both:
+		return d.databaseStub.InspectMetadata(ctx)
+	case <-time.After(5 * time.Second):
+		return DatabaseMetadata{}, errors.New("queries were serialized")
+	}
+}
+
+// barrierConnector 可被并发调用：两次观察可能同时建连，落后者关闭自己的池。
+type barrierConnector struct {
+	arrived *sync.WaitGroup
+}
+
+func (c *barrierConnector) Connect(context.Context, instance.Endpoint, Credentials) (Database, error) {
+	return barrierDatabase{databaseStub: &databaseStub{metadata: DatabaseMetadata{Version: "17"}}, arrived: c.arrived}, nil
+}
+
+func TestInstanceQueriesRunConcurrently(t *testing.T) {
+	credentials, err := NewCredentials("admin", serviceTestPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrived := &sync.WaitGroup{}
+	arrived.Add(2)
+	service, err := NewInstanceService(&sourceStub{credentials: credentials}, &barrierConnector{arrived: arrived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	target := serviceTarget(t, "uid", "db.example", "secret", 1)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := service.ObserveMetadata(t.Context(), target)
+			results <- err
+		}()
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
