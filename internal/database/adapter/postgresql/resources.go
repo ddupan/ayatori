@@ -62,15 +62,16 @@ func (d *database) CreateLoginRole(ctx context.Context, value credential.Applica
 	defer func() { _ = transaction.Rollback(ctx) }()
 	statement := "CREATE ROLE " + pgx.Identifier{role}.Sanitize() + " LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD $1"
 	if _, err := transaction.Exec(ctx, statement, pgx.QueryExecModeSimpleProtocol, data["password"]); err != nil {
-		return 0, creationError(err)
+		return 0, rolledBackError(err)
 	}
 	if _, err := transaction.Exec(ctx, "GRANT "+pgx.Identifier{role}.Sanitize()+" TO CURRENT_USER WITH SET TRUE, INHERIT FALSE"); err != nil {
-		return 0, application.ErrResourceUncertain
+		return 0, rolledBackError(err)
 	}
 	var oid uint32
 	if err := transaction.QueryRow(ctx, "SELECT oid FROM pg_catalog.pg_roles WHERE rolname=$1", role).Scan(&oid); err != nil {
-		return 0, application.ErrResourceUncertain
+		return 0, rolledBackError(err)
 	}
+	// 只有提交本身的结果可能未知；提交前的失败都随事务回滚，确定未创建。
 	if err := transaction.Commit(ctx); err != nil {
 		return 0, application.ErrResourceUncertain
 	}
@@ -141,6 +142,14 @@ func (d *database) ConfigureAccess(ctx context.Context, name, role string, state
 		return application.ErrResourceUnavailable
 	}
 	return nil
+}
+
+// rolledBackError 用于提交前失败：事务未提交，可等待恢复后重试；同名对象仍需人工核对。
+func rolledBackError(err error) error {
+	if errors.Is(creationError(err), application.ErrResourceConflict) {
+		return application.ErrResourceConflict
+	}
+	return application.ErrResourceUnavailable
 }
 
 func creationError(err error) error {

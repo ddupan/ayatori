@@ -33,3 +33,14 @@ func TestCreationErrorsDoNotExposeServerDetails(t *testing.T) {
 		t.Fatal("未知网络结果不允许自动重试创建")
 	}
 }
+
+func TestRolledBackErrorsAllowRetryExceptNameConflict(t *testing.T) {
+	if !errors.Is(rolledBackError(&pgconn.PgError{Code: "42710"}), application.ErrResourceConflict) {
+		t.Fatal("同名角色必须保留为冲突")
+	}
+	for _, err := range []error{&pgconn.PgError{Code: "57014"}, &pgconn.PgError{Code: "XX000"}, errors.New("connection lost after send")} {
+		if !errors.Is(rolledBackError(err), application.ErrResourceUnavailable) {
+			t.Fatalf("未提交事务的失败 %v 不应升级为不确定结果", err)
+		}
+	}
+}
