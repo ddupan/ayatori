@@ -14,9 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
+	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
 )
 
@@ -35,7 +34,7 @@ func TestCredentialPreparationWithRealBackends(t *testing.T) {
 
 func testPreparationRestart(t *testing.T, f *preparationFixture) {
 	database, tenant := f.bound(t, "restart")
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "CredentialPrepared")
@@ -49,13 +48,13 @@ func testPreparationRestart(t *testing.T, f *preparationFixture) {
 	}
 	// 两次新用例实例模拟重启，第二轮必须没有无意义状态更新。
 	for range 2 {
-		if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+		if err := f.settle(t, f.reconciler(t), database); err != nil {
 			t.Fatal(err)
 		}
 	}
 	f.status(t, database, 1, "CredentialPrepared")
 	revision := database.ResourceVersion
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "CredentialPrepared")
@@ -69,14 +68,14 @@ func testPreparationRestart(t *testing.T, f *preparationFixture) {
 	if err := f.api.Delete(t.Context(), tenant); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "PreparationStopped")
 	if err := f.api.Delete(t.Context(), database); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "PreparationStopped")
@@ -98,7 +97,7 @@ func testPreparationExisting(t *testing.T, f *preparationFixture) {
 	if err := store.Create(t.Context(), path, fixtureCredential(t)); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.Conflict)
@@ -106,7 +105,7 @@ func testPreparationExisting(t *testing.T, f *preparationFixture) {
 	if err := f.bao.KVv2("secret").DeleteMetadata(t.Context(), path); err != nil {
 		t.Fatal("无法清理隔离测试 key")
 	}
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.bao.KVv2("secret").Get(t.Context(), path); !errors.Is(err, bao.ErrSecretNotFound) {
@@ -132,13 +131,13 @@ func (w failedConfirmationWriter) Update(ctx context.Context, object client.Obje
 
 func testPreparationLostConfirmation(t *testing.T, f *preparationFixture) {
 	database, _ := f.bound(t, "confirmation")
-	service := f.service(t)
-	service.Resources = &kubernetes.CredentialResources{Client: failedConfirmationClient{f.api}, Reader: f.api}
-	if err := service.Reconcile(t.Context(), database.Name); err == nil {
+	service := f.reconciler(t)
+	service.Client = failedConfirmationClient{f.api}
+	if err := f.settle(t, service, database); err == nil {
 		t.Fatal("确认写入失败应返回 API 错误")
 	}
 	f.status(t, database, 0, "CreationStarted")
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.Conflict)
@@ -149,12 +148,12 @@ func testPreparationLostConfirmation(t *testing.T, f *preparationFixture) {
 }
 
 type afterCreateStore struct {
-	application.CredentialStore
+	databasecontroller.CredentialBackend
 	after func() error
 }
 
 func (s afterCreateStore) CreateCredential(ctx context.Context, location credentialdomain.Location, credential credentialdomain.ApplicationCredential) (int64, error) {
-	version, err := s.CredentialStore.CreateCredential(ctx, location, credential)
+	version, err := s.CredentialBackend.CreateCredential(ctx, location, credential)
 	if err != nil {
 		return 0, err
 	}
@@ -166,13 +165,13 @@ func (s afterCreateStore) CreateCredential(ctx context.Context, location credent
 
 func testPreparationUncertain(t *testing.T, f *preparationFixture) {
 	database, _ := f.bound(t, "uncertain")
-	service := f.service(t)
-	service.Store = afterCreateStore{CredentialStore: service.Store, after: func() error { return application.ErrCredentialUncertain }}
-	if err := service.Reconcile(t.Context(), database.Name); err != nil {
+	service := f.reconciler(t)
+	service.Credentials = afterCreateStore{CredentialBackend: service.Credentials, after: func() error { return openbao.ErrUncertain }}
+	if err := f.settle(t, service, database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.Conflict)
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.Conflict)
@@ -180,15 +179,15 @@ func testPreparationUncertain(t *testing.T, f *preparationFixture) {
 
 func testPreparationChangedBinding(t *testing.T, f *preparationFixture) {
 	database, tenant := f.bound(t, "changed")
-	service := f.service(t)
-	service.Store = afterCreateStore{CredentialStore: service.Store, after: func() error {
+	service := f.reconciler(t)
+	service.Credentials = afterCreateStore{CredentialBackend: service.Credentials, after: func() error {
 		return f.api.Delete(t.Context(), tenant)
 	}}
-	if err := service.Reconcile(t.Context(), database.Name); err == nil {
+	if err := f.settle(t, service, database); err == nil {
 		t.Fatal("中途删除 Tenant 后不得确认凭据")
 	}
 	f.status(t, database, 0, "CreationStarted")
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.Conflict)
@@ -198,21 +197,21 @@ func testPreparationDependencies(t *testing.T, f *preparationFixture) {
 	database, _ := f.bound(t, "dependency")
 	denied := fixtureClient(t, f.bao.Address())
 	denied.ClearToken()
-	service := f.service(t)
-	service.Store = fixtureStore(t, denied)
-	if err := service.Reconcile(t.Context(), database.Name); err != nil {
+	service := f.reconciler(t)
+	service.Credentials = fixtureStore(t, denied)
+	if err := f.settle(t, service, database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 0, binding.DependencyUnavailable)
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "CredentialPrepared")
-	if err := service.Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, service, database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, binding.DependencyUnavailable)
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, "CredentialPrepared")
@@ -220,8 +219,8 @@ func testPreparationDependencies(t *testing.T, f *preparationFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.Store = moved
-	if err := service.Reconcile(t.Context(), database.Name); err != nil {
+	service.Credentials = moved
+	if err := f.settle(t, service, database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, binding.DependencyUnavailable)
@@ -231,7 +230,7 @@ func testPreparationDependencies(t *testing.T, f *preparationFixture) {
 	if err := f.bao.KVv2("secret").Delete(t.Context(), database.Status.CredentialRef.Path); err != nil {
 		t.Fatal("无法准备测试软删除")
 	}
-	if err := f.service(t).Reconcile(t.Context(), database.Name); err != nil {
+	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
 	f.status(t, database, 1, binding.Conflict)

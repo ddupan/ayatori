@@ -178,15 +178,13 @@ Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段�
 
 配置认证后，显式设置 `--database-credential-mount` 启用准备；路径默认
 `applications/<Database UID>`，前缀由 `--database-credential-prefix` 配置。
-`CredentialPreparation` 用例检查 Provision 来源、双向绑定 UID、申请目标、finalizer、
-删除/Released 状态及当前 Instance Ready；导入资源不执行本流程。
-顺序为固定位置 → 确认后端尚无凭据 → 保存 CreationStarted → 创建并回读 → 保存确认版本。
-`CredentialReconciler` 只负责 Database/Tenant/Instance watch 和 30 秒依赖重查；
-Kubernetes repository 负责直接读取及有 resourceVersion 保护的状态更新。
-三类 controller 的依赖均在 bootstrap 显式组装，不在 Reconcile 中构造服务。
-`domain/credential` 保存应用凭据值对象、准备资格、固定位置与未确认创建的恢复规则；
-application 保留 I/O 顺序、消费方接口及并发快照，不再复用绑定用例的快照类型。
-领域阶段与 `CredentialsReady`/Reason 的转换由 Kubernetes adapter 负责，已有 API 保持兼容。
+`DatabaseReconciler` 是 Database status 的唯一写入者。`domain/database` 的 Database 聚合
+检查 Provision 来源、双向绑定 UID、申请目标、finalizer、删除/Released 状态及当前 Instance Ready，
+并决定下一步；导入资源不执行本流程。顺序为固定位置 → 确认后端尚无凭据 → 保存
+CreationStarted → 创建并回读 → 保存确认版本。每轮最多执行一次外部写入，保存后由状态
+变化或 30 秒依赖重查推动下一轮。Reconciler 直接读写 API（resourceVersion 保护），
+负责 CR 与聚合之间的映射以及领域阶段与 `CredentialsReady`/Reason 的转换，已有 API 保持兼容。
+后端依赖在 bootstrap 显式组装，不在 Reconcile 中构造。
 
 外部操作前后回查目标：Database 必须仍是同一 UID/resourceVersion，Tenant/Instance 必须
 保持绑定、spec generation、删除状态、finalizer 保护与有效 Ready；无关 Conditions 刷新
@@ -215,12 +213,11 @@ Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后�
 才启用外部角色/数据库写入；默认关闭。升级时先安装新 CRD，供应字段见
 [API 合同](api-reference.md#当前-api-切片)。只处理 Provision 来源，导入资源不进入创建流程。
 
-`DatabaseProvisioning` 在每轮验证双向绑定、UID、删除/Released 状态、保护和当前 Instance
-Ready，读取固定位置的已确认凭据。所有 SQL 操作复用 InstanceService 已有的管理连接及
+启用后同一个 `DatabaseReconciler` 在凭据确认可用之后继续资源供应，不另设 controller，
+避免两个 worker 争写同一资源状态。所有 SQL 操作复用 InstanceService 已有的管理连接及
 Secret 刷新机制，不再开一个管理连接池。执行前重新查询非 superuser 管理能力；外部操作
-前后直接回读 API 快照，发生并发变更则停止确认，不盲目覆盖 status。
-启用资源创建时，`DatabaseReconciliation` 在同一条 reconcile 中先运行凭据准备/检查，
-再运行资源供应用例，不同时注册独立凭据 controller，避免两个 worker 争写同一资源状态。
+前后直接回读 API 快照，发生并发变更则停止确认，不盲目覆盖 status。PostgreSQL adapter
+只返回 catalog 事实，是否冲突由 Database 聚合判断。
 
 创建分为三个可观察步骤：
 
@@ -232,7 +229,8 @@ Secret 刷新机制，不再开一个管理连接池。执行前重新查询非 
    连接入口。ACL 收敛可幂等重试，不重置密码或更换 owner。
 
 OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 或认领机制。未知同名对象、
-已确认对象消失/被重建、owner/角色特权漂移均报 Conflict。CreatingRole/CreatingDatabase
+已确认对象消失/被重建、owner 变化均报 Conflict。controller 前提是除不可恢复情况外不人工
+登录改库；人工授予的特权或成员关系无法区分有意或异常，因此不检测、不修正。CreatingRole/CreatingDatabase
 未留下对应 OID 时，下轮保守停止；即使请求可能尚未发出，也不尝试推断或自动补记。
 角色创建在同一事务内完成，提交前失败随事务回滚，按可恢复处理；只有提交本身或
 非事务的 CREATE DATABASE 结果不确定、创建成功后确认写入失败才交给人工处理。诊断包含 Database、Instance、

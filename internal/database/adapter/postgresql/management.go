@@ -21,7 +21,7 @@ SELECT
 FROM pg_catalog.pg_roles AS role
 WHERE role.rolname = current_user`
 
-func (d *database) InspectManagement(ctx context.Context) (application.DatabaseMetadata, error) {
+func (d *connection) InspectManagement(ctx context.Context) (application.DatabaseMetadata, error) {
 	var metadata application.DatabaseMetadata
 	var superuser, createRole, createDatabase, readOnly bool
 	err := d.pool.QueryRow(ctx, inspectManagementStatement).Scan(

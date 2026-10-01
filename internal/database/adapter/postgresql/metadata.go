@@ -34,7 +34,7 @@ SELECT
         ORDER BY name
     )`
 
-func (d *database) InspectMetadata(ctx context.Context) (application.DatabaseMetadata, error) {
+func (d *connection) InspectMetadata(ctx context.Context) (application.DatabaseMetadata, error) {
 	var metadata application.DatabaseMetadata
 	err := d.pool.QueryRow(ctx, inspectMetadataStatement).Scan(
 		&metadata.Version,

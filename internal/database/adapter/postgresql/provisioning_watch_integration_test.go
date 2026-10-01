@@ -8,11 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
+	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/provisioning"
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,13 +30,9 @@ func testProvisioningManager(t *testing.T, f *provisioningFixture) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resources := &kubernetes.ProvisioningResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
-		backend := &countProvisioningObservations{ProvisioningBackend: f.service}
-		service := &application.DatabaseReconciliation{
-			Credentials:  &application.CredentialPreparation{Resources: &kubernetes.CredentialResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}, Store: f.store},
-			Provisioning: &application.DatabaseProvisioning{Resources: resources, Credentials: f.store, Backend: backend},
-		}
-		if err := databasecontroller.NewProvisioningReconciler(manager.GetClient(), service).SetupWithManager(manager); err != nil {
+		backend := &countProvisioningObservations{PostgreSQLBackend: f.service}
+		reconciler := &databasecontroller.DatabaseReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), Credentials: f.store, PostgreSQL: backend}
+		if err := reconciler.SetupWithManager(manager); err != nil {
 			t.Fatal(err)
 		}
 		ctx, stop := context.WithCancel(f.ctx)
@@ -80,18 +74,18 @@ func testProvisioningManager(t *testing.T, f *provisioningFixture) {
 			roleOID, databaseOID = database.Status.RoleOID, database.Status.DatabaseOID
 		}()
 	}
-	f.status(t, database, provisioning.Available)
+	f.status(t, database, databasedomain.ResourceAvailable)
 }
 
 type countProvisioningObservations struct {
-	application.ProvisioningBackend
+	databasecontroller.PostgreSQLBackend
 	reads atomic.Int32
 }
 
-func (b *countProvisioningObservations) InspectResources(ctx context.Context, target instance.ObservationTarget, name, role string) (provisioning.Observation, error) {
-	observation, err := b.ProvisioningBackend.InspectResources(ctx, target, name, role)
-	if err == nil && name == "watch_supply" {
+func (b *countProvisioningObservations) InspectResources(ctx context.Context, target instance.ObservationTarget, db *databasedomain.Database) (databasedomain.ResourceFacts, error) {
+	facts, err := b.PostgreSQLBackend.InspectResources(ctx, target, db)
+	if err == nil && db.Name() == "watch_supply" {
 		b.reads.Add(1)
 	}
-	return observation, err
+	return facts, err
 }

@@ -8,10 +8,12 @@ import (
 )
 
 func bindingTenant(object *databasev1alpha1.PostgreSQLTenant) *application.BindingTenant {
-	tenant := &application.BindingTenant{
-		Revision: object.ResourceVersion, Generation: object.Generation,
-	}
-	tenant.Tenant = binding.Tenant{
+	return &application.BindingTenant{Tenant: BindingTenant(object), Revision: object.ResourceVersion, Generation: object.Generation}
+}
+
+// BindingTenant 把 Tenant CR 映射为绑定规则所需事实。
+func BindingTenant(object *databasev1alpha1.PostgreSQLTenant) binding.Tenant {
+	tenant := binding.Tenant{
 		Identity: binding.TenantIdentity{Namespace: object.Namespace, Name: object.Name, UID: string(object.UID)},
 		Phase:    object.Status.Phase, Deleting: !object.DeletionTimestamp.IsZero(),
 	}
@@ -30,15 +32,17 @@ func bindingTenant(object *databasev1alpha1.PostgreSQLTenant) *application.Bindi
 }
 
 func bindingDatabase(object *databasev1alpha1.PostgreSQLDatabase) *application.BindingDatabase {
-	database := &application.BindingDatabase{
-		Revision: object.ResourceVersion,
-	}
-	database.Database = binding.Database{
+	return &application.BindingDatabase{Database: BindingDatabase(object), Revision: object.ResourceVersion}
+}
+
+// BindingDatabase 把 Database CR 映射为绑定规则所需事实。
+func BindingDatabase(object *databasev1alpha1.PostgreSQLDatabase) binding.Database {
+	database := binding.Database{
 		Identity: binding.Identity{Name: object.Name, UID: string(object.UID)},
 		Instance: string(object.Spec.InstanceRef.Name), InstanceUID: string(object.Status.InstanceUID),
 		Name: string(object.Spec.Database), LoginRole: string(object.Spec.LoginRole), Source: object.Spec.Source,
 		Phase: object.Status.Phase, Deleting: !object.DeletionTimestamp.IsZero(),
-		Ready: currentReady(object.Generation, object.Status.Conditions),
+		Ready: CurrentReady(object.Generation, object.Status.Conditions),
 	}
 	if ref := object.Spec.TenantRef; ref != nil {
 		database.Tenant = &binding.TenantIdentity{Namespace: ref.Namespace, Name: string(ref.Name), UID: string(ref.UID)}

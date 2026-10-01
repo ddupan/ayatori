@@ -54,7 +54,7 @@ func (r *BindingResources) Instance(ctx context.Context, name string) (*binding.
 	}
 	return &binding.Instance{
 		Identity: binding.Identity{Name: object.Name, UID: string(object.UID)},
-		Deleting: !object.DeletionTimestamp.IsZero(), Ready: currentReady(object.Generation, object.Status.Conditions),
+		Deleting: !object.DeletionTimestamp.IsZero(), Ready: CurrentReady(object.Generation, object.Status.Conditions),
 	}, nil
 }
 
@@ -186,7 +186,8 @@ func bindingVersionConflict(resource, name string) error {
 		fmt.Errorf("绑定快照已过期，请重新读取后判断"))
 }
 
-func currentReady(generation int64, conditions []metav1.Condition) bool {
+// CurrentReady 只承认当前 generation 的 Ready=True 观察。
+func CurrentReady(generation int64, conditions []metav1.Condition) bool {
 	condition := meta.FindStatusCondition(conditions, readyCondition)
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == generation
 }

@@ -67,21 +67,43 @@ Tenant 表达申请与交付要求；可显式申请未绑定且可用的资源�
 
 | 层 | 责任 |
 | --- | --- |
-| 领域 | 值、身份、允许动作、不变量、完成与冲突判定；不做 IO |
-| 应用 | 装载记录与事实、协调 API 更新和 adapter、回读、交回领域判定 |
-| controller | watch/调度、调用用例、请求资源呈现与安排重试；不判断绑定资格 |
-| adapter | Kubernetes 资源映射与呈现（含 conditions/status/finalizer）、后端访问与安全错误分类 |
-| 装配 | 客户端与成熟连接池的生命周期，不是领域状态 |
+| 领域 | 聚合与值对象：身份、允许动作、不变量、下一步与完成/冲突判定；不做 IO |
+| controller | 每个 Kind 一个 Reconciler，即 Kubernetes adapter 兼用例：直接读写 CR、CR 与聚合映射、编排外部操作、呈现 conditions/status/finalizer |
+| 后端 adapter | PostgreSQL、OpenBao 等外部系统的薄访问层：只返回事实，把后端错误翻译成领域结果分类 |
+| infra / 装配 | 客户端与成熟连接池的生命周期，不是领域状态 |
 
+判断放在哪里：
+
+- 不需要 IO、只凭值就能决定的（资格、下一步、状态迁移、冲突与否）放在聚合方法里。
+  Reconciler 中出现直接读领域字段做分支（如 `if state.RoleOID == 0`）即应移入聚合。
+- 读写顺序、外部操作前后回查、把结果交回聚合由 Reconciler 负责。
+- 外部系统错误码分类（确定未执行 / 结果不确定 / 冲突）和 SQL/CR 字段映射属于 adapter。
+- 输入合法性由 CRD schema/CEL 保证，必要时用 webhook；代码不重复校验 API 已拒绝的输入。
+
+只为可能出现新实现的后端定义接口，接口在 controller 中按使用方需要声明；
+Kubernetes 侧不再包一层 Repository/Presenter 接口，`client.Client` 本身就是端口。
 不引入通用 Repository CRUD、跨系统 Unit of Work、事务队列或第二套 phase 存储。
 resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kubernetes 原子提交。
 
-绑定实现中，`domain/binding` 承载请求默认值、资源身份匹配、实例就绪与排他绑定规则；
-`application/BindingService` 协调固定申请、资源侧写入和回读确认，返回待呈现结果。
-两层均不依赖 Kubernetes API 类型。`adapter/kubernetes/BindingResources` 将 CR 转换为事实
-快照，并负责保留其他字段、检查快照版本、写入 finalizer 和呈现 Conditions/status。
-controller 仅连接事件、service 与呈现层，不把资源写入细节和领域判断塞进 Reconcile。
-这里的接口只列出绑定用例所需操作，不扩展成通用 CRUD、Repository 或事务框架。
+### 命名
+
+| 对象 | 规则 | 例子 |
+| --- | --- | --- |
+| Reconciler | `<Kind>Reconciler`，文件 `<kind>_controller.go`；只写本 Kind 的 status | `DatabaseReconciler` |
+| 领域聚合 | 包名为名词，类型与包同名；`New…` 新建，`Reconstitute` 从持久状态加载 | `instance.Instance`、`database.Database` |
+| 后端接口 | 在 controller 中声明，以 `Backend` 结尾，只列使用方需要的方法 | `CredentialBackend`、`PostgreSQLBackend` |
+| 后端 adapter | 按所代表的外部对象命名 | `openbao.Credentials`、`postgresql.Connector` |
+| 结果分类 | 影响状态迁移，放在领域包中，adapter 只依赖领域 | `database.ErrUnavailable`、`ErrUncertain`、`ErrConflict` |
+
+不使用 `Service`、`Reconciliation`、`Preparation`、`Resources`、`Record`、`Presenter`、
+`Result` 等含义模糊的后缀。
+
+### 迁移状态
+
+Database 链路已按上述规则实现：`domain/database` 聚合合并供应资格、凭据准备与资源供应状态，
+`DatabaseReconciler` 直接读写 CR。Instance 与 Tenant 绑定链路仍是旧的
+`application` 用例 + `adapter/kubernetes` Resources/Presenter 结构，PG 连接管理仍在
+`application.InstanceService`；它们将在后续切片按同一规则迁移，迁移前不要在旧结构上扩展新能力。
 
 ## API 切片前需明确
 

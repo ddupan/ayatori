@@ -4,11 +4,7 @@ import (
 	"context"
 
 	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 )
-
-var _ application.CredentialStore = (*Credentials)(nil)
 
 func (c *Credentials) ProvisionLocation(uid string) (credentialdomain.Location, error) {
 	path, err := c.ProvisionPath(uid)
