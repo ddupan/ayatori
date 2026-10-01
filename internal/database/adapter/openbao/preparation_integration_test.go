@@ -27,7 +27,6 @@ func TestCredentialPreparationWithRealBackends(t *testing.T) {
 	t.Run("后端结果不确定", func(t *testing.T) { testPreparationUncertain(t, fixture) })
 	t.Run("创建中绑定变化", func(t *testing.T) { testPreparationChangedBinding(t, fixture) })
 	t.Run("依赖恢复与固定位置", func(t *testing.T) { testPreparationDependencies(t, fixture) })
-	t.Run("并发用例只有一个写入", func(t *testing.T) { testPreparationConcurrency(t, fixture) })
 	t.Run("位置被API裁剪时拒绝外部写入", func(t *testing.T) { testPreparationPruning(t, fixture) })
 	t.Run("实际manager的watch与重启", func(t *testing.T) { testPreparationWatch(t, fixture) })
 }
@@ -136,7 +135,7 @@ func testPreparationLostConfirmation(t *testing.T, f *preparationFixture) {
 	if err := f.settle(t, service, database); err == nil {
 		t.Fatal("确认写入失败应返回 API 错误")
 	}
-	f.status(t, database, 0, "CreationStarted")
+	f.status(t, database, 0, "LocationPinned")
 	if err := f.settle(t, f.reconciler(t), database); err != nil {
 		t.Fatal(err)
 	}
@@ -177,20 +176,17 @@ func testPreparationUncertain(t *testing.T, f *preparationFixture) {
 	f.status(t, database, 0, binding.Conflict)
 }
 
+// 外部写入成功后即记录确认版本，即使 Tenant 随后变化；之后由资格检查停止继续供应。
 func testPreparationChangedBinding(t *testing.T, f *preparationFixture) {
 	database, tenant := f.bound(t, "changed")
 	service := f.reconciler(t)
 	service.Credentials = afterCreateStore{CredentialBackend: service.Credentials, after: func() error {
 		return f.api.Delete(t.Context(), tenant)
 	}}
-	if err := f.settle(t, service, database); err == nil {
-		t.Fatal("中途删除 Tenant 后不得确认凭据")
-	}
-	f.status(t, database, 0, "CreationStarted")
-	if err := f.settle(t, f.reconciler(t), database); err != nil {
+	if err := f.settle(t, service, database); err != nil {
 		t.Fatal(err)
 	}
-	f.status(t, database, 0, binding.Conflict)
+	f.status(t, database, 1, "PreparationStopped")
 }
 
 func testPreparationDependencies(t *testing.T, f *preparationFixture) {

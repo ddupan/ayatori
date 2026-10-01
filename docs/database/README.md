@@ -180,29 +180,23 @@ Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段�
 `applications/<Database UID>`，前缀由 `--database-credential-prefix` 配置。
 `DatabaseReconciler` 是 Database status 的唯一写入者。`domain/database` 的 Database 聚合
 检查 Provision 来源、双向绑定 UID、申请目标、finalizer、删除/Released 状态及当前 Instance Ready，
-并决定下一步；导入资源不执行本流程。顺序为固定位置 → 确认后端尚无凭据 → 保存
-CreationStarted → 创建并回读 → 保存确认版本。每轮最多执行一次外部写入，保存后由状态
-变化或 30 秒依赖重查推动下一轮。Reconciler 直接读写 API（resourceVersion 保护），
-负责 CR 与聚合之间的映射以及领域阶段与 `CredentialsReady`/Reason 的转换，已有 API 保持兼容。
-后端依赖在 bootstrap 显式组装，不在 Reconcile 中构造。
+并决定下一步；导入资源不执行本流程。顺序为固定位置 → 确认后端尚无凭据 → 创建并回读
+→ 保存确认版本。每轮最多执行一次外部写入，保存后由状态变化或 30 秒依赖重查推动下一轮。
+Reconciler 直接读写 API（resourceVersion 保护），负责 CR 与聚合之间的映射以及领域阶段与
+`CredentialsReady`/Reason 的转换。后端依赖在 bootstrap 显式组装，不在 Reconcile 中构造。
 
-外部操作前后回查目标：Database 必须仍是同一 UID/resourceVersion，Tenant/Instance 必须
-保持绑定、spec generation、删除状态、finalizer 保护与有效 Ready；无关 Conditions 刷新
-不构成目标变化。不存在跨 Kubernetes/OpenBao 原子事务：中途发生相关变化时停止确认，
-留下可观察状态，交给后续协调或人工核实，不盲目重试过期的确认写入。
-
-`CredentialsReady=False/CreationStarted` 是正在进行而未确认的诊断，不是成功证明。
-任何新一轮协调遇到该状态且没有确认版本，都转为 Conflict；即使进程在发出请求前退出
-也采用这一保守边界。明确的认证/权限拒绝可等待恢复；响应丢失、回读失败、确认保存失败
-及未确认的已有值均不会自动认领或重新生成密码。Conflict 保留首次原因，普通依赖错误
-保留已确认版本；配置变化停止在原位置，不搬迁或覆盖。并行实例中途撞上已开始的创建
-同样可能保守地要求人工处理，不承诺无损接续；多副本部署应启用既有 leader election。
+不使用持久化的"创建中"检查点。创建结果丢失或确认保存失败时，下一轮会读到固定位置已有
+值而 CR 没有确认版本，按 Conflict 停止，不认领、不重新生成密码；位置仍为空则正常重试。
+外部写入成功后立即记录确认版本；记录遇到 resourceVersion 冲突时重新读取后再写，
+之后若 Tenant/Instance 已变化，由资格检查停止后续供应。Conflict 保留首次原因，普通依赖
+错误保留已确认版本；配置变化停止在原位置，不搬迁或覆盖。同一对象的协调由
+controller-runtime 串行执行，多副本部署依靠既有 leader election；Bao 写入另有 CAS=0 保护。
 
 成功只设置 `CredentialsReady=True`，Database Ready 仍为 False/ProvisioningIncomplete，
 Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
 扩展安装、ESO 投射、Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
 
-单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、并发、
+单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
 及重启。该 fixture 只声明 Instance 前置 Ready，真实 PostgreSQL 管理能力由既有 Instance
 集成测试覆盖，不把凭据准备验收当成实际建库或应用登录验收。
@@ -215,26 +209,24 @@ Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后�
 
 启用后同一个 `DatabaseReconciler` 在凭据确认可用之后继续资源供应，不另设 controller，
 避免两个 worker 争写同一资源状态。所有 SQL 操作复用 InstanceService 已有的管理连接及
-Secret 刷新机制，不再开一个管理连接池。执行前重新查询非 superuser 管理能力；外部操作
-前后直接回读 API 快照，发生并发变更则停止确认，不盲目覆盖 status。PostgreSQL adapter
-只返回 catalog 事实，是否冲突由 Database 聚合判断。
+Secret 刷新机制，不再开一个管理连接池。执行前重新查询非 superuser 管理能力。
+PostgreSQL adapter 只返回 catalog 事实；下一步由 Database 聚合按“CR 记录的 OID + 本轮
+观察”决定。每一步都可重复执行，不需要事务或持久检查点：
 
-创建分为三个可观察步骤：
-
-1. 保存 CreatingRole，事务内创建无管理特权的 LOGIN owner 并授予管理账号 SET 权限；
-   提交并回读成功后保存 `status.roleOID`。
-2. 保存 CreatingDatabase，创建以已确认角色为 owner 且 `ALLOW_CONNECTIONS false` 的数据库；
-   回读成功后保存 `status.databaseOID`。
-3. 在已确认对象上以 owner 收紧 ACL：撤销 PUBLIC CONNECT、授予 owner CONNECT，再开放
-   连接入口。ACL 收敛可幂等重试，不重置密码或更换 owner。
+1. 数据库不存在：以管理账号为临时 owner 建库，记录 `status.databaseOID`。空库在下一步
+   之前没有可泄露的数据。
+2. PUBLIC 仍有 CONNECT：撤销。（扩展安装将在此后、移交 owner 之前由管理账号执行。）
+3. 角色不存在：最后创建无管理特权的 LOGIN 角色，记录 `status.roleOID`。此时 PUBLIC 已
+   撤销且角色尚非 owner，应用账号无法连接。
+4. owner 不是该角色或管理账号缺少 CONNECT：授予管理账号对角色的 SET 权限、移交 owner，
+   再以新 owner 身份授予管理账号 CONNECT（移交会把原 owner 的 ACL 条目一并转给新 owner）。
+5. 以上均满足即 Available。
 
 OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 或认领机制。未知同名对象、
-已确认对象消失/被重建、owner 变化均报 Conflict。controller 前提是除不可恢复情况外不人工
-登录改库；人工授予的特权或成员关系无法区分有意或异常，因此不检测、不修正。CreatingRole/CreatingDatabase
-未留下对应 OID 时，下轮保守停止；即使请求可能尚未发出，也不尝试推断或自动补记。
-角色创建在同一事务内完成，提交前失败随事务回滚，按可恢复处理；只有提交本身或
-非事务的 CREATE DATABASE 结果不确定、创建成功后确认写入失败才交给人工处理。诊断包含 Database、Instance、
-实际 database/role、失败步骤；确认 OID 独立保留。依赖或明确权限拒绝可等待恢复。
+已确认对象消失/被重建、owner 既非管理账号也非已确认角色均报 Conflict。创建结果不确定时
+不在当轮判定：下一轮看到未记录的同名对象即 Conflict，对象不存在则重试。controller 前提是
+除不可恢复情况外不人工登录改库；人工授予的特权或成员关系无法区分有意或异常，因此不检测、
+不修正。诊断包含 Database、Instance、实际 database/role、失败步骤；确认 OID 独立保留。
 OID 不是跨集群/备份恢复的稳定身份，恢复后须人工核对，不能靠匹配 OID 推导管理权。
 
 `ResourcesReady=True` 仅表示角色、数据库及连接 ACL 已确认，不代表扩展或 Tenant 交付完成；

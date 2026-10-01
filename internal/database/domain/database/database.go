@@ -42,9 +42,10 @@ const (
 	CreateCredential
 	VerifyCredential
 	InspectResources
-	CreateRole
 	CreateDatabase
-	OpenAccess
+	RevokePublicConnect
+	CreateRole
+	TransferOwnership
 )
 
 type Database struct {
@@ -72,10 +73,7 @@ func (d *Database) RequiresProvisioning() bool { return d.snapshot.Binding.Sourc
 // PlanCredential 决定凭据准备的下一步。configured 是部署配置给出的位置，只在首次固定时采用。
 func (d *Database) PlanCredential(configured credential.Location, configErr error) Action {
 	current := d.snapshot.Credential
-	if state, resume := current.resume(); !resume {
-		if state != current {
-			d.reportCredential(state.Phase, state.Message)
-		}
+	if !current.resume() {
 		return Wait
 	}
 	if issue := d.check(); issue != nil {
@@ -101,9 +99,9 @@ func (d *Database) PlanCredential(configured credential.Location, configErr erro
 	return CreateCredential
 }
 
-// BeginCredentialCreation 只在固定位置确认为空时生成凭据并进入 Creating 检查点。
-// existing 是读取固定位置的结果；返回 false 时聚合已记录原因。
-func (d *Database) BeginCredentialCreation(existing error) (credential.ApplicationCredential, bool) {
+// GenerateCredential 只在固定位置确认为空时生成凭据。existing 是读取固定位置的结果；
+// 返回 false 时聚合已记录原因。创建结果丢失后，下一轮会看到未确认的已有值而转为冲突。
+func (d *Database) GenerateCredential(existing error) (credential.ApplicationCredential, bool) {
 	if existing == nil || errors.Is(existing, credential.ErrApplicationCredentialInvalid) {
 		d.reportCredential(CredentialConflict, "固定位置已有未确认的凭据；请人工核实，未认领或覆盖")
 		return credential.ApplicationCredential{}, false
@@ -117,18 +115,18 @@ func (d *Database) BeginCredentialCreation(existing error) (credential.Applicati
 		d.reportCredential(CredentialInvalidTarget, "应用凭据目标无效，未执行外部写入")
 		return credential.ApplicationCredential{}, false
 	}
-	d.snapshot.Credential.Phase, d.snapshot.Credential.Message = CredentialCreating, "凭据创建已开始；尚无成功确认时不得重入创建"
 	return value, true
 }
 
 // CredentialCreated 只接受首次创建并回读得到的版本 1，不能把后续写入认作首次供应。
+// 结果不确定时不在此判定冲突：下一轮读取固定位置，已有未确认值才转为冲突，仍为空则重试。
 func (d *Database) CredentialCreated(version int64, err error) {
-	if errors.Is(err, ErrUnavailable) {
-		d.reportCredential(CredentialUnavailable, "凭据创建在执行前被拒绝，等待认证或权限恢复")
+	if errors.Is(err, ErrConflict) || (err == nil && version != 1) {
+		d.reportCredential(CredentialConflict, "凭据创建冲突；请核对固定位置的版本历史，未认领、覆盖或重新生成密码")
 		return
 	}
-	if err != nil || version != 1 {
-		d.reportCredential(CredentialConflict, "凭据创建冲突或结果不确定；请核对固定位置的版本历史，未认领、覆盖或重新生成密码")
+	if err != nil {
+		d.reportCredential(CredentialUnavailable, "凭据创建未确认成功，下一轮按固定位置的实际状态继续")
 		return
 	}
 	d.snapshot.Credential.Version = version
@@ -154,9 +152,7 @@ func (d *Database) VerifyCredential(value credential.ApplicationCredential, err 
 
 // PlanResources 在本轮凭据判定之后调用；只有凭据已确认可用时才允许观察 PostgreSQL。
 func (d *Database) PlanResources() Action {
-	current := d.snapshot.Resources
-	if state, resume := current.resume(); !resume {
-		d.snapshot.Resources = state
+	if d.snapshot.Resources.Phase == ResourceConflict {
 		return Wait
 	}
 	if issue := d.check(); issue != nil {
@@ -170,7 +166,8 @@ func (d *Database) PlanResources() Action {
 	return InspectResources
 }
 
-// ObserveResources 根据本轮 PostgreSQL 事实决定下一项外部操作。
+// ObserveResources 根据本轮 PostgreSQL 事实决定下一项外部操作。每一步都由事实驱动，
+// 可重复执行，不需要事务或持久检查点。应用角色最后创建，此前数据库对外不可连接。
 func (d *Database) ObserveResources(facts ResourceFacts, err error) Action {
 	if err != nil {
 		d.reportResources(ResourceUnavailable, "无法验证当前 PostgreSQL 资源和管理权限")
@@ -181,49 +178,33 @@ func (d *Database) ObserveResources(facts ResourceFacts, err error) Action {
 		return Wait
 	}
 	switch {
-	case d.snapshot.Resources.RoleOID == 0:
-		return CreateRole
-	case d.snapshot.Resources.DatabaseOID == 0:
+	case facts.DatabaseOID == 0:
 		return CreateDatabase
-	default:
-		return OpenAccess
+	case facts.PublicConnect:
+		return RevokePublicConnect
+	case facts.RoleOID == 0:
+		return CreateRole
+	case facts.OwnerOID != facts.RoleOID || !facts.ManagerConnect:
+		return TransferOwnership
 	}
+	d.reportResources(ResourceAvailable, "数据库、登录角色与访问权限已收敛；扩展与 Tenant 交付尚未完成")
+	return Wait
 }
 
-// CheckResources 阻止未知同名对象，也拒绝已确认对象消失、被重建或更换 owner。
+// CheckResources 拒绝未知同名对象，以及已确认对象消失、被重建或 owner 不是管理账号/应用角色。
 // controller 不检查人工授予的特权或成员关系：除不可恢复情况外不人工改库，这类改动无法区分有意与异常。
 func (d *Database) CheckResources(facts ResourceFacts) error {
 	state := d.snapshot.Resources
-	if state.RoleOID != facts.RoleOID {
-		return fmt.Errorf("角色身份不匹配：记录 OID=%d，观察 OID=%d", state.RoleOID, facts.RoleOID)
-	}
 	if state.DatabaseOID != facts.DatabaseOID {
 		return fmt.Errorf("数据库身份不匹配：记录 OID=%d，观察 OID=%d", state.DatabaseOID, facts.DatabaseOID)
 	}
-	if facts.DatabaseOID != 0 && facts.OwnerOID != state.RoleOID {
-		return errors.New("数据库 owner 与已确认角色不匹配")
+	if state.RoleOID != facts.RoleOID {
+		return fmt.Errorf("角色身份不匹配：记录 OID=%d，观察 OID=%d", state.RoleOID, facts.RoleOID)
+	}
+	if facts.DatabaseOID != 0 && facts.OwnerOID != facts.ManagerOID && (state.RoleOID == 0 || facts.OwnerOID != state.RoleOID) {
+		return errors.New("数据库 owner 既不是管理账号也不是已确认角色")
 	}
 	return nil
-}
-
-func (d *Database) BeginRoleCreation() {
-	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourceCreatingRole, "开始创建登录角色；尚未持久确认"
-}
-
-func (d *Database) RoleCreated(oid uint32, err error) {
-	if err == nil && oid == 0 {
-		err = ErrUncertain
-	}
-	if err != nil {
-		d.resourceFailure(err, "登录角色创建")
-		return
-	}
-	d.snapshot.Resources.RoleOID = oid
-	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourcePending, "登录角色已创建并回读，等待创建数据库"
-}
-
-func (d *Database) BeginDatabaseCreation() {
-	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourceCreatingDatabase, "开始创建数据库；尚未持久确认"
 }
 
 func (d *Database) DatabaseCreated(oid uint32, err error) {
@@ -235,23 +216,38 @@ func (d *Database) DatabaseCreated(oid uint32, err error) {
 		return
 	}
 	d.snapshot.Resources.DatabaseOID = oid
-	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourcePending, "数据库已创建并回读，等待收紧访问权限；连接入口仍关闭"
+	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourcePending, "数据库已创建，等待撤销 PUBLIC CONNECT"
 }
 
-func (d *Database) AccessOpened(err error) {
+func (d *Database) RoleCreated(oid uint32, err error) {
+	if err == nil && oid == 0 {
+		err = ErrUncertain
+	}
 	if err != nil {
-		d.resourceFailure(err, "数据库访问权限收敛")
+		d.resourceFailure(err, "登录角色创建")
 		return
 	}
-	d.reportResources(ResourceAvailable, "角色和数据库已确认，PUBLIC CONNECT 已撤销；扩展与 Tenant 交付尚未完成")
+	d.snapshot.Resources.RoleOID = oid
+	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourcePending, "登录角色已创建，等待移交数据库 owner"
 }
 
-func (d *Database) resourceFailure(err error, step string) {
-	if errors.Is(err, ErrUnavailable) {
-		d.reportResources(ResourceUnavailable, step+"被拒绝或暂不可用，保留已确认步骤并等待依赖恢复")
+// Converged 记录可重复执行的收敛步骤；失败只等待重试，不需要人工处理。
+func (d *Database) Converged(step string, err error) {
+	if err != nil {
+		d.reportResources(ResourceUnavailable, step+"暂未完成，保留已确认对象并等待重试")
 		return
 	}
-	d.reportResources(ResourceConflict, step+"冲突或结果不确定；请核对目标与已确认 OID，未自动认领、改密或清理")
+	d.snapshot.Resources.Phase, d.snapshot.Resources.Message = ResourcePending, step+"已完成"
+}
+
+// resourceFailure 只对明确的同名冲突要求人工处理；结果不确定时由下一轮观察决定：
+// 对象已存在而未记录即为冲突，仍不存在则重试。
+func (d *Database) resourceFailure(err error, step string) {
+	if errors.Is(err, ErrConflict) {
+		d.reportResources(ResourceConflict, step+"遇到同名对象；请核对目标与已确认 OID，未自动认领、改密或清理")
+		return
+	}
+	d.reportResources(ResourceUnavailable, step+"未确认成功，保留已确认步骤，下一轮按实际状态继续")
 }
 
 func (d *Database) reportCredential(phase CredentialPhase, message string) {

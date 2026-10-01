@@ -20,7 +20,6 @@ type CredentialPhase uint8
 const (
 	CredentialPending CredentialPhase = iota
 	CredentialPinned
-	CredentialCreating
 	CredentialPrepared
 	CredentialConflict
 	CredentialUnavailable
@@ -36,32 +35,19 @@ type CredentialState struct {
 	Message string
 }
 
-// resume 决定新一轮是否可以继续。未确认的创建不能靠读取成功认领。
-func (s CredentialState) resume() (CredentialState, bool) {
-	if s.Version != 0 {
-		return s, true
-	}
-	switch s.Phase {
-	case CredentialConflict:
-		return s, false
-	case CredentialCreating:
-		s.Phase, s.Message = CredentialConflict, "凭据创建未留下成功确认；请核对固定位置与后端历史并人工处理，未重新生成密码"
-		return s, false
-	default:
-		return s, true
-	}
+// resume 决定新一轮是否可以继续。未确认版本的冲突需要人工处理，不自动重入创建。
+func (s CredentialState) resume() bool {
+	return s.Version != 0 || s.Phase != CredentialConflict
 }
 
 type ResourcePhase string
 
 const (
-	ResourcePending          ResourcePhase = "Pending"
-	ResourceCreatingRole     ResourcePhase = "CreatingRole"
-	ResourceCreatingDatabase ResourcePhase = "CreatingDatabase"
-	ResourceAvailable        ResourcePhase = "Available"
-	ResourceConflict         ResourcePhase = "Conflict"
-	ResourceUnavailable      ResourcePhase = "Unavailable"
-	ResourceStopped          ResourcePhase = "Stopped"
+	ResourcePending     ResourcePhase = "Pending"
+	ResourceAvailable   ResourcePhase = "Available"
+	ResourceConflict    ResourcePhase = "Conflict"
+	ResourceUnavailable ResourcePhase = "Unavailable"
+	ResourceStopped     ResourcePhase = "Stopped"
 )
 
 // ResourceState 中的 OID 是本次成功创建并回读的对象身份，不是从名称推导出的管理授权。
@@ -73,22 +59,13 @@ type ResourceState struct {
 	Message     string
 }
 
-func (s ResourceState) resume() (ResourceState, bool) {
-	if s.Phase == ResourceConflict {
-		return s, false
-	}
-	if (s.Phase == ResourceCreatingRole && s.RoleOID == 0) || (s.Phase == ResourceCreatingDatabase && s.DatabaseOID == 0) {
-		s.Phase, s.Message = ResourceConflict, "外部创建未留下成功确认；请核对目标角色和数据库，不自动认领或重复创建"
-		return s, false
-	}
-	return s, true
-}
-
 // ResourceFacts 是 PostgreSQL catalog 的原始事实；OID 为零表示对象不存在。
 type ResourceFacts struct {
-	RoleOID          uint32
-	DatabaseOID      uint32
-	OwnerOID         uint32
-	AllowConnections bool
-	PublicConnect    bool
+	RoleOID     uint32
+	DatabaseOID uint32
+	OwnerOID    uint32
+	// ManagerOID 是当前管理账号；供应期间它先作为 owner，最后才移交给应用角色。
+	ManagerOID     uint32
+	PublicConnect  bool
+	ManagerConnect bool
 }

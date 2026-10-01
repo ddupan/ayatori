@@ -14,13 +14,18 @@ func testResourceStatus(t *testing.T, api client.Client) {
 		t.Fatal(err)
 	}
 	invalid := object.DeepCopy()
-	invalid.Status.RoleOID = 11
+	invalid.Status.DatabaseOID = 22
 	if err := api.Status().Update(t.Context(), invalid); !apierrors.IsInvalid(err) {
-		t.Fatal("无凭据不能确认角色", err)
+		t.Fatal("无凭据不能确认数据库", err)
 	}
 	object.Status.InstanceUID = "instance-uid"
 	object.Status.CredentialRef = &databasev1alpha1.CredentialReference{Mount: "application-secrets", Path: "applications/test"}
 	object.Status.CredentialVersion = 1
+	invalid = object.DeepCopy()
+	invalid.Status.RoleOID = 11
+	if err := api.Status().Update(t.Context(), invalid); !apierrors.IsInvalid(err) {
+		t.Fatal("角色确认要求先有数据库确认", err)
+	}
 	object.Status.RoleOID, object.Status.DatabaseOID = 11, 22
 	if err := api.Status().Update(t.Context(), object); err != nil {
 		t.Fatal(err)
