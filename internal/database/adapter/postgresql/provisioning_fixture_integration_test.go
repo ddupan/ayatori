@@ -11,9 +11,7 @@ import (
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	bao "github.com/openbao/openbao/api/v2"
@@ -135,8 +133,7 @@ func (f *provisioningFixture) bound(t *testing.T, name string) *databasev1alpha1
 	if err := f.api.Create(f.ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
-	resources := &kubernetes.BindingResources{Client: f.api, Reader: f.api}
-	binder := databasecontroller.NewBindingReconciler(f.api, &application.BindingService{Resources: resources}, resources)
+	binder := &databasecontroller.TenantReconciler{Client: f.api, Reader: f.api}
 	if _, err := binder.Reconcile(f.ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)}); err != nil {
 		t.Fatal(err)
 	}

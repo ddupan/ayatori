@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -19,10 +18,9 @@ const controllerLayer = "controller"
 func TestDatabaseExplicitWiring(t *testing.T) {
 	writer := fake.NewClientBuilder().Build()
 	directReader := fake.NewClientBuilder().Build()
-	binder := wireBindingController(writer, directReader)
-	bindingResources, ok := binder.Service.Resources.(*kubernetes.BindingResources)
-	if !ok || binder.Client != writer || bindingResources.Reader != directReader || bindingResources.Client != writer || binder.Presenter != bindingResources {
-		t.Fatal("绑定用例没有共享显式注入的 writer、直连 reader 与 presenter")
+	tenants := wireTenantController(writer, directReader)
+	if tenants.Client != writer || tenants.Reader != directReader {
+		t.Fatal("Tenant Reconciler 没有共享显式注入的 writer 与直连 reader")
 	}
 	instances := &postgresql.Instances{}
 	t.Cleanup(instances.Close)
@@ -40,8 +38,7 @@ func TestDatabaseExplicitWiring(t *testing.T) {
 	}
 }
 
-// 防止领域重新依赖用例/存储，也防止 controller 私自构造后端 adapter。
-// Reconciler 本身就是 Kubernetes adapter，与 adapter/kubernetes 同层，允许复用其映射。
+// 防止领域依赖 Kubernetes 或基础设施，也防止 controller 私自构造后端 adapter。
 func TestDatabaseLayerImports(t *testing.T) {
 	for _, layer := range []string{"domain", controllerLayer} {
 		err := filepath.WalkDir(filepath.Join("../database", layer), func(path string, entry fs.DirEntry, err error) error {
@@ -60,9 +57,8 @@ func TestDatabaseLayerImports(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				backend := strings.Contains(name, "/database/adapter/") && !strings.HasSuffix(name, "/database/adapter/kubernetes")
-				if backend || (layer == "domain" && (strings.Contains(name, "/database/adapter/") ||
-					(strings.Contains(name, "/database/application") || strings.Contains(name, "k8s.io/") || strings.Contains(name, "/internal/infra/")))) {
+				if strings.Contains(name, "/database/adapter/") ||
+					(layer == "domain" && (strings.Contains(name, "k8s.io/") || strings.Contains(name, "/internal/infra/"))) {
 					t.Errorf("%s 不得导入 %s", path, name)
 				}
 			}

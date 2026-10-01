@@ -7,9 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
-
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -98,8 +95,7 @@ func startPreparationManager(t *testing.T, f *preparationFixture) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bindingResources := &kubernetes.BindingResources{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
-	binder := databasecontroller.NewBindingReconciler(manager.GetClient(), &application.BindingService{Resources: bindingResources}, bindingResources)
+	binder := &databasecontroller.TenantReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader()}
 	if err := binder.SetupWithManager(t.Context(), manager); err != nil {
 		t.Fatal(err)
 	}

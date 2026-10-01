@@ -49,9 +49,9 @@ func registerDatabaseControllers(ctx context.Context, manager ctrl.Manager, opti
 		}
 		closeDatabaseConnections = instances.Close
 	}
-	if err := wireBindingController(manager.GetClient(), manager.GetAPIReader()).SetupWithManager(ctx, manager); err != nil {
+	if err := wireTenantController(manager.GetClient(), manager.GetAPIReader()).SetupWithManager(ctx, manager); err != nil {
 		closeDatabaseConnections()
-		return nil, fmt.Errorf("set up Database binding controller: %w", err)
+		return nil, fmt.Errorf("set up Database tenant controller: %w", err)
 	}
 	if err := registerDatabaseSupplyController(manager, options, baoClient, instances); err != nil {
 		closeDatabaseConnections()

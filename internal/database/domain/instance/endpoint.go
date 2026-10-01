@@ -34,8 +34,8 @@ const (
 	TLSVerifyFull TLSMode = "verify-full"
 )
 
-// EndpointValues carries explicit, effective values across the application boundary.
-// Defaults are supplied by the API/application mapping, never silently by the domain.
+// EndpointValues carries explicit, effective values across the Reconciler boundary.
+// Defaults are supplied by the API/Reconciler mapping, never silently by the domain.
 type EndpointValues struct {
 	Host               string
 	HostAddr           string

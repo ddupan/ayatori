@@ -14,9 +14,9 @@ import (
 
 const targetDatabaseIndex = "database.bindingTarget"
 
-func (r *BindingReconciler) SetupWithManager(ctx context.Context, manager ctrl.Manager) error {
-	if r.Client == nil || r.Service == nil || r.Presenter == nil {
-		return errors.New("binding controller requires injected client, use case and presenter")
+func (r *TenantReconciler) SetupWithManager(ctx context.Context, manager ctrl.Manager) error {
+	if r.Client == nil || r.Reader == nil {
+		return errors.New("tenant controller requires injected client and API reader")
 	}
 	if err := manager.GetFieldIndexer().IndexField(ctx, &databasev1alpha1.PostgreSQLTenant{},
 		targetDatabaseIndex, func(object client.Object) []string {
@@ -29,14 +29,14 @@ func (r *BindingReconciler) SetupWithManager(ctx context.Context, manager ctrl.M
 		return err
 	}
 	return ctrl.NewControllerManagedBy(manager).
-		Named("database-binding").
+		Named("database-tenant").
 		For(&databasev1alpha1.PostgreSQLTenant{}).
 		Watches(&databasev1alpha1.PostgreSQLDatabase{}, handler.EnqueueRequestsFromMapFunc(r.requestsForDatabase)).
 		Watches(&databasev1alpha1.PostgreSQLInstance{}, handler.EnqueueRequestsFromMapFunc(r.requestsForInstance)).
 		Complete(r)
 }
 
-func (r *BindingReconciler) requestsForDatabase(ctx context.Context, object client.Object) []ctrl.Request {
+func (r *TenantReconciler) requestsForDatabase(ctx context.Context, object client.Object) []ctrl.Request {
 	tenants := &databasev1alpha1.PostgreSQLTenantList{}
 	if err := r.Client.List(ctx, tenants, client.MatchingFields{targetDatabaseIndex: object.GetName()}); err != nil {
 		ctrl.LoggerFrom(ctx).Error(err, "无法映射 Database 事件；等待低频重试")
@@ -49,7 +49,7 @@ func (r *BindingReconciler) requestsForDatabase(ctx context.Context, object clie
 	return requests
 }
 
-func (r *BindingReconciler) requestsForInstance(ctx context.Context, object client.Object) []ctrl.Request {
+func (r *TenantReconciler) requestsForInstance(ctx context.Context, object client.Object) []ctrl.Request {
 	// 当前只有 homelab 内部申请，使用 cache 列表过滤，不维护另一份实例/租户集合。
 	tenants := &databasev1alpha1.PostgreSQLTenantList{}
 	if err := r.Client.List(ctx, tenants); err != nil {

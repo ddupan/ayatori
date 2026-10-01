@@ -70,7 +70,7 @@ func Reconstitute(target ObservationTarget, snapshot Snapshot, deleting bool) (*
 
 func (i *Instance) Target() ObservationTarget { return i.target }
 
-// Snapshot returns a detached value. Persisting it remains the application's job.
+// Snapshot returns a detached value. Persisting it remains the Reconciler's job.
 func (i *Instance) Snapshot() Snapshot { return i.snapshot }
 
 // BeginValidation records intent only; it does not claim a concluded observation.
@@ -107,9 +107,9 @@ func (i *Instance) BeginDeletion() error {
 }
 
 // ObserveExtensions accepts facts only for this registration and configuration.
-// Unobserved support clears a previous list after a failed read; the application
+// Unobserved support clears a previous list after a failed read; the Reconciler
 // reports the dependency failure separately. This does not establish readiness.
-// Same-target freshness and Secret refresh are enforced by the application.
+// Same-target freshness and Secret refresh are enforced by the Reconciler.
 func (i *Instance) ObserveExtensions(target ObservationTarget, support ExtensionSupport) error {
 	if !i.target.Matches(target) {
 		return errors.New("extension observation target does not match instance")

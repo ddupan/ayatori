@@ -44,7 +44,7 @@ func (d Definition) Validate() error {
 
 // ObservationTarget binds facts to a registration and its declared configuration.
 // It does not identify a physical PostgreSQL server or prove observation freshness.
-// Secret content refresh and same-target observation freshness remain application
+// Secret content refresh and same-target observation freshness remain Reconciler
 // responsibilities; no credentials or Secret contents are carried by this value.
 type ObservationTarget struct {
 	identity   Identity

@@ -10,8 +10,6 @@ import (
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,31 +27,28 @@ import (
 )
 
 const (
-	bindingNamespace  = "binding-tests"
-	phaseBinding      = "Binding"
-	phaseBound        = "Bound"
-	reasonConflict    = "Conflict"
-	reasonDependency  = "DependencyUnavailable"
-	TenantFinalizer   = kubernetes.TenantFinalizer
-	DatabaseFinalizer = kubernetes.DatabaseFinalizer
+	bindingNamespace = "binding-tests"
+	phaseBinding     = "Binding"
+	phaseBound       = "Bound"
+	reasonConflict   = "Conflict"
+	reasonDependency = "DependencyUnavailable"
 )
 
 func targetDatabaseName(tenant *databasev1alpha1.PostgreSQLTenant) string {
 	return "tenant-" + string(tenant.UID)
 }
 
-func bindingTestReconciler(writer client.Client, reader client.Reader) *BindingReconciler {
-	resources := &kubernetes.BindingResources{Client: writer, Reader: reader}
-	return NewBindingReconciler(writer, &application.BindingService{Resources: resources}, resources)
+func bindingTestReconciler(writer client.Client, reader client.Reader) *TenantReconciler {
+	return &TenantReconciler{Client: writer, Reader: reader}
 }
 
-func tenantReference(tenant *databasev1alpha1.PostgreSQLTenant) *databasev1alpha1.TenantReference {
+func expectedTenantRef(tenant *databasev1alpha1.PostgreSQLTenant) *databasev1alpha1.TenantReference {
 	return &databasev1alpha1.TenantReference{
 		Namespace: tenant.Namespace, Name: databasev1alpha1.ObjectName(tenant.Name), UID: tenant.UID,
 	}
 }
 
-func TestBindingController(t *testing.T) {
+func TestTenantController(t *testing.T) {
 	apiClient, config, scheme := bindingEnvironment(t)
 	t.Run("动态申请和幂等重试", func(t *testing.T) { testDynamicBinding(t, apiClient) })
 	t.Run("双向写入之间重启", func(t *testing.T) { testBindingRestart(t, apiClient) })
@@ -119,7 +114,7 @@ func testDynamicBinding(t *testing.T, apiClient client.Client) {
 	reload(t, apiClient, database)
 	if database.Spec.Database != "dynamic" || database.Spec.LoginRole != "dynamic" ||
 		database.Spec.ReclaimPolicy != databasev1alpha1.ReclaimRetain ||
-		*database.Spec.TenantRef != *tenantReference(tenant) || database.Status.InstanceUID != instance.UID {
+		*database.Spec.TenantRef != *expectedTenantRef(tenant) || database.Status.InstanceUID != instance.UID {
 		t.Fatal("动态资源目标、默认值或身份不符")
 	}
 	if len(database.OwnerReferences) != 0 || !controllerutil.ContainsFinalizer(database, DatabaseFinalizer) {
@@ -358,25 +353,50 @@ func testBindingWatch(t *testing.T, apiClient client.Client, config *rest.Config
 	})
 }
 
+// afterBindClient 在资源侧绑定写入成功后执行一次回调，模拟另一个客户端的在途修改。
+type afterBindClient struct {
+	client.Client
+	after func()
+}
+
+// 动态申请在创建 Database 时即写入资源侧绑定，已有资源则通过 Update 写入。
+func (c *afterBindClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	return c.notify(object, c.Client.Create(ctx, object, options...))
+}
+
+func (c *afterBindClient) Update(ctx context.Context, object client.Object, options ...client.UpdateOption) error {
+	return c.notify(object, c.Client.Update(ctx, object, options...))
+}
+
+func (c *afterBindClient) notify(object client.Object, err error) error {
+	if _, ok := object.(*databasev1alpha1.PostgreSQLDatabase); ok && err == nil && c.after != nil {
+		c.after()
+		c.after = nil
+	}
+	return err
+}
+
 func testPresentationVersion(t *testing.T, apiClient client.Client) {
 	instance := readyInstance(t, apiClient, "presentation-instance")
 	tenant := provisionTenant("presentation", instance.Name)
 	requireCreate(t, apiClient, tenant)
-	resources := &kubernetes.BindingResources{Client: apiClient, Reader: apiClient}
-	service := application.BindingService{Resources: resources}
-	result, err := service.Reconcile(t.Context(), tenant.Namespace, tenant.Name)
-	if err != nil {
-		t.Fatal(err)
+	// 资源侧写入后，另一个客户端修改不属于绑定目标的字段；旧快照不能完成申请侧绑定，只能尽快重来。
+	writer := &afterBindClient{Client: apiClient, after: func() {
+		current := tenant.DeepCopy()
+		reload(t, apiClient, current)
+		current.Spec.SecretName = "updated-delivery"
+		current.Annotations = map[string]string{"example.test/keep": "preserved"}
+		if err := apiClient.Update(t.Context(), current); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	result, err := bindingTestReconciler(writer, apiClient).Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)})
+	if err != nil || result.RequeueAfter > time.Second {
+		t.Fatalf("申请变化后应尽快重新协调: result=%+v, err=%v", result, err)
 	}
-	// 用例完成资源侧写入后，模拟另一个客户端修改不属于绑定目标的字段。
 	reload(t, apiClient, tenant)
-	tenant.Spec.SecretName = "updated-delivery"
-	tenant.Annotations = map[string]string{"example.test/keep": "preserved"}
-	if err := apiClient.Update(t.Context(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	if err := resources.Present(t.Context(), result); !apierrors.IsConflict(err) {
-		t.Fatalf("过期结果呈现 = %v, want Conflict", err)
+	if tenant.Status.DatabaseRef != nil {
+		t.Fatal("过期快照完成了申请侧绑定")
 	}
 	reconcileOK(t, bindingTestReconciler(apiClient, apiClient), tenant)
 	reload(t, apiClient, tenant)
@@ -505,7 +525,7 @@ func reload(t *testing.T, apiClient client.Client, object client.Object) {
 	}
 }
 
-func reconcileOK(t *testing.T, reconciler *BindingReconciler, tenant *databasev1alpha1.PostgreSQLTenant) {
+func reconcileOK(t *testing.T, reconciler *TenantReconciler, tenant *databasev1alpha1.PostgreSQLTenant) {
 	t.Helper()
 	if _, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(tenant),

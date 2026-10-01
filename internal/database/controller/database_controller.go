@@ -7,7 +7,6 @@ import (
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
@@ -142,23 +141,23 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 			return nil, err
 		}
 		if err == nil {
-			facts := kubernetes.BindingTenant(tenant)
+			facts := bindingTenant(tenant)
 			state.dependencies.Tenant = &facts
-			state.dependencies.TenantProtected = controllerutil.ContainsFinalizer(tenant, kubernetes.TenantFinalizer)
+			state.dependencies.TenantProtected = controllerutil.ContainsFinalizer(tenant, TenantFinalizer)
 		}
 	}
 	owner := &databasev1alpha1.PostgreSQLInstance{}
 	if err := r.Reader.Get(ctx, types.NamespacedName{Name: string(object.Spec.InstanceRef.Name)}, owner); err != nil {
 		return state, client.IgnoreNotFound(err)
 	}
-	target, err := kubernetes.InstanceTarget(owner)
+	target, err := instanceTarget(owner)
 	if err != nil {
 		return nil, err
 	}
 	state.target = target
 	state.dependencies.Instance = &database.Instance{
 		Identity: binding.Identity{Name: owner.Name, UID: string(owner.UID)},
-		Deleting: !owner.DeletionTimestamp.IsZero(), Ready: kubernetes.CurrentReady(owner.Generation, owner.Status.Conditions),
+		Deleting: !owner.DeletionTimestamp.IsZero(), Ready: currentReady(owner.Generation, owner.Status.Conditions),
 		Endpoint: target.Definition().Endpoint(),
 	}
 	return state, nil
@@ -207,8 +206,8 @@ func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db 
 
 func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
 	result := database.Snapshot{
-		Binding:   kubernetes.BindingDatabase(object),
-		Protected: controllerutil.ContainsFinalizer(object, kubernetes.DatabaseFinalizer),
+		Binding:   bindingDatabase(object),
+		Protected: controllerutil.ContainsFinalizer(object, DatabaseFinalizer),
 		Credential: database.CredentialState{
 			Version: object.Status.CredentialVersion,
 		},

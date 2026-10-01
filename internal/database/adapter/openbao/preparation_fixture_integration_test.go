@@ -16,8 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 )
 
@@ -80,8 +78,7 @@ func (f *preparationFixture) bound(t *testing.T, name string) (*databasev1alpha1
 	if err := f.api.Create(t.Context(), tenant); err != nil {
 		t.Fatal(err)
 	}
-	resources := &kubernetes.BindingResources{Client: f.api, Reader: f.api}
-	binder := databasecontroller.NewBindingReconciler(f.api, &application.BindingService{Resources: resources}, resources)
+	binder := &databasecontroller.TenantReconciler{Client: f.api, Reader: f.api}
 	if _, err := binder.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(tenant)}); err != nil {
 		t.Fatal(err)
 	}

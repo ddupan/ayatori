@@ -6,7 +6,6 @@ import (
 	"time"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -44,14 +43,14 @@ func (r *InstanceReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	target, err := kubernetes.InstanceTarget(object)
+	target, err := instanceTarget(object)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if !object.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, r.deleting(ctx, object, target)
 	}
-	if controllerutil.AddFinalizer(object, kubernetes.InstanceFinalizer) {
+	if controllerutil.AddFinalizer(object, InstanceFinalizer) {
 		if err := r.Client.Update(ctx, object); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -123,7 +122,7 @@ func (r *InstanceReconciler) deleting(ctx context.Context, object *databasev1alp
 	if err := r.present(ctx, object, aggregate.Snapshot(), reason, message); err != nil {
 		return err
 	}
-	if referenceErr == nil && reference == "" && controllerutil.RemoveFinalizer(object, kubernetes.InstanceFinalizer) {
+	if referenceErr == nil && reference == "" && controllerutil.RemoveFinalizer(object, InstanceFinalizer) {
 		return client.IgnoreNotFound(r.Client.Update(ctx, object))
 	}
 	return nil

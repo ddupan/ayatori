@@ -22,7 +22,7 @@ import (
 )
 
 // CredentialReferenceValues contains effective field mappings, not secret data.
-// The application supplies defaults and fixes the namespace to the controller's.
+// The Reconciler supplies defaults and fixes the namespace to the controller's.
 // Namespace and provider-specific paths are deliberately not selectable here.
 type CredentialReferenceValues struct {
 	Name        string
@@ -51,7 +51,7 @@ func NewCredentialReference(values CredentialReferenceValues) (CredentialReferen
 func (r CredentialReference) Values() CredentialReferenceValues { return r.values }
 
 // Validate enforces reference invariants without accessing Kubernetes or OpenBao.
-// Checking that the referenced Secret contains nonempty credentials is an application
+// Checking that the referenced Secret contains nonempty credentials is a Reconciler
 // responsibility. Errors omit input values and no implicit defaults are applied.
 func (r CredentialReference) Validate() error {
 	if len(r.values.Name) > 253 || !dnsSubdomainName.MatchString(r.values.Name) {
