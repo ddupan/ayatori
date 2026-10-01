@@ -67,7 +67,7 @@ Reconciler 本身就是 Kubernetes adapter 并承担用例：直接用 `client.C
 下一步，不依赖 Kubernetes 或后端。只为可能出现新实现的后端（PostgreSQL、凭据后端）在
 controller 中按使用方需要声明接口；后端 adapter 只返回事实，并把错误归为领域结果分类。
 Kubernetes 侧不再包一层 Repository/Presenter 接口。判断放置与命名规则见
-[Database 领域模型](../database/domain-model.md#分层)；Tenant 绑定链路尚待迁移。
+[Database 领域模型](../database/domain-model.md#分层)。
 单测检查 domain/controller 的依赖边界，并验证共享 writer、直连 reader 和后端的注入。
 
 基础设施能力属于整个 controller-manager，不因首个消费者是 Database 就归入该领域。

@@ -40,7 +40,7 @@ const (
 	CheckInsufficientPrivileges
 )
 
-// ManagementChecks 分别记录所需能力；SQL 探测和同轮次关联由 adapter/application 保证。
+// ManagementChecks 分别记录所需能力；SQL 探测和同轮次关联由 adapter/Reconciler 保证。
 // Extensions 不代表任意扩展均可安装；具体请求仍需支持检查、执行及回读。
 type ManagementChecks struct {
 	Connection CheckResult

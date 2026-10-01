@@ -57,7 +57,7 @@ type ExtensionSupport struct {
 }
 
 // ObserveExtensionSupport records a successfully read list, including an empty one.
-// A failed query must not call this constructor with an empty list: the application
+// A failed query must not call this constructor with an empty list: the Reconciler
 // must propagate the dependency failure and leave support unobserved.
 func ObserveExtensionSupport(available []string) ExtensionSupport {
 	return ExtensionSupport{observed: true, available: NewExtensionSet(available)}

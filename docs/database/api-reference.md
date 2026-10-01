@@ -69,8 +69,8 @@ API 接受两个 Tenant 引用同一 Database 不表示允许双重绑定；排�
 Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database 有实例身份观察、凭据位置或
 绑定后固定实际 database、loginRole、来源和凭据引用，回收策略仍可修改。
 读取绑定判断使用 APIReader，写入依靠 resourceVersion；watch/cache 负责触发协调。
-绑定顺序由 application service 协调，纯资格规则在领域层；Kubernetes adapter 负责快照
-映射、finalizer 和状态呈现。呈现前若资源版本已变化，返回冲突供下一轮重读，不覆盖其他修改。
+`TenantReconciler` 协调绑定顺序、CR 映射、finalizer 和状态呈现，纯资格规则在 `domain/binding`。
+写入使用本轮读取的 resourceVersion；呈现前申请已变化时放弃旧结果并尽快重读，不覆盖其他修改。
 双向记录完成后 Tenant 为 Bound，Ready=False/BindingComplete，明确尚未供应或交付。
 生成的 manager ClusterRole 授予资源读写，不包含 Secret 读取；Instance 观测的管理 Secret
 权限由固定 namespace 的独立 Role 授予。Instance controller 已接入原生管理观察与引用删除

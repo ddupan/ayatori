@@ -98,13 +98,16 @@ resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kuberne
 不使用 `Service`、`Reconciliation`、`Preparation`、`Resources`、`Record`、`Presenter`、
 `Result` 等含义模糊的后缀。
 
-### 迁移状态
+### 当前结构
 
-Database 与 Instance 链路已按上述规则实现：`domain/database` 聚合合并供应资格、凭据准备与
-资源供应状态；`DatabaseReconciler`、`InstanceReconciler` 直接读写 CR 并读取管理 Secret；
-`postgresql.Instances` 按 Instance 复用连接池，只返回事实。Tenant 绑定链路仍是旧的
-`application.BindingService` + `adapter/kubernetes` Resources/Presenter 结构，将在后续切片按同一
-规则迁移，迁移前不要在旧结构上扩展新能力。
+Database、Instance、Tenant 三条链路均按上述规则实现，不再有 `application` 层或
+`adapter/kubernetes` 包：
+
+- `TenantReconciler` 建立 Tenant 与 Database 的排他双向绑定，规则在 `domain/binding`；
+- `InstanceReconciler` 观察管理能力，规则在 `domain/instance` 聚合；
+- `DatabaseReconciler` 准备凭据并供应资源，规则在 `domain/database` 聚合；
+- `ManagementSecrets` 直连读取管理 Secret；`postgresql.Instances` 按 Instance 复用连接池，
+  `openbao.Credentials` 访问应用凭据，二者只返回事实。
 
 ## API 切片前需明确
 
