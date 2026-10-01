@@ -201,8 +201,9 @@ type lostRoleResponse struct {
 	databasecontroller.PostgreSQLBackend
 }
 
-func (b *lostRoleResponse) CreateLoginRole(ctx context.Context, target instance.ObservationTarget, db *databasedomain.Database, value credential.ApplicationCredential) (uint32, error) {
-	if _, err := b.PostgreSQLBackend.CreateLoginRole(ctx, target, db, value); err != nil {
+func (b *lostRoleResponse) CreateLoginRole(ctx context.Context, target instance.ObservationTarget, credentials instance.ManagementCredentials,
+	db *databasedomain.Database, value credential.ApplicationCredential) (uint32, error) {
+	if _, err := b.PostgreSQLBackend.CreateLoginRole(ctx, target, credentials, db, value); err != nil {
 		return 0, err
 	}
 	return 0, databasedomain.ErrUncertain

@@ -11,7 +11,6 @@ import (
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/kubernetes"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -25,25 +24,18 @@ func TestDatabaseExplicitWiring(t *testing.T) {
 	if !ok || binder.Client != writer || bindingResources.Reader != directReader || bindingResources.Client != writer || binder.Presenter != bindingResources {
 		t.Fatal("绑定用例没有共享显式注入的 writer、直连 reader 与 presenter")
 	}
-	credentials, err := kubernetes.NewSecretCredentials(directReader, "wiring-tests")
-	if err != nil {
-		t.Fatal(err)
+	instances := &postgresql.Instances{}
+	t.Cleanup(instances.Close)
+	reconciler := wireInstanceController(writer, directReader, instances, "wiring-tests")
+	if reconciler.Client != writer || reconciler.Reader != directReader || reconciler.PostgreSQL != instances ||
+		reconciler.Secrets.Reader != directReader || reconciler.Secrets.Namespace != "wiring-tests" {
+		t.Fatal("Instance 的连接或 Secret 读取边界未按依赖图注入")
 	}
-	observer, err := application.NewInstanceService(credentials, postgresql.Connector{})
-	if err != nil {
-		t.Fatal(err)
+	databases := wireDatabaseController(writer, directReader, nil, instances, "wiring-tests")
+	if databases.Client != writer || databases.Reader != directReader || databases.PostgreSQL != instances || databases.Secrets.Reader != directReader {
+		t.Fatal("资源供应必须复用 Instance 的连接池登记和直连 Secret 读取")
 	}
-	t.Cleanup(observer.Close)
-	reconciler := wireInstanceController(writer, directReader, observer, "wiring-tests")
-	resources, ok := reconciler.Service.Resources.(*kubernetes.InstanceResources)
-	if !ok || resources.Reader != directReader || resources.Client != writer || reconciler.Service.Observer != observer || reconciler.Presenter != resources {
-		t.Fatal("Instance 的服务或读取边界未按依赖图注入")
-	}
-	databases := wireDatabaseController(writer, directReader, nil, observer)
-	if databases.Client != writer || databases.Reader != directReader || databases.PostgreSQL != observer {
-		t.Fatal("资源供应必须复用已有 Instance 管理服务和 API 客户端")
-	}
-	if wireDatabaseController(writer, directReader, nil, nil).PostgreSQL != nil {
+	if wireDatabaseController(writer, directReader, nil, nil, "wiring-tests").PostgreSQL != nil {
 		t.Fatal("未启用资源供应时不得注入 PostgreSQL 后端")
 	}
 }

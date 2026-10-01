@@ -100,10 +100,11 @@ resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kuberne
 
 ### 迁移状态
 
-Database 链路已按上述规则实现：`domain/database` 聚合合并供应资格、凭据准备与资源供应状态，
-`DatabaseReconciler` 直接读写 CR。Instance 与 Tenant 绑定链路仍是旧的
-`application` 用例 + `adapter/kubernetes` Resources/Presenter 结构，PG 连接管理仍在
-`application.InstanceService`；它们将在后续切片按同一规则迁移，迁移前不要在旧结构上扩展新能力。
+Database 与 Instance 链路已按上述规则实现：`domain/database` 聚合合并供应资格、凭据准备与
+资源供应状态；`DatabaseReconciler`、`InstanceReconciler` 直接读写 CR 并读取管理 Secret；
+`postgresql.Instances` 按 Instance 复用连接池，只返回事实。Tenant 绑定链路仍是旧的
+`application.BindingService` + `adapter/kubernetes` Resources/Presenter 结构，将在后续切片按同一
+规则迁移，迁移前不要在旧结构上扩展新能力。
 
 ## API 切片前需明确
 

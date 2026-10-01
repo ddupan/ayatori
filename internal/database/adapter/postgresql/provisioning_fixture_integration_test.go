@@ -54,13 +54,8 @@ func newProvisioningFixture(t *testing.T) *provisioningFixture {
 	if err := api.Create(f.ctx, object); err != nil {
 		t.Fatal(err)
 	}
-	instanceResources := &kubernetes.InstanceResources{Client: api, Reader: api}
-	instanceService := &application.InstanceReconciliation{Resources: instanceResources, Observer: f.service}
-	result, err := instanceService.Reconcile(f.ctx, object.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := instanceResources.PresentInstance(f.ctx, result); err != nil {
+	instances := &databasecontroller.InstanceReconciler{Client: api, Reader: api, PostgreSQL: f.service, Secrets: f.secrets}
+	if _, err := instances.Reconcile(f.ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.Get(f.ctx, client.ObjectKeyFromObject(object), object); err != nil {
@@ -71,7 +66,7 @@ func newProvisioningFixture(t *testing.T) *provisioningFixture {
 	}
 	store := provisioningBao(t)
 	return &provisioningFixture{credentialFixture: f, api: api, scheme: scheme, store: store,
-		reconciler: &databasecontroller.DatabaseReconciler{Client: api, Reader: api, Credentials: store, PostgreSQL: f.service}}
+		reconciler: &databasecontroller.DatabaseReconciler{Client: api, Reader: api, Credentials: store, PostgreSQL: f.service, Secrets: f.secrets}}
 }
 
 // 三后端组合验收只启动自己的 dev Bao；不读取环境 token 或外部地址。

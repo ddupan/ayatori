@@ -24,7 +24,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
@@ -38,19 +37,20 @@ func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 	f.queryPostgres(t, "CREATE VIEW public.pg_available_extensions AS SELECT 'fake_extension'::name AS name")
 	f.queryPostgres(t, "ALTER ROLE postgres SET search_path = public, pg_catalog")
 	schemasBefore := f.queryPostgres(t, "SELECT string_agg(nspname, ',' ORDER BY nspname) FROM pg_catalog.pg_namespace")
-	observed, err := f.service.ObserveMetadata(f.ctx, f.target)
+	facts, err := f.observe(f.ctx, f.target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !observed.Target().Matches(f.target) || observed.Version() == "" {
-		t.Fatal("metadata was not bound to the current target")
+	if facts.Version == "" {
+		t.Fatal("observation returned no version")
 	}
+	support := instance.ObserveExtensionSupport(facts.AvailableExtensions)
 	requested := instance.NewExtensionSet([]string{"hstore", fixtureExtension})
-	if observed.Extensions().Check(requested).Decision != instance.ExtensionsAccepted {
+	if support.Check(requested).Decision != instance.ExtensionsAccepted {
 		t.Fatal("available but uninstalled extension was omitted")
 	}
 	unsupported := instance.NewExtensionSet([]string{"fake_extension", "HSTORE"})
-	check := observed.Extensions().Check(unsupported)
+	check := support.Check(unsupported)
 	if check.Decision != instance.ExtensionsUnsupported || len(check.Unsupported) != 2 {
 		t.Fatal("metadata accepted shadowed or case-normalized extension names")
 	}
@@ -65,7 +65,7 @@ func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := aggregate.ObserveExtensions(observed.Target(), observed.Extensions()); err != nil {
+	if err := aggregate.ObserveExtensions(f.target, support); err != nil {
 		t.Fatal(err)
 	}
 	if aggregate.CheckExtensions(requested).Decision != instance.ExtensionsAccepted {
@@ -88,29 +88,29 @@ func TestMetadataPermissionFailureAndRecovery(t *testing.T) {
 		t.Fatal("metadata reader unexpectedly has management privileges")
 	}
 	requested := instance.NewExtensionSet([]string{fixtureExtension})
-	observed, err := f.service.ObserveMetadata(f.ctx, f.target)
-	if err != nil || observed.Extensions().Check(requested).Decision != instance.ExtensionsAccepted {
+	facts, err := f.observe(f.ctx, f.target)
+	if err != nil || instance.ObserveExtensionSupport(facts.AvailableExtensions).Check(requested).Decision != instance.ExtensionsAccepted {
 		t.Fatalf("read-only account could not observe metadata: %v", err)
+	}
+	if facts.Checks().Grants == instance.CheckPassed {
+		t.Fatal("read-only account was treated as a manager")
 	}
 
 	// 仅操作本测试独占容器的 catalog ACL；失败不能转换成“不支持任何扩展”。
 	f.queryPostgres(t, "REVOKE SELECT ON pg_catalog.pg_available_extensions FROM PUBLIC")
-	failed, err := f.service.ObserveMetadata(f.ctx, f.target)
-	if !errors.Is(err, application.ErrObservation) {
+	failed, err := f.observe(f.ctx, f.target)
+	if err == nil || errors.Is(err, instance.ErrAuthentication) {
 		t.Fatalf("metadata permission failure was not reported safely: %v", err)
 	}
-	if failed.Version() != "" || failed.Target().Validate() == nil {
+	if failed.Version != "" || failed.AvailableExtensions != nil {
 		t.Fatal("permission failure returned partial metadata")
-	}
-	if failed.Extensions().Check(requested).Decision != instance.ExtensionSupportUnobserved {
-		t.Fatal("permission failure returned an observed empty set")
 	}
 	if f.backendIDs(t) != "" {
 		t.Fatal("failed metadata connection was retained")
 	}
 	f.queryPostgres(t, "GRANT SELECT ON pg_catalog.pg_available_extensions TO PUBLIC")
-	recovered, err := f.service.ObserveMetadata(f.ctx, f.target)
-	if err != nil || recovered.Extensions().Check(requested).Decision != instance.ExtensionsAccepted {
+	recovered, err := f.observe(f.ctx, f.target)
+	if err != nil || instance.ObserveExtensionSupport(recovered.AvailableExtensions).Check(requested).Decision != instance.ExtensionsAccepted {
 		t.Fatalf("metadata observation did not recover: %v", err)
 	}
 }

@@ -2,19 +2,10 @@ package kubernetes
 
 import (
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/application"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 )
 
-func instanceRecord(object *databasev1alpha1.PostgreSQLInstance) (*application.InstanceRecord, error) {
-	target, err := InstanceTarget(object)
-	if err != nil {
-		return nil, err
-	}
-	return &application.InstanceRecord{
-		Target: target, Revision: object.ResourceVersion, Deleting: !object.DeletionTimestamp.IsZero(),
-	}, nil
-}
+const InstanceFinalizer = "database.ayatori.ddupan.top/instance-protection"
 
 // InstanceTarget 把 Instance CR 映射为观察与管理连接目标。
 func InstanceTarget(object *databasev1alpha1.PostgreSQLInstance) (instance.ObservationTarget, error) {
