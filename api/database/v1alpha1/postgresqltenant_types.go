@@ -13,13 +13,19 @@ type DatabaseProvisionRequest struct {
 
 // PostgreSQLTenantSpec 显式选择动态申请或已有 Database，不重复声明来源。
 // +kubebuilder:validation:XValidation:rule="has(self.provision) != has(self.databaseRef)",message="exactly one of provision and databaseRef is required"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.extensions) || has(self.extensions)",message="extensions can only be appended; controller never drops installed extensions"
 type PostgreSQLTenantSpec struct {
 	// +optional
 	Provision *DatabaseProvisionRequest `json:"provision,omitempty"`
 	// +optional
 	DatabaseRef *DatabaseReference `json:"databaseRef,omitempty"`
-	// Extensions 保留后端扩展名称的原样拼写，不按 SQL identifier 限制。
+	// Extensions 保留后端扩展名称的原样拼写，不按 SQL identifier 限制；PostgreSQL 名称最长 63 字节。
+	// 只能追加：controller 不卸载已安装的扩展。
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:XValidation:rule="oldSelf.all(e, e in self)",message="extensions can only be appended; controller never drops installed extensions"
 	// +optional
 	Extensions []string `json:"extensions,omitempty"`
 	// SecretName 指定 Tenant namespace 内的投射目标，省略时使用合同约定的默认名称。

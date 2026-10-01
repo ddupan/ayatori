@@ -123,13 +123,13 @@ func provisioningBao(t *testing.T) *openbao.Credentials {
 	return store
 }
 
-func (f *provisioningFixture) bound(t *testing.T, name string) *databasev1alpha1.PostgreSQLDatabase {
+func (f *provisioningFixture) bound(t *testing.T, name string, extensions ...string) *databasev1alpha1.PostgreSQLDatabase {
 	t.Helper()
 	tenant := &databasev1alpha1.PostgreSQLTenant{Name: strings.ReplaceAll(name, "_", "-"), Namespace: controllerNamespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{Provision: &databasev1alpha1.DatabaseProvisionRequest{
 			InstanceRef: databasev1alpha1.InstanceReference{Name: "supply-instance"},
 			Database:    databasev1alpha1.PostgreSQLIdentifier(name), LoginRole: databasev1alpha1.PostgreSQLIdentifier(name),
-		}}}
+		}, Extensions: extensions}}
 	if err := f.api.Create(f.ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,18 @@ func (f *provisioningFixture) status(t *testing.T, database *databasev1alpha1.Po
 	if condition == nil || condition.Reason != string(phase) {
 		t.Fatalf("期望资源阶段 %s，实际 %v", phase, condition)
 	}
-	if meta.IsStatusConditionTrue(database.Status.Conditions, "Ready") {
-		t.Fatal("角色建库不代表扩展与交付完成")
+	// 只有资源、扩展收敛且应用凭据本轮登录成功，Database 才就绪。
+	if meta.IsStatusConditionTrue(database.Status.Conditions, "Ready") != (phase == databasedomain.ResourceAvailable) {
+		t.Fatalf("Ready 与资源阶段 %s 不一致", phase)
 	}
+}
+
+// queryDatabase 以 superuser 在指定数据库内执行只读校验。
+func (f *provisioningFixture) queryDatabase(t *testing.T, database, sql string) string {
+	t.Helper()
+	output, err := exec.CommandContext(f.ctx, "docker", dockerExec, f.containerID, "psql", "-U", fixtureUser, "-d", database, "-tAc", sql).Output()
+	if err != nil {
+		t.Fatal("fixture SQL failed")
+	}
+	return strings.TrimSpace(string(output))
 }

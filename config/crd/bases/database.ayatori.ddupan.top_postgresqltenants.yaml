@@ -59,11 +59,20 @@ spec:
                 - name
                 type: object
               extensions:
-                description: Extensions 保留后端扩展名称的原样拼写，不按 SQL identifier 限制。
+                description: |-
+                  Extensions 保留后端扩展名称的原样拼写，不按 SQL identifier 限制；PostgreSQL 名称最长 63 字节。
+                  只能追加：controller 不卸载已安装的扩展。
                 items:
+                  maxLength: 63
+                  minLength: 1
                   type: string
+                maxItems: 64
                 type: array
                 x-kubernetes-list-type: set
+                x-kubernetes-validations:
+                - message: extensions can only be appended; controller never drops
+                    installed extensions
+                  rule: oldSelf.all(e, e in self)
               provision:
                 description: DatabaseProvisionRequest 仅用于动态申请，省略名称时由 controller 按
                   Tenant 名称解析。
@@ -106,6 +115,9 @@ spec:
             x-kubernetes-validations:
             - message: exactly one of provision and databaseRef is required
               rule: has(self.provision) != has(self.databaseRef)
+            - message: extensions can only be appended; controller never drops installed
+                extensions
+              rule: '!has(oldSelf.extensions) || has(self.extensions)'
           status:
             properties:
               conditions:

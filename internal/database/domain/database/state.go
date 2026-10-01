@@ -59,6 +59,12 @@ type ResourceState struct {
 	Message     string
 }
 
+// ExtensionFacts 是目标库内的原始事实：服务器可用的扩展与本库已安装的扩展。
+type ExtensionFacts struct {
+	Available []string
+	Installed []string
+}
+
 // ResourceFacts 是 PostgreSQL catalog 的原始事实；OID 为零表示对象不存在。
 type ResourceFacts struct {
 	RoleOID     uint32

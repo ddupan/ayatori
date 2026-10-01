@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | API、绑定、凭据准备及角色/数据库创建已实现；扩展、导入、交付与删除清理未接入 |
+| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装与应用登录验证已实现；导入、交付与删除清理未接入 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
 | 最后更新 | 2026-09-29 |
 
@@ -52,7 +52,9 @@ KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生�
 Instance UID；角色在数据库之后创建，角色确认要求先有数据库确认。同名对象存在而没有相应
 OID 时转 Conflict；依赖故障不清空确认。旧 CRD 裁剪 OID 会阻止继续下一步，
 但不能回滚已发出的外部创建，因此必须先升级 CRD 再启用供应。
-`ResourcesReady=True/Available` 只表示数据库、角色、owner 移交与 ACL 已收敛，总体 Ready 仍不放行。
+`ResourcesReady=True/Available` 与 Database `Ready=True/DatabaseReady` 表示数据库、角色、owner
+移交、ACL 与扩展已收敛且应用凭据本轮登录成功；Tenant Ready 仍需凭据交付。
+Tenant `spec.extensions` 只能追加，最多 64 项、每项 1–63 字节。
 详见[资源创建闭环](README.md#postgresql-资源创建闭环)。
 
 示例：[Instance](../../config/samples/database_v1alpha1_postgresqlinstance.yaml)、

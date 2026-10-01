@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -104,6 +105,35 @@ func (i *Instances) pool(ctx context.Context, target instance.ObservationTarget,
 }
 
 func (i *Instances) connect(ctx context.Context, endpoint instance.Endpoint, credentials instance.ManagementCredentials) (*pgxpool.Pool, error) {
+	config, err := i.config(endpoint, credentials.Username(), credentials.Password(), endpoint.Values().ManagementDatabase)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, safeError(err, errConnection)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, safeError(err, errConnection)
+	}
+	return pool, nil
+}
+
+// dial 打开到指定数据库的单个短连接，用于目标库内操作和应用登录验证；调用方负责关闭。
+func (i *Instances) dial(ctx context.Context, endpoint instance.Endpoint, username, password, database string) (*pgx.Conn, error) {
+	config, err := i.config(endpoint, username, password, database)
+	if err != nil {
+		return nil, err
+	}
+	connection, err := pgx.ConnectConfig(ctx, config.ConnConfig)
+	if err != nil {
+		return nil, safeError(err, errConnection)
+	}
+	return connection, nil
+}
+
+func (i *Instances) config(endpoint instance.Endpoint, username, password, database string) (*pgxpool.Config, error) {
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
 	}
@@ -119,8 +149,8 @@ func (i *Instances) connect(ctx context.Context, endpoint instance.Endpoint, cre
 	connectionURL := url.URL{
 		Scheme:   "postgresql",
 		Host:     net.JoinHostPort(values.Host, strconv.Itoa(values.Port)),
-		Path:     "/" + values.ManagementDatabase,
-		User:     url.UserPassword(credentials.Username(), credentials.Password()),
+		Path:     "/" + database,
+		User:     url.UserPassword(username, password),
 		RawQuery: query.Encode(),
 	}
 	config, err := pgxpool.ParseConfig(connectionURL.String())
@@ -132,15 +162,7 @@ func (i *Instances) connect(ctx context.Context, endpoint instance.Endpoint, cre
 		return []string{values.HostAddr}, nil
 	}
 	config.ConnConfig.Fallbacks = nil
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, safeError(err, errConnection)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, safeError(err, errConnection)
-	}
-	return pool, nil
+	return config, nil
 }
 
 // release 只注销仍登记着的同一个池，并在锁外关闭；pgxpool.Close 会等待在途查询归还连接。
