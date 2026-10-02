@@ -45,6 +45,9 @@ type PostgreSQLBackend interface {
 	RevokePublicConnect(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
 	CreateLoginRole(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database, credential.ApplicationCredential) (uint32, error)
 	TransferOwnership(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
+	InspectExtensions(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) (database.ExtensionFacts, error)
+	InstallExtensions(ctx context.Context, target instance.ObservationTarget, credentials instance.ManagementCredentials, db *database.Database, names []string) error
+	VerifyLogin(context.Context, instance.ObservationTarget, *database.Database, credential.ApplicationCredential) error
 }
 
 // DatabaseReconciler 是 PostgreSQLDatabase 的唯一 status 写入者：先准备凭据，
@@ -121,6 +124,14 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 		db.RoleCreated(r.PostgreSQL.CreateLoginRole(ctx, target, management, db, value))
 	case database.TransferOwnership:
 		db.Converged("移交数据库 owner", r.PostgreSQL.TransferOwnership(ctx, target, management, db))
+	case database.InspectExtensions:
+		extensions, err := r.PostgreSQL.InspectExtensions(ctx, target, management, db)
+		switch db.ObserveExtensions(extensions, err) {
+		case database.InstallExtensions:
+			db.ExtensionsInstalled(r.PostgreSQL.InstallExtensions(ctx, target, management, db, db.MissingExtensions()))
+		case database.VerifyLogin:
+			db.LoginVerified(r.PostgreSQL.VerifyLogin(ctx, target, db, value))
+		}
 	}
 	return r.save(ctx, state, db)
 }
@@ -143,6 +154,7 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 		if err == nil {
 			facts := bindingTenant(tenant)
 			state.dependencies.Tenant = &facts
+			state.dependencies.Extensions = instance.NewExtensionSet(tenant.Spec.Extensions)
 			state.dependencies.TenantProtected = controllerutil.ContainsFinalizer(tenant, TenantFinalizer)
 		}
 	}
@@ -174,10 +186,15 @@ func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db 
 		if r.PostgreSQL != nil {
 			presentResources(object, desired.Resources)
 		}
-		meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
+		ready := metav1.Condition{
 			Type: readyCondition, Status: metav1.ConditionFalse, Reason: "ProvisioningIncomplete",
-			Message: "凭据准备与角色建库不代表扩展、应用登录或 Tenant 交付已经完成", ObservedGeneration: object.Generation,
-		})
+			Message: "资源、扩展或应用登录尚未全部验证", ObservedGeneration: object.Generation,
+		}
+		if r.PostgreSQL != nil && db.Ready() {
+			ready.Status, ready.Reason = metav1.ConditionTrue, "DatabaseReady"
+			ready.Message = "数据库资源与扩展已收敛，应用凭据本轮登录成功；Tenant 凭据交付另行判断"
+		}
+		meta.SetStatusCondition(&object.Status.Conditions, ready)
 		object.Status.ObservedGeneration = object.Generation
 		if equality.Semantic.DeepEqual(*previous, object.Status) {
 			return nil

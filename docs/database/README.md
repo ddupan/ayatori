@@ -1,7 +1,7 @@
 # Database 模块
 
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
-管理能力观测、凭据准备及显式启用的角色/数据库创建；扩展、导入、Tenant 交付与回收尚未完成。
+管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装与应用登录验证；导入、Tenant 交付与回收尚未完成。
 
 ## 当前设计（2026-09-24）
 
@@ -179,9 +179,9 @@ Reconciler 直接读写 API（resourceVersion 保护），负责 CR 与聚合之
 错误保留已确认版本；配置变化停止在原位置，不搬迁或覆盖。同一对象的协调由
 controller-runtime 串行执行，多副本部署依靠既有 leader election；Bao 写入另有 CAS=0 保护。
 
-成功只设置 `CredentialsReady=True`，Database Ready 仍为 False/ProvisioningIncomplete，
+成功只设置 `CredentialsReady=True`；只准备凭据时 Database Ready 保持 False/ProvisioningIncomplete，
 Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
-扩展安装、ESO 投射、Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
+ESO 投射、Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
 
 单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
@@ -202,12 +202,15 @@ PostgreSQL adapter 只返回 catalog 事实；下一步由 Database 聚合按“
 
 1. 数据库不存在：以管理账号为临时 owner 建库，记录 `status.databaseOID`。空库在下一步
    之前没有可泄露的数据。
-2. PUBLIC 仍有 CONNECT：撤销。（扩展安装将在此后、移交 owner 之前由管理账号执行。）
+2. PUBLIC 仍有 CONNECT：撤销。
 3. 角色不存在：最后创建无管理特权的 LOGIN 角色，记录 `status.roleOID`。此时 PUBLIC 已
    撤销且角色尚非 owner，应用账号无法连接。
 4. owner 不是该角色或管理账号缺少 CONNECT：授予管理账号对角色的 SET 权限、移交 owner，
    再以新 owner 身份授予管理账号 CONNECT（移交会把原 owner 的 ACL 条目一并转给新 owner）。
-5. 以上均满足即 Available。
+5. Tenant `spec.extensions` 中服务器可用但本库未安装的扩展：管理账号连接目标库，以 owner
+   身份 `CREATE EXTENSION`，扩展对象归应用角色。服务器不提供的扩展或非 trusted 扩展被拒绝时
+   报 Unavailable 并写明原因；扩展只追加（CRD 拒绝删减），不卸载已安装的扩展。
+6. 以上均满足后，用已确认的应用凭据实际登录目标库；成功即 Available，失败为 Unavailable。
 
 OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 或认领机制。未知同名对象、
 已确认对象消失/被重建、owner 既非管理账号也非已确认角色均报 Conflict。创建结果不确定时
@@ -216,9 +219,9 @@ OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 
 不修正。诊断包含 Database、Instance、实际 database/role、失败步骤；确认 OID 独立保留。
 OID 不是跨集群/备份恢复的稳定身份，恢复后须人工核对，不能靠匹配 OID 推导管理权。
 
-`ResourcesReady=True` 仅表示角色、数据库及连接 ACL 已确认，不代表扩展或 Tenant 交付完成；
-Database/Tenant 总体 Ready 仍为 False。当前不轮换密码、不做运行期应用登录健康检查，也不
-撤销其他数据库的 PUBLIC 权限。管理员须保证共享实例中其他数据库的接入策略满足隔离要求。
+`ResourcesReady=True` 与 Database `Ready=True/DatabaseReady` 表示数据库、角色、权限与扩展
+已收敛且应用凭据本轮登录成功；每轮（约 30 秒）重新验证，凭据失效即撤销就绪。Tenant Ready
+仍需 ESO 交付，尚未接入。当前不轮换密码，也不撤销其他数据库的 PUBLIC 权限。管理员须保证共享实例中其他数据库的接入策略满足隔离要求。
 
 真实 API server + PostgreSQL + OpenBao 测试覆盖实际密码登录、owner 建表、应用管理权限拒绝、
 无关账号连接拒绝、重试/重启、权限恢复、同名冲突、角色重建、并发授权、创建结果丢失、

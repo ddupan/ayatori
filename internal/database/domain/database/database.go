@@ -5,6 +5,8 @@ package database
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
@@ -28,7 +30,9 @@ type Instance struct {
 type Dependencies struct {
 	Tenant          *binding.Tenant
 	TenantProtected bool
-	Instance        *Instance
+	// Extensions 是 Tenant 申请的扩展；CRD 保证只能追加。
+	Extensions instance.ExtensionSet
+	Instance   *Instance
 }
 
 // Action 是聚合要求 Reconciler 执行的下一步。除 Wait 外，每轮最多执行一次外部写入。
@@ -46,11 +50,15 @@ const (
 	RevokePublicConnect
 	CreateRole
 	TransferOwnership
+	InspectExtensions
+	InstallExtensions
+	VerifyLogin
 )
 
 type Database struct {
 	snapshot     Snapshot
 	dependencies Dependencies
+	missing      []string
 }
 
 func Reconstitute(snapshot Snapshot, dependencies Dependencies) *Database {
@@ -187,9 +195,52 @@ func (d *Database) ObserveResources(facts ResourceFacts, err error) Action {
 	case facts.OwnerOID != facts.RoleOID || !facts.ManagerConnect:
 		return TransferOwnership
 	}
-	d.reportResources(ResourceAvailable, "数据库、登录角色与访问权限已收敛；扩展与 Tenant 交付尚未完成")
-	return Wait
+	return InspectExtensions
 }
+
+// ObserveExtensions 按服务器实际可用列表判断申请；可用但未安装的扩展由 owner 安装。
+// 扩展只追加，不卸载申请之外已安装的扩展。
+func (d *Database) ObserveExtensions(facts ExtensionFacts, err error) Action {
+	if err != nil {
+		d.reportResources(ResourceUnavailable, "无法读取目标数据库的扩展状态")
+		return Wait
+	}
+	requested := d.dependencies.Extensions
+	if check := instance.ObserveExtensionSupport(facts.Available).Check(requested); check.Decision != instance.ExtensionsAccepted {
+		d.reportResources(ResourceUnavailable, "实例不提供申请的扩展："+strings.Join(check.Unsupported, ", "))
+		return Wait
+	}
+	installed := instance.NewExtensionSet(facts.Installed).Names()
+	d.missing = nil
+	for _, name := range requested.Names() {
+		if _, found := slices.BinarySearch(installed, name); !found {
+			d.missing = append(d.missing, name)
+		}
+	}
+	if len(d.missing) != 0 {
+		return InstallExtensions
+	}
+	return VerifyLogin
+}
+
+// MissingExtensions 是本轮 ObserveExtensions 判定需要安装的扩展。
+func (d *Database) MissingExtensions() []string { return slices.Clone(d.missing) }
+
+func (d *Database) ExtensionsInstalled(err error) {
+	d.Converged("扩展安装", err)
+}
+
+// LoginVerified 记录应用凭据实际登录结果；只有登录成功才算 Database 就绪。
+func (d *Database) LoginVerified(err error) {
+	if err != nil {
+		d.reportResources(ResourceUnavailable, "已确认的应用凭据无法登录目标数据库")
+		return
+	}
+	d.reportResources(ResourceAvailable, "数据库、角色、权限与扩展已收敛，应用凭据可登录；Tenant 凭据交付尚未完成")
+}
+
+// Ready 表示资源已收敛且应用凭据本轮实际登录成功。
+func (d *Database) Ready() bool { return d.snapshot.Resources.Phase == ResourceAvailable }
 
 // CheckResources 拒绝未知同名对象，以及已确认对象消失、被重建或 owner 不是管理账号/应用角色。
 // controller 不检查人工授予的特权或成员关系：除不可恢复情况外不人工改库，这类改动无法区分有意与异常。

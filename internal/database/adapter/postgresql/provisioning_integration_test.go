@@ -182,6 +182,28 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 			t.Fatal("重建角色被当成原 owner 继续移交")
 		}
 	})
+	t.Run("扩展安装与追加", func(t *testing.T) { testExtensionInstall(t, f) })
+	t.Run("扩展不可用或未授权", func(t *testing.T) {
+		for name, extension := range map[string]string{"missing_extension": "ayatori_not_available", "untrusted_extension": "file_fdw"} {
+			database := f.bound(t, name, extension)
+			for range 4 {
+				f.reconcile(t, database, databasedomain.ResourcePending)
+			}
+			f.reconcile(t, database, databasedomain.ResourceUnavailable)
+			if f.queryDatabase(t, name, "SELECT count(*) FROM pg_extension WHERE extname='"+extension+"'") != "0" {
+				t.Fatalf("%s 不应被安装", extension)
+			}
+		}
+	})
+	t.Run("应用凭据失效时不就绪", func(t *testing.T) {
+		database := f.bound(t, "broken_login")
+		for range 4 {
+			f.reconcile(t, database, databasedomain.ResourcePending)
+		}
+		f.reconcile(t, database, databasedomain.ResourceAvailable)
+		f.queryPostgres(t, "ALTER ROLE broken_login PASSWORD '"+rotatedPassword+"'")
+		f.reconcile(t, database, databasedomain.ResourceUnavailable)
+	})
 	t.Run("实际manager观察与重启", func(t *testing.T) { testProvisioningManager(t, f) })
 }
 
@@ -207,4 +229,31 @@ func (b *lostRoleResponse) CreateLoginRole(ctx context.Context, target instance.
 		return 0, err
 	}
 	return 0, databasedomain.ErrUncertain
+}
+
+func testExtensionInstall(t *testing.T, f *provisioningFixture) {
+	t.Helper()
+	database := f.bound(t, "with_extensions", "hstore")
+	for range 4 {
+		f.reconcile(t, database, databasedomain.ResourcePending)
+	}
+	f.reconcile(t, database, databasedomain.ResourcePending)
+	if f.queryDatabase(t, "with_extensions", "SELECT pg_get_userbyid(extowner) FROM pg_extension WHERE extname='hstore'") != "with_extensions" {
+		t.Fatal("扩展未以应用 owner 身份安装")
+	}
+	f.reconcile(t, database, databasedomain.ResourceAvailable)
+
+	tenant := &databasev1alpha1.PostgreSQLTenant{}
+	if err := f.api.Get(f.ctx, client.ObjectKey{Namespace: database.Spec.TenantRef.Namespace, Name: string(database.Spec.TenantRef.Name)}, tenant); err != nil {
+		t.Fatal(err)
+	}
+	tenant.Spec.Extensions = append(tenant.Spec.Extensions, "pg_trgm")
+	if err := f.api.Update(f.ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(t, database, databasedomain.ResourcePending)
+	f.reconcile(t, database, databasedomain.ResourceAvailable)
+	if f.queryDatabase(t, "with_extensions", "SELECT string_agg(extname, ',' ORDER BY extname) FROM pg_extension WHERE extname IN ('hstore','pg_trgm')") != "hstore,pg_trgm" {
+		t.Fatal("追加的扩展未安装")
+	}
 }

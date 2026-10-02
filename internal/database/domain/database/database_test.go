@@ -2,6 +2,8 @@ package database_test
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
@@ -11,9 +13,12 @@ import (
 )
 
 const (
-	replacedUID     = "new"
-	testApplication = "sampleapp"
-	testInstance    = "test-instance"
+	extensionHstore  = "hstore"
+	extensionPlpgsql = "plpgsql"
+	extensionTrigram = "pg_trgm"
+	replacedUID      = "new"
+	testApplication  = "sampleapp"
+	testInstance     = "test-instance"
 )
 
 var testLocation = credential.Location{Mount: "applications", Path: "database/uid"}
@@ -220,8 +225,20 @@ func TestResourceSteps(t *testing.T) {
 		}
 		step.record()
 	}
-	if db.ObserveResources(facts, nil) != database.Wait || db.Snapshot().Resources.Phase != database.ResourceAvailable {
-		t.Fatal("全部收敛后应 Available")
+	if db.ObserveResources(facts, nil) != database.InspectExtensions ||
+		db.ObserveExtensions(database.ExtensionFacts{Available: []string{extensionPlpgsql}, Installed: []string{extensionPlpgsql}}, nil) != database.VerifyLogin {
+		t.Fatal("资源收敛且未申请扩展时应验证应用登录")
+	}
+	if db.Ready() {
+		t.Fatal("登录验证前不得就绪")
+	}
+	db.LoginVerified(nil)
+	if !db.Ready() || db.Snapshot().Resources.Phase != database.ResourceAvailable {
+		t.Fatal("登录成功后应 Available 且就绪")
+	}
+	db.LoginVerified(database.ErrUnavailable)
+	if db.Ready() || db.Snapshot().Resources.Phase != database.ResourceUnavailable {
+		t.Fatal("应用凭据无法登录时不得就绪")
 	}
 	facts.ManagerConnect = false
 	if db.ObserveResources(facts, nil) != database.TransferOwnership {
@@ -246,5 +263,32 @@ func TestResourceSteps(t *testing.T) {
 	snapshot.Resources.Phase = database.ResourceConflict
 	if database.Reconstitute(snapshot, dependencies).PlanResources() != database.Wait {
 		t.Fatal("冲突需人工处理，不自动重入")
+	}
+}
+
+func TestExtensions(t *testing.T) {
+	snapshot, dependencies := fixture(t)
+	dependencies.Extensions = instance.NewExtensionSet([]string{extensionHstore, extensionTrigram})
+	db := database.Reconstitute(snapshot, dependencies)
+	available := []string{extensionHstore, extensionTrigram, extensionPlpgsql}
+	if db.ObserveExtensions(database.ExtensionFacts{}, database.ErrUnavailable) != database.Wait ||
+		db.Snapshot().Resources.Phase != database.ResourceUnavailable {
+		t.Fatal("读取失败不得视为没有扩展")
+	}
+	if db.ObserveExtensions(database.ExtensionFacts{Available: []string{extensionHstore}}, nil) != database.Wait ||
+		!strings.Contains(db.Snapshot().Resources.Message, extensionTrigram) {
+		t.Fatal("实例不提供的扩展应等待并指出名称")
+	}
+	if db.ObserveExtensions(database.ExtensionFacts{Available: available, Installed: []string{extensionPlpgsql, extensionHstore}}, nil) != database.InstallExtensions ||
+		!slices.Equal(db.MissingExtensions(), []string{extensionTrigram}) {
+		t.Fatalf("应只安装缺少的扩展：%v", db.MissingExtensions())
+	}
+	db.ExtensionsInstalled(database.ErrUnavailable)
+	if db.Snapshot().Resources.Phase != database.ResourceUnavailable {
+		t.Fatal("安装被拒绝时应等待重试")
+	}
+	// 申请之外已安装的扩展不卸载，也不阻止就绪。
+	if db.ObserveExtensions(database.ExtensionFacts{Available: available, Installed: []string{"citext", extensionHstore, extensionTrigram, extensionPlpgsql}}, nil) != database.VerifyLogin {
+		t.Fatal("扩展齐全后应验证登录")
 	}
 }
