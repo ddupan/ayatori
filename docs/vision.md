@@ -38,9 +38,10 @@ Ayatori 不以补齐传统私有云或公有云的产品目录为目标。一个
 4. 统一生命周期、状态、组合或权限能产生可验证的收益；
 5. 收益足以承担长期 API 兼容、controller 和恢复测试成本。
 
-当前最明确的管理缺口是 Database、LoadBalancer 与 Bucket/Object Storage。VirtualMachine 同样
-具有明确价值：Proxmox 的 API 不能覆盖所需的全部生命周期，一部分操作必须在节点上通过 CLI
-完成，因此 Ayatori 可以提供稳定北向 API，并在南向组合 Proxmox API、受限节点 Agent 与人工
+当前最明确的管理缺口是 Database 与 LoadBalancer。Bucket/Object Storage 已由 CI Terraform
+覆盖，不进入北向 API（[ADR-0011](decisions/0011-bucket-managed-by-ci-terraform.md)）。
+VirtualMachine 同样具有明确价值：Proxmox 的 API 不能覆盖所需的全部生命周期，一部分操作必须
+在节点上通过 CLI 完成，因此 Ayatori 可以提供稳定北向 API，并在南向组合 Proxmox API、受限节点 Agent 与人工
 任务。KaaS 只有在出现托管控制面的实际需求时才进入实现，不是产品路线的必达终点。
 
 ## 非目标

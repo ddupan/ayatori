@@ -39,5 +39,5 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 ## 当前状态
 
 Ayatori 处于设计与早期实现阶段。当前使用 Job controller 验证第一个完整控制循环与 adapter
-边界；它不是通用 Job Service 或 FaaS 产品承诺。首批实际产品方向是 Database、LoadBalancer
-和 Bucket/Object Storage，具体顺序按纵向价值决定。
+边界；它不是通用 Job Service 或 FaaS 产品承诺。首批实际产品方向是 Database 与 LoadBalancer；
+Bucket/Object Storage 由 CI Terraform 管理，不进入 Ayatori（ADR-0011）。

@@ -95,7 +95,6 @@ Ayatori 不承载或重新实现数据面。控制面故障只应阻止创建与
 
 - `LoadBalancer`
 - `Database`
-- `Bucket`
 - `VirtualMachine`
 
 `Run`/当前实验性的 `Job`、`ManualTask` 等可以作为控制面执行原语，但不是因为底层能运行 OCI
