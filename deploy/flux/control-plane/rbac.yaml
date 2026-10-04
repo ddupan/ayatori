@@ -1,0 +1,77 @@
+# 集群外进程以 k0s 签发的证书用户访问 API；namespace 由 Ansible 引导时创建。
+# 两个 OpenBao 登录身份只用于 TokenRequest，不对应任何 Pod。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-openbao-login
+  namespace: ayatori-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-openbao-login
+  namespace: ayatori-system
+---
+# OpenBao 不持有 reviewer JWT，以登录 JWT 自身调用 TokenReview。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori-openbao-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: database-openbao-login
+  namespace: ayatori-system
+- kind: ServiceAccount
+  name: external-secrets-openbao-login
+  namespace: ayatori-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori-manager
+  namespace: ayatori-system
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [serviceaccounts/token]
+  resourceNames: [database-openbao-login]
+  verbs: [create]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: ["", events.k8s.io]
+  resources: [events]
+  verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-manager
+  namespace: ayatori-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori-manager
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-controller

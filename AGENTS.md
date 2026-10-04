@@ -45,5 +45,6 @@
 - 集成测试必须覆盖正常路径以及幂等重试、controller 重启、依赖稍后出现、删除/finalizer、
   后端结果不确定和并发竞态等恢复路径；无法在当前层测试的部分要明确记录由哪一层验证。
 - Secret、token、kubeconfig 及具体生产凭据不得提交到仓库。
-- `deploy/dev/` 与 `deploy/prod/` 使用相同制品；生产版本只通过 promotion 更新。
+- 部署 role 位于 `deploy/ansible/`，环境声明位于 homelab-infra；Dev 与 Prod 使用同一 release
+  （git tag）的制品，生产版本只通过 promotion 更新。
 - 内部专用不构成降低测试、版本、恢复、安全和可审计要求的理由。

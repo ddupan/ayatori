@@ -74,13 +74,14 @@ func TestCredentialPreparationOptions(t *testing.T) {
 func TestManagerFlagOverrides(t *testing.T) {
 	options := parseTestOptions(t,
 		"--metrics-bind-address=:9090", "--metrics-secure=false", "--health-probe-bind-address=:9091",
-		"--leader-elect", "--webhook-port=-1", "--metrics-cert-path=/fixture/metrics",
+		"--leader-elect", "--leader-election-namespace=ayatori-system", "--webhook-port=-1", "--metrics-cert-path=/fixture/metrics",
 		"--metrics-cert-name=server.crt", "--metrics-cert-key=server.key", "--webhook-cert-path=/fixture/webhook",
 		"--webhook-cert-name=hook.crt", "--webhook-cert-key=hook.key",
 	)
 	manager := options.manager.configuration()
 	if manager.Metrics.BindAddress != ":9090" || manager.Metrics.SecureServing || manager.Metrics.FilterProvider != nil ||
-		manager.HealthProbeBindAddress != ":9091" || !manager.LeaderElection {
+		manager.HealthProbeBindAddress != ":9091" || !manager.LeaderElection ||
+		manager.LeaderElectionNamespace != "ayatori-system" {
 		t.Fatal("manager flags not applied")
 	}
 	if manager.Metrics.CertDir != "/fixture/metrics" || manager.Metrics.CertName != "server.crt" || manager.Metrics.KeyName != "server.key" {

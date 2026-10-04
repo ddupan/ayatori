@@ -1,0 +1,62 @@
+# Ansible 只应用与运行时版本绑定的第三方 CRD/RBAC 和 Flux 入口；仓库内清单由 Flux 同步。
+- name: 下载 ESO 上游清单
+  ansible.builtin.get_url:
+    url: https://github.com/external-secrets/external-secrets/releases/download/{{ eso_version }}/external-secrets.yaml
+    dest: "{{ deploy_state_dir }}/external-secrets-{{ eso_version }}.yaml"
+    mode: "0600"
+    checksum: sha256:{{ eso_manifest_sha256 }}
+  register: eso_manifest_download
+  retries: 3
+  delay: 5
+  until: eso_manifest_download is succeeded
+
+- name: 读取 ESO 上游清单
+  ansible.builtin.slurp:
+    src: "{{ deploy_state_dir }}/external-secrets-{{ eso_version }}.yaml"
+  register: eso_manifest
+
+# 集群外运行只取 CRD 与 controller ClusterRole；Deployment、webhook 与 cert-controller 不适用于 API-only。
+- name: 生成 ESO CRD 与 ClusterRole 清单
+  ansible.builtin.copy:
+    content: |
+      {% for d in eso_manifest.content | b64decode | from_yaml_all if d and (d.kind == 'CustomResourceDefinition'
+         or (d.kind == 'ClusterRole' and d.metadata.name == 'external-secrets-controller')) %}
+      ---
+      {{ d | to_nice_yaml(width=4096) }}
+      {% endfor %}
+    dest: "{{ deploy_state_dir }}/external-secrets-api.yaml"
+    mode: "0600"
+
+- name: 应用 ESO CRD 与 ClusterRole
+  ansible.builtin.include_tasks: apply.yml
+  vars:
+    manifest: "{{ deploy_state_dir }}/external-secrets-api.yaml"
+
+- name: 下载 Flux CRD
+  ansible.builtin.get_url:
+    url: https://github.com/fluxcd/{{ item.name }}/releases/download/{{ flux_version }}/{{ item.name }}.crds.yaml
+    dest: "{{ deploy_state_dir }}/{{ item.name }}-{{ flux_version }}.crds.yaml"
+    mode: "0600"
+    checksum: sha256:{{ item.sha256 }}
+  loop: "{{ flux_crds }}"
+  register: flux_crd_download
+  retries: 3
+  delay: 5
+  until: flux_crd_download is succeeded
+
+- name: 应用 Flux CRD
+  ansible.builtin.include_tasks: apply.yml
+  vars:
+    manifest: "{{ deploy_state_dir }}/{{ item.name }}-{{ flux_version }}.crds.yaml"
+  loop: "{{ flux_crds }}"
+
+- name: 生成引导对象
+  ansible.builtin.template:
+    src: bootstrap.yaml.j2
+    dest: "{{ deploy_state_dir }}/bootstrap.yaml"
+    mode: "0600"
+
+- name: 应用引导对象
+  ansible.builtin.include_tasks: apply.yml
+  vars:
+    manifest: "{{ deploy_state_dir }}/bootstrap.yaml"

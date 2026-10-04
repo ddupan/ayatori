@@ -31,6 +31,7 @@ type managerOptions struct {
 	webhookCertKey       string
 	webhookPort          int
 	enableLeaderElection bool
+	leaderElectionNS     string
 	probeAddr            string
 	secureMetrics        bool
 	enableHTTP2          bool
@@ -43,6 +44,7 @@ func (o *managerOptions) bindFlags(flags *flag.FlagSet) {
 	flags.BoolVar(&o.enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flags.StringVar(&o.leaderElectionNS, "leader-election-namespace", "", "选主 Lease 所在 namespace；集群外运行时必须设置")
 	flags.BoolVar(&o.secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flags.StringVar(&o.webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")

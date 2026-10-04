@@ -1,0 +1,55 @@
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: homelab-postgresql-admin
+  namespace: ayatori-system
+spec:
+  provider:
+    vault:
+      server: https://bao.ad.ddupan.top:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: ${OPENBAO_KUBERNETES_MOUNT}
+          role: ${OPENBAO_EXTERNAL_SECRETS_ROLE}
+          serviceAccountRef:
+            name: external-secrets-openbao-login
+            audiences: [openbao]
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ${POSTGRESQL_INSTANCE}-admin
+  namespace: ayatori-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: homelab-postgresql-admin
+    kind: SecretStore
+  target:
+    name: ${POSTGRESQL_INSTANCE}-admin
+    creationPolicy: Owner
+  data:
+  - secretKey: username
+    remoteRef:
+      key: ${MANAGEMENT_CREDENTIAL_PATH}
+      property: username
+  - secretKey: password
+    remoteRef:
+      key: ${MANAGEMENT_CREDENTIAL_PATH}
+      property: password
+---
+apiVersion: database.ayatori.ddupan.top/v1alpha1
+kind: PostgreSQLInstance
+metadata:
+  name: ${POSTGRESQL_INSTANCE}
+spec:
+  endpoint:
+    host: ${POSTGRESQL_HOST}
+    hostaddr: ${POSTGRESQL_HOSTADDR}
+    port: ${POSTGRESQL_PORT}
+    database: postgres
+    sslMode: verify-full
+  adminCredentialRef:
+    name: ${POSTGRESQL_INSTANCE}-admin

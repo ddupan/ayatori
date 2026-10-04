@@ -1,0 +1,24 @@
+- name: 校验部署声明
+  ansible.builtin.assert:
+    that:
+      - ayatori_environment in ['dev', 'prod']
+      - ayatori_postgresql_instance.name is match('^[a-z0-9-]+$')
+      - ayatori_postgresql_instance.host is string
+      - ayatori_postgresql_instance.hostaddr is string
+      - ayatori_postgresql_instance.port | int > 0
+    fail_msg: 需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance
+
+- name: 创建部署状态目录
+  ansible.builtin.file:
+    path: "{{ deploy_state_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: 部署 k0s API
+  ansible.builtin.import_tasks: k0s.yml
+
+- name: 引导 API 对象与 Flux 入口
+  ansible.builtin.import_tasks: bootstrap.yml
+
+- name: 部署控制面容器
+  ansible.builtin.import_tasks: containers.yml

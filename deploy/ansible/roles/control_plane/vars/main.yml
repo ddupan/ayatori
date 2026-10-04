@@ -1,0 +1,61 @@
+# 所有容器使用 host 网络访问本机 API，只监听 127.0.0.1；端口互不冲突。
+containers:
+  - name: external-secrets
+    image: "{{ eso_image }}"
+    identity: external-secrets
+    args:
+      - --namespace={{ control_namespace }}
+      - --enable-cluster-store-reconciler=false
+      - --enable-cluster-external-secret-reconciler=false
+      - --enable-cluster-push-secret-reconciler=false
+      - --enable-generator-state=false
+      - --metrics-addr=127.0.0.1:8180
+      - --live-addr=127.0.0.1:8182
+    memory: 256M
+
+  - name: flux-source-controller
+    image: "{{ flux_source_image }}"
+    identity: flux-source-controller
+    env: {RUNTIME_NAMESPACE: flux-system}
+    volumes: [flux-source-data:/data:U]
+    args:
+      - --storage-path=/data
+      - --storage-addr=127.0.0.1:9090
+      - --storage-adv-addr=127.0.0.1:9090
+      - --metrics-addr=127.0.0.1:8280
+      - --health-addr=127.0.0.1:9440
+    memory: 256M
+
+  - name: flux-kustomize-controller
+    image: "{{ flux_kustomize_image }}"
+    identity: flux-kustomize-controller
+    env: {RUNTIME_NAMESPACE: flux-system}
+    args:
+      - --no-remote-bases
+      - --concurrent=1
+      - --concurrent-ssa=1
+      - --metrics-addr=127.0.0.1:8281
+      - --health-addr=127.0.0.1:9441
+    memory: 512M
+
+  - name: ayatori-manager
+    image: "{{ ayatori_image }}"
+    identity: ayatori-controller
+    args:
+      - --leader-elect
+      - --leader-election-namespace={{ control_namespace }}
+      - --health-probe-bind-address=127.0.0.1:8081
+      - --webhook-port=-1
+      - --zap-devel=false
+      - --openbao-address={{ openbao_address }}
+      - --openbao-auth-mount={{ openbao_kubernetes_mount }}
+      - --openbao-auth-role={{ openbao_controller_role }}
+      - --openbao-service-account-namespace={{ control_namespace }}
+      - --openbao-service-account-name=database-openbao-login
+      - --database-secret-namespace={{ control_namespace }}
+      - --database-root-cert=/identity/postgresql-ca.crt
+      - --database-credential-mount=kv
+      - --database-credential-prefix={{ database_credential_prefix }}
+      - --database-provision-resources
+      - --database-credential-url-base={{ openbao_address }}
+    memory: 256M
