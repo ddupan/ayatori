@@ -35,6 +35,8 @@ type CredentialBackend interface {
 	ProvisionLocation(databaseUID string) (credential.Location, error)
 	ReadCredential(ctx context.Context, location credential.Location, version int64) (credential.ApplicationCredential, error)
 	CreateCredential(ctx context.Context, location credential.Location, value credential.ApplicationCredential) (int64, error)
+	// ReadLatestCredential 只用于导入登记前读取管理员声明位置的最新版本。
+	ReadLatestCredential(ctx context.Context, location credential.Location) (credential.ApplicationCredential, int64, error)
 	// DestroyCredential 只在 Delete 回收时永久删除固定位置的全部版本。
 	DestroyCredential(ctx context.Context, location credential.Location) error
 }
@@ -92,8 +94,14 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	case database.Reclaim:
 		return ctrl.Result{RequeueAfter: dependencyRetry}, r.reclaim(ctx, state, db)
 	}
-	if !db.RequiresProvisioning() || r.Credentials == nil {
+	if r.Credentials == nil {
 		return ctrl.Result{}, nil
+	}
+	if db.Verifies() {
+		if r.PostgreSQL == nil {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{RequeueAfter: dependencyRetry}, r.importDatabase(ctx, state, db)
 	}
 	if err := r.reconcile(ctx, state, db); err != nil {
 		return ctrl.Result{}, err
@@ -152,6 +160,35 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	return r.save(ctx, state, db, false)
 }
 
+// importDatabase 只读验证导入或重新开放的资源：凭据、catalog 身份与 owner、扩展、实际登录；
+// 导入在全部通过后首次登记确认身份，之后每轮按确认身份重新验证。不改密码、owner、权限或扩展。
+func (r *DatabaseReconciler) importDatabase(ctx context.Context, state *databaseState, db *database.Database) error {
+	if db.PlanImport() == database.Wait {
+		return r.save(ctx, state, db, true)
+	}
+	var value credential.ApplicationCredential
+	var version int64
+	var credentialErr error
+	if version = db.CredentialVersion(); version > 0 {
+		value, credentialErr = r.Credentials.ReadCredential(ctx, db.CredentialLocation(), version)
+	} else {
+		value, version, credentialErr = r.Credentials.ReadLatestCredential(ctx, db.ImportLocation())
+	}
+	target := state.target
+	management, err := r.Secrets.Read(ctx, target.Definition().AdminCredential())
+	var facts database.ResourceFacts
+	if err == nil {
+		facts, err = r.PostgreSQL.InspectResources(ctx, target, management, db)
+	}
+	if db.ObserveImport(value, version, credentialErr, facts, err) == database.InspectExtensions {
+		extensions, err := r.PostgreSQL.InspectExtensions(ctx, target, management, db)
+		if db.ObserveExtensions(extensions, err) == database.VerifyLogin {
+			db.LoginVerified(r.PostgreSQL.VerifyLogin(ctx, target, db, value))
+		}
+	}
+	return r.save(ctx, state, db, true)
+}
+
 // reclaim 按 Delete 策略逐步清理已释放的资源：数据库 → 角色 → 凭据 → 删除 Database。
 // 每轮最多一次外部写入；对象已不存在则跳过，同名但身份不符则停止并保留 finalizer。
 func (r *DatabaseReconciler) reclaim(ctx context.Context, state *databaseState, db *database.Database) error {
@@ -201,9 +238,6 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 		return nil, client.IgnoreNotFound(err)
 	}
 	state := &databaseState{object: object}
-	if object.Spec.Source != "Provision" {
-		return state, nil
-	}
 	if ref := object.Spec.TenantRef; ref != nil {
 		tenant := &databasev1alpha1.PostgreSQLTenant{}
 		err := r.Reader.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: string(ref.Name)}, tenant)
@@ -246,6 +280,15 @@ func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db 
 		}
 		if r.PostgreSQL != nil || lifecycle {
 			presentResources(object, desired.Resources)
+		}
+		// 导入登记写入实例身份；导入或重新开放验证通过后写 Available。Released 由 TenantReconciler
+		// 在有绑定时写入；管理员清除 spec.tenantRef 后才允许回到 Available，因此不会覆盖释放记录。
+		if object.Status.InstanceUID == "" && desired.Binding.InstanceUID != "" {
+			object.Status.InstanceUID = types.UID(desired.Binding.InstanceUID)
+		}
+		if desired.Binding.Phase == database.Available && object.Spec.TenantRef == nil &&
+			(object.Status.Phase == "" || object.Status.Phase == database.Released) {
+			object.Status.Phase = database.Available
 		}
 		ready := metav1.Condition{
 			Type: readyCondition, Status: metav1.ConditionFalse, Reason: "ProvisioningIncomplete",
@@ -296,6 +339,9 @@ func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
 	}
 	if ref := object.Status.CredentialRef; ref != nil {
 		result.Credential.Location = &credential.Location{Mount: ref.Mount, Path: ref.Path}
+	}
+	if ref := object.Spec.CredentialRef; ref != nil {
+		result.ImportLocation = &credential.Location{Mount: ref.Mount, Path: ref.Path}
 	}
 	if condition := meta.FindStatusCondition(object.Status.Conditions, credentialsReadyCondition); condition != nil {
 		result.Credential.Phase, result.Credential.Message = credentialPhase(condition.Reason), condition.Message

@@ -1,7 +1,7 @@
 # Database 模块
 
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
-管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证、凭据位置公布与 Retain/Delete 回收；导入尚未完成。
+管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证、凭据位置公布、Retain/Delete 回收与显式导入。
 
 ## 当前设计（2026-09-24）
 
@@ -181,7 +181,7 @@ controller-runtime 串行执行，多副本部署依靠既有 leader election；
 
 成功只设置 `CredentialsReady=True`；只准备凭据时 Database Ready 保持 False/ProvisioningIncomplete，
 Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
-回收见下文“释放与回收”。导入尚未接入，不要作为完整 DBaaS 部署。
+回收见下文“释放与回收”，导入见“显式导入与重新开放”。
 
 单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
@@ -253,7 +253,7 @@ Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotRead
    OpenBao 在线。尚未产生 Database 的 Tenant 直接删除。
 2. `Released` 之后 `reclaimPolicy` 由 CEL 固定；Released 不再供应，也不自动分配给新 Tenant。
 3. **Retain**：保留数据库、角色与凭据，不撤销访问。管理员删除 Database CR 时只移除 finalizer，
-   外部对象原样保留；重新开放给新申请的流程尚未实现。
+   外部对象原样保留。重新开放见下节。
 4. **Delete**（仅 Provision 来源；导入资源不隐含删除授权）：`DatabaseReconciler` 按已确认 OID
    逐步清理，每轮一步，对象已不存在则跳过，同名但身份不符则 Conflict 并保留 finalizer：
    - 阻止应用登录（`NOLOGIN`）、关闭连接入口、以 owner 身份终止该角色在本库的会话，再
@@ -266,6 +266,31 @@ Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotRead
 `DatabaseReconciler` 在未启用凭据准备时也会注册，只处理删除保护与 Retain 放行；Delete 回收需要
 启用资源供应。真实 PostgreSQL/OpenBao 集成测试覆盖：应用会话被终止、库与角色删除、凭据永久
 删除、Database 删除；Retain 保留外部对象；清理中途同名角色被重建时停止。
+
+## 显式导入与重新开放
+
+管理员以 `source: Import` 登记尚无记录的已有对象：`instanceRef`、`database`、`loginRole` 与
+`spec.credentialRef`（已有七键凭据的位置，必须位于部署配置的 mount 与前缀内）。
+
+Released 资源已具备导入成功的全部确认（OID、凭据位置与版本、Instance UID），不需要删除后重新
+导入。对照 PV 清除 `claimRef`：管理员处置旧访问后清除 Released Database 的 `spec.tenantRef`，
+这就是重新开放的显式授权；controller 按确认身份重新验证后回到 `Available`，可被新 Tenant 以
+`databaseRef` 申请，新绑定写入新 Tenant 的 UID。仍保留旧 `tenantRef` 的 Released 记录只报告等待。
+来源不变：动态供应的资源重新开放后仍可使用 Delete 回收。旧使用者已持有的密码不会因此失效；
+如需改密，由管理员在清除 `tenantRef` 前人工处理（Bao 版本变化会被视为漂移并报 Conflict）。
+
+导入与重新开放都由 `DatabaseReconciler`（需启用凭据准备与资源供应）只读验证，不再创建对象。
+导入在全部通过后首次登记：
+
+1. 读取 `spec.credentialRef` 最新版本，内容须与 database、loginRole 与 Instance endpoint 一致；
+2. 数据库与角色存在，owner 就是 loginRole，管理账号对该库有 CONNECT；
+3. Tenant 申请的扩展已安装（导入不安装扩展）；
+4. 用该凭据实际登录目标库。
+
+登记把本轮观察到的 OID、凭据版本与 Instance UID 写入 status，`status.phase=Available`、
+`Ready=True`；导入本身就是管理员对该名称的显式授权。之后每轮按确认身份重新验证：对象重建、
+owner 变化或凭据版本漂移报 Conflict。导入不改密码、owner 或权限，不装扩展；回收只支持 Retain。
+Tenant 以 `databaseRef` 申请 Available 的导入资源，绑定后同样公布凭据位置。
 
 ## OpenBao Kubernetes 认证会话
 
