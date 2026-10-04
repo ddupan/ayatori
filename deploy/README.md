@@ -51,6 +51,18 @@ collections:
 ```
 
 OpenBao mount/role、凭据前缀与管理凭据路径由 `ayatori_environment` 推导，见 role defaults。
+
+可选的 `ayatori_gitops`（`{url, path, branch}`，branch 默认 `main`）让本机 Flux 再同步部署方仓库
+中的一个目录，用于以 GitOps 声明 namespace、PostgreSQLTenant 与 PostgreSQLDatabase：
+
+```yaml
+ayatori_gitops:
+  url: https://git.ddupan.top/panxiao81/homelab-infra.git
+  path: ./clusters/ayatori-dev
+```
+
+该 Kustomization 以 `flux-system/gitops-tenants` 模拟应用，只能管理上述三类资源，其他对象被
+apiserver 拒绝；`prune: true`，从目录移除 Tenant 即释放（默认 Retain，不删数据）。
 Promotion 即把 Prod 安装的 release 改为 Dev 已验收的 tag。
 
 首次部署后，OpenBao 的 Kubernetes auth mount 需要本环境 API 的公开 CA

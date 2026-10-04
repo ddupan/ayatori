@@ -1,9 +1,10 @@
 # 对外接口：部署方只声明环境与该环境的 PostgreSQL 实例，其余均由本 role 推导。
 #   ayatori_environment: dev | prod
 #   ayatori_postgresql_instance: {name, host, hostaddr, port}
+#   ayatori_gitops（可选）: {url, path, branch=main}，Flux 同步其中的 namespace、Tenant 与 Database
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，
 # Release 工作流校验它与 galaxy.yml、git tag 一致。
-ayatori_version: v0.1.0
+ayatori_version: v0.1.1
 # 完全不可用的 release 不升版本而是重发同名 tag，部署时重新拉取并按镜像 ID 变化重启。
 ayatori_image: zot.ad.ddupan.top/panxiao81/ayatori-manager:{{ ayatori_version }}
 
