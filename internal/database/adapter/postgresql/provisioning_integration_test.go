@@ -208,6 +208,7 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 	t.Run("Retain 保留外部资源", func(t *testing.T) { testReclaimRetain(t, f) })
 	t.Run("回收遇到同名重建", func(t *testing.T) { testReclaimConflict(t, f) })
 	t.Run("导入与重新开放", func(t *testing.T) { testImport(t, f) })
+	t.Run("动态供应资源重新开放", func(t *testing.T) { testReopenProvisioned(t, f) })
 	t.Run("导入 owner 不符", func(t *testing.T) { testImportOwnerMismatch(t, f) })
 	t.Run("实际manager观察与重启", func(t *testing.T) { testProvisioningManager(t, f) })
 }
