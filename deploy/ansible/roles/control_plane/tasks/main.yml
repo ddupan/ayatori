@@ -6,6 +6,7 @@
       - ayatori_postgresql_instance.host is string
       - ayatori_postgresql_instance.hostaddr is string
       - ayatori_postgresql_instance.port | int > 0
+      - ayatori_gitops is not defined or (ayatori_gitops.url is string and ayatori_gitops.path is match('^\\./'))
     fail_msg: 需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance
 
 - name: 创建部署状态目录

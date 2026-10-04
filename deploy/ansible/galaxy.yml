@@ -1,7 +1,7 @@
 # 仅作打包：让部署方以 git 子目录按 release tag 安装本 role。版本与 git tag 一致。
 namespace: panxiao81
 name: ayatori
-version: 0.1.0
+version: 0.1.1
 description: 部署 Ayatori API-only 控制面
 readme: README.md
 authors: [panxiao81]
