@@ -4,6 +4,7 @@
 - 日期：2026-10-04
 - 依据：维护者讨论、homelab-infra/wiki 现状盘点与成熟方案调研；落实
   [ADR-0006](0006-demand-driven-resource-scope.md) 中的 `LoadBalancer` 方向。
+- 领域设计：[LoadBalancer 领域模型](../loadbalancer/domain-model.md)。
 
 ## 问题
 
