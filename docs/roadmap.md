@@ -21,8 +21,9 @@
 
 - `Database`：PostgreSQL database、role、credential 与回收。
 - `LoadBalancer`：Envoy 配置/xDS、健康检查、固定 VIP 与 GoBGP 路由宣告。
-- `Bucket`：SeaweedFS bucket、policy、credential 与删除策略。
-- 按纵向价值选择先后，不为三者预先建立统一 provider 框架。
+- 按纵向价值选择先后，不为两者预先建立统一 provider 框架。
+- `Bucket` 不进入 Ayatori：SeaweedFS bucket、身份与凭据由 homelab-infra CI Terraform 管理，
+  重新评估条件见 [ADR-0011](decisions/0011-bucket-managed-by-ci-terraform.md)。
 
 ## 3. Human Executor 与延迟自动化
 
@@ -54,7 +55,7 @@
 ## 后续 Compute 验收场景
 
 Database 等首批资源优先落地。Compute 开始实施后，以 Laptop Rebuild Readiness 验证节点
-生命周期与恢复能力；该场景不作为首批 Database、LoadBalancer 或 Bucket 的交付前置条件：
+生命周期与恢复能力；该场景不作为首批 Database 或 LoadBalancer 的交付前置条件：
 
 1. 临时节点加入。
 2. laptop 上的 workload 被重建、迁移或形成可执行人工任务。

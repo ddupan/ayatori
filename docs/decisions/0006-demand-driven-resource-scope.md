@@ -2,6 +2,8 @@
 
 - 状态：Accepted
 - 日期：2026-09-20
+- 修订：2026-10-04 [ADR-0011](0011-bucket-managed-by-ci-terraform.md) 将 `Bucket` 移出优先方向，
+  改由 CI Terraform 管理。
 
 ## 背景
 

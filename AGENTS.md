@@ -6,9 +6,10 @@
 - 不要按传统私有云或公有云产品清单推导 Ayatori 应实现的资源。新增北向 API 前必须证明 homelab
   存在真实、重复的管理缺口，现有成熟 API/IaC 不能提供足够的生命周期、状态或权限体验；“后端
   能做到”或“其他云平台提供”本身不是产品需求。
-- 当前已确认的首要产品方向是 Database、LoadBalancer、Bucket/Object Storage；VirtualMachine
-  也具有明确价值，但南向实现较重。Run/Job 是验证 controller 与 adapter 的内部执行切片，不应
-  自动演化为 FaaS、Cloud Run 或应用托管产品。KaaS 仅在出现真实需求时评估，不是必达终点。
+- 当前已确认的首要产品方向是 Database、LoadBalancer；Bucket/Object Storage 由 CI Terraform
+  管理，不进入 Ayatori（ADR-0011）。VirtualMachine 也具有明确价值，但南向实现较重。Run/Job
+  是验证 controller 与 adapter 的内部执行切片，不应自动演化为 FaaS、Cloud Run 或应用托管产品。
+  KaaS 仅在出现真实需求时评估，不是必达终点。
 - Ayatori 复用 Kubernetes 的核心目标是 API machinery：对象存储与并发控制、list/watch、
   informer、RBAC、admission、版本化 API 和审计；不要据此推断 Ayatori 是 Kubernetes
   workload 平台，也不要默认复用 Kubernetes 的调度与数据面语义。
