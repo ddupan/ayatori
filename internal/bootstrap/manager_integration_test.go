@@ -54,22 +54,22 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	closeDatabaseConnections, err := registerDatabaseControllers(ctx, manager, options.database, baoClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeDatabaseConnections()
-	// 空 API 中没有供应目标；此处验证启用路径确实注册 controller，不访问外部 Bao。
+	// 空 API 中没有供应目标；启用凭据准备以验证完整装配路径确实注册 controller，不访问外部 Bao。
 	fixtureConfig := bao.NewConfig()
 	fixtureConfig.Address = "http://127.0.0.1:1"
 	fixtureClient, err := bao.NewClient(fixtureConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if baoClient == nil {
+		baoClient = fixtureClient
+	}
 	options.database.credentialMount = "secret"
-	if err := registerDatabaseSupplyController(manager, options.database, fixtureClient, nil); err != nil {
+	closeDatabaseConnections, err := registerDatabaseControllers(ctx, manager, options.database, baoClient)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer closeDatabaseConnections()
 	done := make(chan error, 1)
 	go func() { done <- manager.Start(ctx) }()
 	defer func() {

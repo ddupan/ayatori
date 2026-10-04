@@ -3,6 +3,7 @@ package controller
 import (
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
+	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +15,8 @@ const (
 	TenantFinalizer   = "database.ayatori.ddupan.top/tenant-protection"
 	DatabaseFinalizer = "database.ayatori.ddupan.top/database-protection"
 	InstanceFinalizer = "database.ayatori.ddupan.top/instance-protection"
+	// releasedPhase 是 Tenant 释放后的资源阶段，保留旧绑定身份。
+	releasedPhase = database.Released
 )
 
 // currentReady 只承认当前 generation 的 Ready=True 观察。
@@ -44,7 +47,7 @@ func bindingTenant(object *databasev1alpha1.PostgreSQLTenant) binding.Tenant {
 
 // bindingDatabase 把 Database CR 映射为绑定规则所需事实。
 func bindingDatabase(object *databasev1alpha1.PostgreSQLDatabase) binding.Database {
-	database := binding.Database{
+	facts := binding.Database{
 		Identity: binding.Identity{Name: object.Name, UID: string(object.UID)},
 		Instance: string(object.Spec.InstanceRef.Name), InstanceUID: string(object.Status.InstanceUID),
 		Name: string(object.Spec.Database), LoginRole: string(object.Spec.LoginRole), Source: object.Spec.Source,
@@ -52,9 +55,9 @@ func bindingDatabase(object *databasev1alpha1.PostgreSQLDatabase) binding.Databa
 		Ready: currentReady(object.Generation, object.Status.Conditions),
 	}
 	if ref := object.Spec.TenantRef; ref != nil {
-		database.Tenant = &binding.TenantIdentity{Namespace: ref.Namespace, Name: string(ref.Name), UID: string(ref.UID)}
+		facts.Tenant = &binding.TenantIdentity{Namespace: ref.Namespace, Name: string(ref.Name), UID: string(ref.UID)}
 	}
-	return database
+	return facts
 }
 
 func tenantReference(tenant binding.TenantIdentity) *databasev1alpha1.TenantReference {

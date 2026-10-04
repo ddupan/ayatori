@@ -35,6 +35,8 @@ type CredentialBackend interface {
 	ProvisionLocation(databaseUID string) (credential.Location, error)
 	ReadCredential(ctx context.Context, location credential.Location, version int64) (credential.ApplicationCredential, error)
 	CreateCredential(ctx context.Context, location credential.Location, value credential.ApplicationCredential) (int64, error)
+	// DestroyCredential 只在 Delete 回收时永久删除固定位置的全部版本。
+	DestroyCredential(ctx context.Context, location credential.Location) error
 }
 
 // PostgreSQLBackend 只返回 catalog 事实和 database 包定义的结果分类。
@@ -48,10 +50,13 @@ type PostgreSQLBackend interface {
 	InspectExtensions(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) (database.ExtensionFacts, error)
 	InstallExtensions(ctx context.Context, target instance.ObservationTarget, credentials instance.ManagementCredentials, db *database.Database, names []string) error
 	VerifyLogin(context.Context, instance.ObservationTarget, *database.Database, credential.ApplicationCredential) error
+	DropDatabase(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
+	DropRole(context.Context, instance.ObservationTarget, instance.ManagementCredentials, *database.Database) error
 }
 
-// DatabaseReconciler 是 PostgreSQLDatabase 的唯一 status 写入者：先准备凭据，
-// PostgreSQL 为 nil 时只做凭据准备。规则由 Database 聚合判断，这里只读写 API 和执行外部操作。
+// DatabaseReconciler 处理 PostgreSQLDatabase 的删除保护与回收，并供应资源：先准备凭据，
+// PostgreSQL 为 nil 时只做凭据准备，Credentials 为 nil 时只处理生命周期。
+// 规则由 Database 聚合判断，这里只读写 API 和执行外部操作。
 type DatabaseReconciler struct {
 	Client      client.Client
 	Reader      client.Reader
@@ -76,7 +81,18 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, err
 	}
 	db := database.Reconstitute(snapshot(state.object), state.dependencies)
-	if !db.RequiresProvisioning() {
+	switch db.PlanLifecycle() {
+	case database.Hold:
+		return ctrl.Result{RequeueAfter: dependencyRetry}, r.save(ctx, state, db, true)
+	case database.Forget:
+		if controllerutil.RemoveFinalizer(state.object, DatabaseFinalizer) {
+			return ctrl.Result{}, client.IgnoreNotFound(r.Client.Update(ctx, state.object))
+		}
+		return ctrl.Result{}, nil
+	case database.Reclaim:
+		return ctrl.Result{RequeueAfter: dependencyRetry}, r.reclaim(ctx, state, db)
+	}
+	if !db.RequiresProvisioning() || r.Credentials == nil {
 		return ctrl.Result{}, nil
 	}
 	if err := r.reconcile(ctx, state, db); err != nil {
@@ -93,20 +109,20 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	var value credential.ApplicationCredential
 	switch db.PlanCredential(location, err) {
 	case database.Save:
-		return r.save(ctx, state, db)
+		return r.save(ctx, state, db, false)
 	case database.CreateCredential:
 		_, existing := r.Credentials.ReadCredential(ctx, db.CredentialLocation(), 0)
 		if generated, ok := db.GenerateCredential(existing); ok {
 			version, err := r.Credentials.CreateCredential(ctx, db.CredentialLocation(), generated)
 			db.CredentialCreated(version, err)
 		}
-		return r.save(ctx, state, db)
+		return r.save(ctx, state, db, false)
 	case database.VerifyCredential:
 		value, err = r.Credentials.ReadCredential(ctx, db.CredentialLocation(), db.CredentialVersion())
 		db.VerifyCredential(value, err)
 	}
 	if r.PostgreSQL == nil || db.PlanResources() == database.Wait {
-		return r.save(ctx, state, db)
+		return r.save(ctx, state, db, false)
 	}
 	target := state.target
 	management, err := r.Secrets.Read(ctx, target.Definition().AdminCredential())
@@ -133,7 +149,50 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 			db.LoginVerified(r.PostgreSQL.VerifyLogin(ctx, target, db, value))
 		}
 	}
-	return r.save(ctx, state, db)
+	return r.save(ctx, state, db, false)
+}
+
+// reclaim 按 Delete 策略逐步清理已释放的资源：数据库 → 角色 → 凭据 → 删除 Database。
+// 每轮最多一次外部写入；对象已不存在则跳过，同名但身份不符则停止并保留 finalizer。
+func (r *DatabaseReconciler) reclaim(ctx context.Context, state *databaseState, db *database.Database) error {
+	if r.PostgreSQL == nil || r.Credentials == nil || state.dependencies.Instance == nil {
+		db.Reclaimed("Delete 回收", database.ErrUnavailable)
+		return r.save(ctx, state, db, true)
+	}
+	target := state.target
+	management, err := r.Secrets.Read(ctx, target.Definition().AdminCredential())
+	var facts database.ResourceFacts
+	if err == nil {
+		facts, err = r.PostgreSQL.InspectResources(ctx, target, management, db)
+	}
+	switch db.ObserveReclaim(facts, err) {
+	case database.DropDatabase:
+		db.Reclaimed("删除数据库", r.PostgreSQL.DropDatabase(ctx, target, management, db))
+	case database.DropRole:
+		db.Reclaimed("删除登录角色", r.PostgreSQL.DropRole(ctx, target, management, db))
+	case database.DestroyCredential:
+		// 凭据位置记录保留到 Database 删除为止，因此销毁成功后在本轮完成回收，不再重复判断。
+		err := r.Credentials.DestroyCredential(ctx, db.CredentialLocation())
+		db.Reclaimed("删除应用凭据", err)
+		if err == nil {
+			return r.finalize(ctx, state)
+		}
+	case database.Finalize:
+		return r.finalize(ctx, state)
+	}
+	return r.save(ctx, state, db, true)
+}
+
+// finalize 在外部资源清理完成后删除 Database；已在删除中时移除 finalizer。
+func (r *DatabaseReconciler) finalize(ctx context.Context, state *databaseState) error {
+	object := state.object
+	if object.DeletionTimestamp.IsZero() {
+		return client.IgnoreNotFound(r.Client.Delete(ctx, object))
+	}
+	if controllerutil.RemoveFinalizer(object, DatabaseFinalizer) {
+		return client.IgnoreNotFound(r.Client.Update(ctx, object))
+	}
+	return nil
 }
 
 func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseState, error) {
@@ -177,13 +236,15 @@ func (r *DatabaseReconciler) load(ctx context.Context, name string) (*databaseSt
 
 // save 记录本轮结果。OID 与凭据版本是已经发生的外部事实，resourceVersion 冲突时
 // 重新读取后再写，而不是丢弃；controller 是这些 status 字段的唯一写入者。
-func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db *database.Database) error {
+func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db *database.Database, lifecycle bool) error {
 	desired := db.Snapshot()
 	object := state.object
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		previous := object.Status.DeepCopy()
-		presentCredential(object, desired.Credential)
-		if r.PostgreSQL != nil {
+		if r.Credentials != nil {
+			presentCredential(object, desired.Credential)
+		}
+		if r.PostgreSQL != nil || lifecycle {
 			presentResources(object, desired.Resources)
 		}
 		ready := metav1.Condition{
@@ -223,8 +284,9 @@ func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db 
 
 func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
 	result := database.Snapshot{
-		Binding:   bindingDatabase(object),
-		Protected: controllerutil.ContainsFinalizer(object, DatabaseFinalizer),
+		Binding:       bindingDatabase(object),
+		ReclaimPolicy: database.ReclaimPolicy(object.Spec.ReclaimPolicy),
+		Protected:     controllerutil.ContainsFinalizer(object, DatabaseFinalizer),
 		Credential: database.CredentialState{
 			Version: object.Status.CredentialVersion,
 		},
@@ -291,12 +353,12 @@ func credentialPhase(reason string) database.CredentialPhase {
 	return database.CredentialPending
 }
 
-// +kubebuilder:rbac:groups=database.ayatori.ddupan.top,resources=postgresqldatabases,verbs=get;list;watch
+// +kubebuilder:rbac:groups=database.ayatori.ddupan.top,resources=postgresqldatabases,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=database.ayatori.ddupan.top,resources=postgresqldatabases/status,verbs=get;update;patch
 
 func (r *DatabaseReconciler) SetupWithManager(manager ctrl.Manager) error {
-	if r.Client == nil || r.Reader == nil || r.Credentials == nil {
-		return errors.New("database controller requires injected clients and credential backend")
+	if r.Client == nil || r.Reader == nil {
+		return errors.New("database controller requires injected clients")
 	}
 	return ctrl.NewControllerManagedBy(manager).Named("database").
 		For(&databasev1alpha1.PostgreSQLDatabase{}).

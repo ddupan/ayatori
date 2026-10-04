@@ -134,7 +134,15 @@ path "secret/data/applications/*" {
 需要不同前缀时同时配置 `--database-credential-prefix` 和对应 policy。仅设置
 `--openbao-address` 不会启用凭据创建。缺少认证配置或非法 mount/prefix 在启动时失败。
 新字段 CRD 必须先升级再启用 controller，否则 API pruning 会使确认记录无法保存。
-未来 Delete 清理才需要永久删除全部版本及 metadata 的权限，本切片不提前授予。
+使用 Delete 回收时，还需对同一前缀的 metadata 授予 `delete`（永久删除全部版本），例如：
+
+```hcl
+path "secret/metadata/applications/*" {
+  capabilities = ["delete"]
+}
+```
+
+只用 Retain 时不需要该权限。
 
 管理凭据由管理员维护并放入 controller namespace 的 Secret；controller 只读，不创建或修改。
 应用凭据固定七键：`username`、`password`、`database`、`host`、`hostaddr`、`port`、`sslmode`。

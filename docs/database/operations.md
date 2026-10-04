@@ -5,13 +5,12 @@
 
 ## 当前绑定切片的限制
 
-源码已接入绑定、Instance 观测、Bao 凭据准备与 PostgreSQL 供应（均需显式启用），未接入导入或删除清理。
+源码已接入绑定、Instance 观测、Bao 凭据准备、PostgreSQL 供应与 Retain/Delete 回收（供应相关需显式启用），未接入导入。
 绑定后 Tenant 依次报告 CredentialsPending、DatabaseNotReady，最后 CredentialsAvailable 并公布凭据位置；
 Ayatori 不投射 Secret，消费方集群自行读取。
-Tenant 删除会保留 `database.ayatori.ddupan.top/tenant-protection` 并报告 DeletionPending；
-Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理后移除路径。
-这是未完成能力的明确边界，不是已经实现的 Retain/Delete 恢复逻辑。不要将此切片部署为
-业务 DBaaS，也不要为了消除等待状态直接移除 finalizer；后续必须补齐清理与验收。
+Tenant 删除先把 Database 记为 Released 再移除 finalizer；Database 按回收策略保留或清理，见
+[释放与回收](README.md#释放与回收)。Delete 清理遇 Conflict 时保留 finalizer，核实同名对象后
+再处理；不要为了消除等待状态直接移除 finalizer。Released 重新开放给新申请尚未实现。
 
 凭据准备现在可单独启用，见[部署参数](deployment.md)。观察 Database 的
 `CredentialsReady`、固定 `status.credentialRef` 和 `status.credentialVersion`，不要导出

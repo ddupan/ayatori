@@ -42,7 +42,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 	}
 	tenant := bindingTenant(object)
 	if tenant.Deleting {
-		return r.wait(ctx, object, binding.Deleting, "DeletionPending", "删除清理尚未接入；保留 finalizer 和 Database 绑定，未执行后端删除")
+		return r.release(ctx, object, tenant)
 	}
 	target, err := tenant.Request.Resolve(tenant.Identity)
 	if err != nil {
@@ -75,6 +75,35 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	return r.confirm(ctx, object, database)
+}
+
+// release 先在 Database 记录释放，再移除 Tenant 的 finalizer：释放只需要 API 写入，
+// 不依赖 PostgreSQL 或 OpenBao 在线；外部资源按 Database 的回收策略另行处理。
+func (r *TenantReconciler) release(ctx context.Context, object *databasev1alpha1.PostgreSQLTenant, tenant binding.Tenant) (ctrl.Result, error) {
+	name := ""
+	if tenant.Database != nil {
+		name = tenant.Database.Name
+	} else if target, err := tenant.Request.Resolve(tenant.Identity); err == nil {
+		// 资源侧已写入但申请侧尚未确认时，动态 Database 也可能指向本 Tenant。
+		name = target.Name
+	}
+	if name != "" {
+		database, err := r.database(ctx, name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if database != nil && database.Spec.TenantRef != nil && string(database.Spec.TenantRef.UID) == tenant.Identity.UID &&
+			database.Status.Phase != releasedPhase {
+			database.Status.Phase = releasedPhase
+			if err := r.Client.Status().Update(ctx, database); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	if controllerutil.RemoveFinalizer(object, TenantFinalizer) {
+		return ctrl.Result{}, client.IgnoreNotFound(r.Client.Update(ctx, object))
+	}
+	return ctrl.Result{}, nil
 }
 
 // resolveDatabase 返回可绑定的 Database 对象；无法继续时返回 Issue 而不是错误。

@@ -66,9 +66,6 @@ func TestCredentialPreparationOptions(t *testing.T) {
 	if err := registerDatabaseSupplyController(nil, options.database, nil, nil); err == nil {
 		t.Fatal("启用凭据准备必须有显式配置的认证 client")
 	}
-	if err := registerDatabaseSupplyController(nil, databaseOptions{}, nil, nil); err != nil {
-		t.Fatal("默认停用凭据准备不应要求后端")
-	}
 	if err := registerDatabaseSupplyController(nil, databaseOptions{provisionResources: true}, nil, nil); err == nil {
 		t.Fatal("启用资源供应必须有管理连接及凭据准备")
 	}

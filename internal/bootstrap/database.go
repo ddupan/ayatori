@@ -66,8 +66,9 @@ func registerDatabaseSupplyController(manager ctrl.Manager, options databaseOpti
 	if options.provisionResources && (instances == nil || options.credentialMount == "") {
 		return fmt.Errorf("database resource provisioning requires management Secret namespace and credential mount")
 	}
+	// 未启用凭据准备时仍注册，只处理 Database 的删除保护与 Retain 放行。
 	if options.credentialMount == "" {
-		return nil
+		return wireDatabaseController(manager.GetClient(), manager.GetAPIReader(), nil, nil, options.secretNamespace).SetupWithManager(manager)
 	}
 	if baoClient == nil {
 		return fmt.Errorf("database credential preparation requires OpenBao authentication configuration")

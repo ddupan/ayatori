@@ -2,6 +2,7 @@ package openbao
 
 import (
 	"context"
+	"errors"
 
 	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
 )
@@ -33,4 +34,19 @@ func (c *Credentials) CreateCredential(ctx context.Context, location credentiald
 	}
 	// Create 的合同是 CAS=0 且回读版本 1 和七键完全一致。
 	return 1, nil
+}
+
+// DestroyCredential 永久删除固定位置的全部版本与 metadata，并回读确认已不存在。
+// 只在 Delete 回收时调用；位置必须是本适配器配置的 mount 与前缀。
+func (c *Credentials) DestroyCredential(ctx context.Context, location credentialdomain.Location) error {
+	if location.Mount != c.mount || !c.accepts(location.Path) {
+		return ErrInvalidLocation
+	}
+	if err := c.kv.DeleteMetadata(ctx, location.Path); err != nil {
+		return ErrUnavailable
+	}
+	if _, err := c.read(ctx, location.Path); !errors.Is(err, ErrNotFound) {
+		return ErrUncertain
+	}
+	return nil
 }

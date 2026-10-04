@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	sourceProvision  = "Provision"
 	extensionHstore  = "hstore"
 	extensionPlpgsql = "plpgsql"
 	extensionTrigram = "pg_trgm"
@@ -35,7 +36,7 @@ func fixture(t *testing.T) (database.Snapshot, database.Dependencies) {
 	databaseID := binding.Identity{Name: binding.DynamicDatabaseName(tenantID.UID), UID: "database"}
 	return database.Snapshot{
 		Binding: binding.Database{Identity: databaseID, Tenant: &tenantID, Instance: testInstance, InstanceUID: "instance-id",
-			Name: testApplication, LoginRole: testApplication, Source: "Provision"},
+			Name: testApplication, LoginRole: testApplication, Source: sourceProvision},
 		Protected: true,
 	}, database.Dependencies{
 		Tenant: &binding.Tenant{Identity: tenantID, Database: &databaseID, Phase: binding.Bound,
