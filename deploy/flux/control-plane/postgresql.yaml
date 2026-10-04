@@ -13,9 +13,10 @@ spec:
         kubernetes:
           mountPath: ${OPENBAO_KUBERNETES_MOUNT}
           role: ${OPENBAO_EXTERNAL_SECRETS_ROLE}
+          # 不设 audiences：OpenBao 不持有 reviewer JWT，以登录 JWT 自身调用 TokenReview，
+          # 该 JWT 必须带 API audience 才能被 apiserver 认证。
           serviceAccountRef:
             name: external-secrets-openbao-login
-            audiences: [openbao]
 ---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

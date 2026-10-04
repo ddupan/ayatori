@@ -8,4 +8,4 @@ authors: [panxiao81]
 license: [Apache-2.0]
 tags: [infrastructure]
 repository: https://git.ddupan.top/panxiao81/ayatori
-build_ignore: [.ansible-lint]
+build_ignore: [.ansible-lint, .ansible, .gitignore]

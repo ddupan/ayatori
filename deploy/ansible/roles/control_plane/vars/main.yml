@@ -52,6 +52,8 @@ containers:
       - --openbao-auth-role={{ openbao_controller_role }}
       - --openbao-service-account-namespace={{ control_namespace }}
       - --openbao-service-account-name=database-openbao-login
+      # 登录 JWT 兼作 TokenReview 凭据，必须使用 API audience（k0s 默认值）。
+      - --openbao-token-audience=https://kubernetes.default.svc
       - --database-secret-namespace={{ control_namespace }}
       - --database-root-cert=/identity/postgresql-ca.crt
       - --database-credential-mount=kv
