@@ -115,6 +115,9 @@ func TestReopenReleased(t *testing.T) {
 		state.Resources.RoleOID != role || state.Credential.Version != 1 {
 		t.Fatalf("重新开放应回到 Available 且保留确认身份：%+v", state)
 	}
+	if waiting := database.Reconstitute(reopened.Snapshot(), dependencies); !waiting.Verifies() {
+		t.Fatal("重新开放后等待申请时应继续只读验证，不得回到需要双向绑定的供应路径")
+	}
 	recreated := database.Reconstitute(snapshot, dependencies)
 	if recreated.ObserveImport(value, 1, nil, database.ResourceFacts{RoleOID: 12, DatabaseOID: owned, OwnerOID: 12, ManagerConnect: true}, nil) != database.Wait {
 		t.Fatal("释放期间对象被重建时不得重新开放")

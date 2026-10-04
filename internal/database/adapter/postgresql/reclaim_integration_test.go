@@ -153,3 +153,43 @@ func testReclaimConflict(t *testing.T, f *provisioningFixture) {
 		t.Fatal("同名重建的角色不得被删除")
 	}
 }
+
+// 动态供应的资源释放后重新开放：等待申请期间保持可申请，新 Tenant 绑定后回到供应路径并就绪。
+func testReopenProvisioned(t *testing.T, f *provisioningFixture) {
+	database := f.available(t, "reopen_provisioned", databasev1alpha1.ReclaimRetain)
+	confirmed := database.Status.DeepCopy()
+	f.release(t, database)
+	f.reconcile(t, database, databasedomain.ResourceStopped)
+	database.Spec.TenantRef = nil
+	if err := f.api.Update(f.ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		f.reconcile(t, database, databasedomain.ResourceAvailable)
+	}
+	if database.Status.Phase != databasedomain.Available || database.Status.DatabaseOID != confirmed.DatabaseOID ||
+		database.Status.RoleOID != confirmed.RoleOID || database.Status.CredentialVersion != confirmed.CredentialVersion {
+		t.Fatalf("重新开放应保持 Available 与确认身份：%+v", database.Status)
+	}
+	next := &databasev1alpha1.PostgreSQLTenant{Name: "reopen-next", Namespace: controllerNamespace,
+		Spec: databasev1alpha1.PostgreSQLTenantSpec{DatabaseRef: &databasev1alpha1.DatabaseReference{Name: databasev1alpha1.ObjectName(database.Name)}}}
+	if err := f.api.Create(f.ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	tenants := &databasecontroller.TenantReconciler{Client: f.api, Reader: f.api}
+	key := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(next)}
+	if _, err := tenants.Reconcile(f.ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(t, database, databasedomain.ResourceAvailable)
+	if _, err := tenants.Reconcile(f.ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(next), next); err != nil {
+		t.Fatal(err)
+	}
+	if !meta.IsStatusConditionTrue(next.Status.Conditions, "Ready") || next.Status.CredentialRef == nil ||
+		next.Status.CredentialVersion != confirmed.CredentialVersion {
+		t.Fatalf("重新开放的资源应能被新 Tenant 申请并就绪：%+v", next.Status)
+	}
+}

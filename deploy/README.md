@@ -21,8 +21,10 @@ deploy/
 1. 在 main 上提交，把 `deploy/ansible/galaxy.yml` 的 `version` 与 role defaults 的
    `ayatori_version` 改为新版本。
 2. 在该提交上打 tag 并推送。Release 工作流校验两处版本与 tag 一致，用 ko 构建 manager
-   镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`（zot 只授予
-   create，tag 不可覆盖）。
+   镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`。
+
+完全不可用的 release 不升版本：修复合并后删除并在修复提交上重打同名 tag，Release 覆盖同名
+镜像；部署时 role 重新拉取镜像，镜像变化才重启容器。
 
 环境不跟随 main：Flux GitRepository 固定到 role 所属 release 的 tag，quadlet 拉取同名镜像。
 第三方组件（k0s、ESO、Flux）的版本、镜像 digest 与清单 sha256 固定在 role defaults。

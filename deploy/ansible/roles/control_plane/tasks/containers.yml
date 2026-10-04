@@ -41,6 +41,23 @@
     mode: "0444"
   notify: 重启控制面容器
 
+# 同名 tag 可能被重发：每次部署重新拉取，镜像 ID 变化时重启。
+- name: 拉取控制面镜像
+  ansible.builtin.shell: |
+    set -eu
+    before=$(podman image inspect --format '{{ "{{.Id}}" }}' "$IMAGE" 2>/dev/null || true)
+    podman pull -q "$IMAGE" >/dev/null
+    after=$(podman image inspect --format '{{ "{{.Id}}" }}' "$IMAGE")
+    [ "$before" = "$after" ] || echo changed
+  environment:
+    IMAGE: "{{ item.image }}"
+  loop: "{{ containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: image_pull
+  changed_when: "'changed' in image_pull.stdout"
+  notify: 重启控制面容器
+
 - name: 写入 quadlet
   ansible.builtin.template:
     src: container.j2

@@ -17,9 +17,11 @@ type registration struct {
 	version              int64
 }
 
-// Verifies 表示本记录只读验证而不供应：导入资源，或已释放的资源（等待或已被管理员重新开放）。
+// Verifies 表示本记录只读验证而不供应：导入资源、已释放的资源，以及重新开放后等待申请的资源。
+// 后者不能回到供应路径：供应以双向绑定为前提，否则 Database 等 Tenant 而 Tenant 等 Database 就绪。
 func (d *Database) Verifies() bool {
-	return !d.RequiresProvisioning() || d.released()
+	b := d.snapshot.Binding
+	return !d.RequiresProvisioning() || d.released() || (b.Phase == Available && b.Tenant == nil)
 }
 
 // PlanImport 判断本轮能否验证导入或重新开放的目标；冲突需要人工处理，不自动重入。
