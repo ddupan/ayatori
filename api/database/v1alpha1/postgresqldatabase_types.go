@@ -60,6 +60,7 @@ type PostgreSQLDatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.phase) || oldSelf.status.phase != 'Released' || self.spec.reclaimPolicy == oldSelf.spec.reclaimPolicy",message="reclaimPolicy is fixed once the database is released"
 // +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.databaseOID) || (has(self.status.credentialVersion) && has(self.status.instanceUID))",message="databaseOID requires confirmed credentials and instanceUID"
 // +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.roleOID) || has(self.status.databaseOID)",message="roleOID requires databaseOID"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.roleOID)) || (has(self.status) && has(self.status.roleOID) && self.status.roleOID == oldSelf.status.roleOID)",message="confirmed roleOID cannot change or be removed"

@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装、应用登录验证与凭据位置公布已实现；导入与删除清理未接入 |
+| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装、应用登录验证与凭据位置公布已实现；导入未接入；Retain/Delete 回收已实现 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
 | 最后更新 | 2026-09-29 |
 
@@ -79,11 +79,9 @@ Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database �
 权限由固定 namespace 的独立 Role 授予。Instance controller 已接入原生管理观察与引用删除
 保护，启用方式及 Ready 边界见 [模块说明](README.md#instance-原生管理观测)。
 
-当前有 Tenant/Database finalizer 保护，但**删除清理尚未实现**：Tenant 删除报告
-Ready=False/DeletionPending 并保留绑定与 finalizer，Database 的保护也不会被自动移除。
-还未实现删除流程开始后的回收策略固定、Retain 释放、Released 重新开放、外部清理、
-扩展只追加、Secret 默认名称解析与凭据交付。在后续清理协议和真实后端验收完成前，
-不能作为可用 DBaaS 部署，也不能通过强行移除 finalizer 把它视为已完成清理。
+Tenant 删除记录 Database `status.phase=Released` 后移除 Tenant finalizer；释放后 `reclaimPolicy`
+固定（CEL）。Retain 只在删除 Database 时放行 finalizer；Delete 由 controller 逐步清理外部对象后
+删除 Database。Released 重新开放尚未实现。见[释放与回收](README.md#释放与回收)。
 
 ## 通用约定
 
@@ -140,7 +138,7 @@ Database 是平台管理的集群级资源，不归属于应用 namespace，也�
 普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放；
 这些资源管理操作由平台管理员授权。controller 的绑定协调权限与用户申请权限分别配置。
 
-以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入与回收尚未实现：
+以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入与 Released 重新开放尚未实现：
 
 | 内容 | 合同 |
 | --- | --- |

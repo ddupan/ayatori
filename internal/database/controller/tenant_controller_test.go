@@ -269,12 +269,11 @@ func testBindingProtection(t *testing.T, apiClient client.Client) {
 	if err := apiClient.Delete(t.Context(), tenant); err != nil {
 		t.Fatal(err)
 	}
+	// 尚未产生 Database 时没有需要记录的释放，删除直接完成。
 	reconcileOK(t, reconciler, tenant)
-	reload(t, apiClient, tenant)
-	if tenant.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(tenant, TenantFinalizer) {
-		t.Fatal("未实现清理时不应提前移除删除保护")
+	if err := apiClient.Get(t.Context(), client.ObjectKeyFromObject(tenant), tenant); !apierrors.IsNotFound(err) {
+		t.Fatal("没有关联 Database 的 Tenant 应可删除", err)
 	}
-	assertNotReady(t, tenant, "DeletionPending")
 }
 
 func testStaleObservation(t *testing.T, apiClient client.Client) {

@@ -15,10 +15,11 @@ import (
 
 // Snapshot 是 Database 自身的持久状态，不含 resourceVersion 或 Conditions。
 type Snapshot struct {
-	Binding    binding.Database
-	Protected  bool
-	Credential CredentialState
-	Resources  ResourceState
+	Binding       binding.Database
+	ReclaimPolicy ReclaimPolicy
+	Protected     bool
+	Credential    CredentialState
+	Resources     ResourceState
 }
 
 type Instance struct {
@@ -53,6 +54,11 @@ const (
 	InspectExtensions
 	InstallExtensions
 	VerifyLogin
+	DropDatabase
+	DropRole
+	DestroyCredential
+	// Finalize 表示外部资源均已清理，可移除 finalizer 并删除 Database。
+	Finalize
 )
 
 type Database struct {

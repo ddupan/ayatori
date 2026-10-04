@@ -1,7 +1,7 @@
 # Database 模块
 
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
-管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证与凭据位置公布；导入与回收尚未完成。
+管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证、凭据位置公布与 Retain/Delete 回收；导入尚未完成。
 
 ## 当前设计（2026-09-24）
 
@@ -181,7 +181,7 @@ controller-runtime 串行执行，多副本部署依靠既有 leader election；
 
 成功只设置 `CredentialsReady=True`；只准备凭据时 Database Ready 保持 False/ProvisioningIncomplete，
 Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
-Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
+回收见下文“释放与回收”。导入尚未接入，不要作为完整 DBaaS 部署。
 
 单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
@@ -243,6 +243,29 @@ Ayatori 的凭据交付止于 OpenBao（[ADR-0010](../decisions/0010-credential-
 Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotReady`（已公布位置，等待资源、
 扩展与应用登录验证），最后 `Ready=True/CredentialsAvailable`。消费方集群按公布的位置与版本自行
 投射（例如固定该版本的 ExternalSecret）；其读取 policy 在接入时单独授予。
+
+## 释放与回收
+
+对照 PV/PVC：Tenant 删除是释放申请，回收策略属于 Database（默认 Retain）。
+
+1. 删除 Tenant 后，`TenantReconciler` 先把绑定的 Database `status.phase` 记为 `Released`（保留
+   `spec.tenantRef` 旧身份），再移除 Tenant finalizer。释放只需要 API 写入，不依赖 PostgreSQL 或
+   OpenBao 在线。尚未产生 Database 的 Tenant 直接删除。
+2. `Released` 之后 `reclaimPolicy` 由 CEL 固定；Released 不再供应，也不自动分配给新 Tenant。
+3. **Retain**：保留数据库、角色与凭据，不撤销访问。管理员删除 Database CR 时只移除 finalizer，
+   外部对象原样保留；重新开放给新申请的流程尚未实现。
+4. **Delete**（仅 Provision 来源；导入资源不隐含删除授权）：`DatabaseReconciler` 按已确认 OID
+   逐步清理，每轮一步，对象已不存在则跳过，同名但身份不符则 Conflict 并保留 finalizer：
+   - 阻止应用登录（`NOLOGIN`）、关闭连接入口、以 owner 身份终止该角色在本库的会话，再
+     `DROP DATABASE`；终止的只是应用角色自己的会话，不需要 `pg_signal_backend`；
+   - `DROP ROLE`，不使用 CASCADE/REASSIGN，角色仍拥有其他对象时转 Conflict 交给人工；
+   - 永久删除 OpenBao 中该位置的全部版本与 metadata 并回读确认；
+   - 删除 Database CR 并移除 finalizer。
+5. 绑定中的 Database 被直接删除时保持 finalizer，报告需先删除 Tenant。
+
+`DatabaseReconciler` 在未启用凭据准备时也会注册，只处理删除保护与 Retain 放行；Delete 回收需要
+启用资源供应。真实 PostgreSQL/OpenBao 集成测试覆盖：应用会话被终止、库与角色删除、凭据永久
+删除、Database 删除；Retain 保留外部对象；清理中途同名角色被重建时停止。
 
 ## OpenBao Kubernetes 认证会话
 

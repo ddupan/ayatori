@@ -247,6 +247,9 @@ spec:
         - spec
         type: object
         x-kubernetes-validations:
+        - message: reclaimPolicy is fixed once the database is released
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.phase) || oldSelf.status.phase
+            != ''Released'' || self.spec.reclaimPolicy == oldSelf.spec.reclaimPolicy'
         - message: databaseOID requires confirmed credentials and instanceUID
           rule: '!has(self.status) || !has(self.status.databaseOID) || (has(self.status.credentialVersion)
             && has(self.status.instanceUID))'

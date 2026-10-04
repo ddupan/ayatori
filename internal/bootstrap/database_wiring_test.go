@@ -33,8 +33,9 @@ func TestDatabaseExplicitWiring(t *testing.T) {
 	if databases.Client != writer || databases.Reader != directReader || databases.PostgreSQL != instances || databases.Secrets.Reader != directReader {
 		t.Fatal("资源供应必须复用 Instance 的连接池登记和直连 Secret 读取")
 	}
-	if wireDatabaseController(writer, directReader, nil, nil, "wiring-tests").PostgreSQL != nil {
-		t.Fatal("未启用资源供应时不得注入 PostgreSQL 后端")
+	lifecycleOnly := wireDatabaseController(writer, directReader, nil, nil, "wiring-tests")
+	if lifecycleOnly.PostgreSQL != nil || lifecycleOnly.Credentials != nil {
+		t.Fatal("未启用凭据准备与资源供应时只处理生命周期，不得注入后端")
 	}
 }
 

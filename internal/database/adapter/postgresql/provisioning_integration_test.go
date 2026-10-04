@@ -204,6 +204,9 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 		f.queryPostgres(t, "ALTER ROLE broken_login PASSWORD '"+rotatedPassword+"'")
 		f.reconcile(t, database, databasedomain.ResourceUnavailable)
 	})
+	t.Run("Delete 回收", func(t *testing.T) { testReclaimDelete(t, f) })
+	t.Run("Retain 保留外部资源", func(t *testing.T) { testReclaimRetain(t, f) })
+	t.Run("回收遇到同名重建", func(t *testing.T) { testReclaimConflict(t, f) })
 	t.Run("实际manager观察与重启", func(t *testing.T) { testProvisioningManager(t, f) })
 }
 
