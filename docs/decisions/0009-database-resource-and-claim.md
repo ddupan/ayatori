@@ -4,6 +4,8 @@
 - 日期：2026-09-24
 - 依据：维护者本轮设计讨论；本决定部分替代 [ADR-0008](0008-merge-postgresql-tenant-operator.md)
   对 ownership registry、自动恢复与 Retain 的沿用要求，不改变 Database 合并归属。
+- 修订：2026-10-04 [ADR-0010](0010-credential-delivery-ends-at-openbao.md) 取代下文
+  “OpenBao 应用凭据与 ESO 投射”的沿用要求；凭据交付止于 OpenBao 位置公布。
 
 ## 问题
 

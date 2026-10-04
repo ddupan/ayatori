@@ -422,6 +422,11 @@ func (in *PostgreSQLTenantStatus) DeepCopyInto(out *PostgreSQLTenantStatus) {
 		*out = new(BoundDatabaseReference)
 		**out = **in
 	}
+	if in.CredentialRef != nil {
+		in, out := &in.CredentialRef, &out.CredentialRef
+		*out = new(CredentialReference)
+		**out = **in
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

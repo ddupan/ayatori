@@ -18,8 +18,8 @@ const controllerLayer = "controller"
 func TestDatabaseExplicitWiring(t *testing.T) {
 	writer := fake.NewClientBuilder().Build()
 	directReader := fake.NewClientBuilder().Build()
-	tenants := wireTenantController(writer, directReader)
-	if tenants.Client != writer || tenants.Reader != directReader {
+	tenants := wireTenantController(writer, directReader, "https://bao.example.test")
+	if tenants.Client != writer || tenants.Reader != directReader || tenants.CredentialURLBase != "https://bao.example.test" {
 		t.Fatal("Tenant Reconciler 没有共享显式注入的 writer 与直连 reader")
 	}
 	instances := &postgresql.Instances{}

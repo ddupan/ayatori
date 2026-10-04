@@ -10,7 +10,7 @@
 | 最后更新 | 2026-09-25 |
 
 本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测已接入 manager；
-OpenBao 认证可显式启用；ESO 与完整供应装配仍是后续实现合同。
+OpenBao 认证与资源供应需显式启用；Ayatori 不投射凭据，消费方集群自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
 ## 依赖与顺序
 
@@ -19,7 +19,7 @@ OpenBao 认证可显式启用；ESO 与完整供应装配仍是后续实现合�
    `hostaddr` 的 IP SAN；配置 PostgreSQL 强制 TLS。
 3. 创建 PostgreSQL controller 管理 role 和管理 database 连接权限。
 4. 在 OpenBao KV v2 写入管理 role 凭据。
-5. 配置 OpenBao Kubernetes auth、controller policy 和面向 ESO 的读取 policy。
+5. 配置 OpenBao Kubernetes auth 与 controller policy；消费方集群读取应用凭据的 policy 由其接入时单独授予。
 6. 安装 ESO，配置独立的管理凭据同步身份和租户凭据读取身份。管理员在 controller
    namespace 创建管理 ExternalSecret，确认管理 Secret 已同步；另创建供租户使用的
    `ClusterSecretStore`。
@@ -51,7 +51,7 @@ Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径�
 | `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
 | `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience，必须匹配 OpenBao role |
 | `--database-credential-prefix` | 已实现，默认 `applications` | Database UID 路径的 mount-relative 前缀；不迁移已有位置 |
-| `--external-secret-store-name` | 必填 | controller 创建的 ExternalSecret 固定引用 |
+| `--database-credential-url-base` | 已实现，默认空 | OpenBao API 地址，只用于 Tenant status 中不含认证信息的 `credentialURL` |
 | `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
 | `--reconcile-timeout` | `30s` | 单轮 reconcile 中外部操作的总期限，必须大于零 |
 
@@ -96,9 +96,7 @@ Tenant 不能选择任意凭据路径。凭据必须能随 Database 保留并安
 consumer URL 仍使用无认证信息的 KV v2 API URL。
 
 base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空段、`.`、`..`、
-`data`/`metadata` API 层。ExternalSecret 固定命名为
-`<instanceRef>-<metadata.name>-postgresql`；目标 Secret 可由 Tenant 指定，但名称必须
-满足 Kubernetes Secret 名称校验，不限制命名内容，默认与 ExternalSecret 同名。
+`data`/`metadata` API 层。
 
 配置变化不得隐式迁移既有凭据。修改 KV mount/base path 或 consumer address 前必须
 停止 controller、评估现有 Database 与绑定，并走明确迁移。资源记录应能定位原凭据，
@@ -121,7 +119,7 @@ base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空
 已有对象仍须逐资源核实授权，不能凭基础属性接管。需要 superuser 的扩展不能扩大 controller
 权限。真实权限矩阵见 [Instance 原生管理观测](README.md#instance-原生管理观测)。
 
-## OpenBao 与 ESO
+## OpenBao
 
 当前凭据准备只需固定前缀下 KV v2 data 的 create/read/update 权限，不需要 metadata 或
 delete 权限，也不读取管理凭据路径。示例（`secret` 为测试 mount，需替换为实际配置）：
@@ -138,27 +136,21 @@ path "secret/data/applications/*" {
 新字段 CRD 必须先升级再启用 controller，否则 API pruning 会使确认记录无法保存。
 未来 Delete 清理才需要永久删除全部版本及 metadata 的权限，本切片不提前授予。
 
-管理凭据由管理员维护的 ExternalSecret 同步到 controller namespace；其 ESO 身份
-只读对应管理路径，不能供 Tenant 使用。租户 ESO 身份只读 tenant base path，不得
-读取 PostgreSQL 管理凭据。controller 不创建或修改管理 ExternalSecret／Secret。
-`ClusterSecretStore` 由平台管理员创建，controller 只引用，不创建或修改 Store。
-controller 创建的 ExternalSecret 与 Tenant 同 namespace；其 ownerReference 和 Retain 时的
-保留/清理须与凭据交付协议一起确定，不能把投射关系等同于 Database 的 GC 关系。目标
-Secret 包含固定七键：`username`、`password`、`database`、`host`、`hostaddr`、`port`、
-`sslmode`。
+管理凭据由管理员维护并放入 controller namespace 的 Secret；controller 只读，不创建或修改。
+应用凭据固定七键：`username`、`password`、`database`、`host`、`hostaddr`、`port`、`sslmode`。
+Ayatori 不投射应用凭据：消费方集群按 Tenant status 的 `credentialRef`/`credentialVersion`
+自行读取（例如其 GitOps 中的 ExternalSecret 固定该版本），读取所需的 Bao policy 在接入时
+单独授予，不使用能读取整个 tenant base path 的共享身份。
 
 ## Kubernetes RBAC
 
 - controller 按用例读/写 Instance、Database、Tenant 及其 status/finalizer 和 Event。
 - Database 不设置随 Tenant 级联删除的 ownerReference；导入、预留、回收和重新绑定授权限管理员。
-- controller 可在 Tenant namespace 创建、读取、更新、删除 ExternalSecret，并只读检查
-  对应 Secret 是否完成投射。
-- namespace 用户可以管理本 namespace Tenant，但不能管理 Instance、Store、controller
-  配置或其他 namespace 的 ExternalSecret。
+- controller 不需要 ExternalSecret 权限，也不读取 Tenant namespace 的 Secret。
+- namespace 用户可以管理本 namespace Tenant，但不能管理 Instance 或 controller 配置。
 - controller 只在自身 namespace 读取所引用管理 Secret 的 data，不获得跨 namespace
   的管理 Secret 读取权限。Instance 不允许自选 Secret namespace。
-- 对应用目标 Secret，controller 无需读取 data；验证登录使用从 OpenBao 读取的应用
-  凭据，只检查 Secret 存在性和 ESO 状态。
+- 验证应用登录使用从 OpenBao 读取的应用凭据，不经过任何 Kubernetes Secret。
 
 ## 升级与回滚
 

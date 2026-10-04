@@ -17,7 +17,7 @@
 2. 由管理员声明 Database，指定已有目标，回收策略默认 Retain；导入验证初始只读。
 3. 安全关联现有应用凭据；具体 API 待定，不把密码写入 CR，不因验证失败重置密码。
 4. Tenant 显式引用未绑定且可用的 Database；controller 验证要求并建立排他绑定，无额外名单审批。
-5. 验证实际登录与 ESO 交付；不满足时停止，不以修改原数据库作为默认修复。
+5. 验证实际登录与凭据位置公布，再由消费方集群投射；不满足时停止，不以修改原数据库作为默认修复。
 
 Released 资源复用前另需核实旧使用者的访问权限、数据交接与投射处置。保留旧绑定身份直到
 人工处理完成，不仅靠清空 claimRef 或修改 UID 授予新使用权。
@@ -36,7 +36,7 @@ Released 资源复用前另需核实旧使用者的访问权限、数据交接�
 ## 前置条件
 
 - 已验证 PostgreSQL/OpenBao 备份和恢复；记录恢复点。
-- Instance 已 Ready，目标 namespace 存在，ESO ClusterSecretStore Ready。
+- Instance 已 Ready，目标 namespace 存在，消费方集群已能读取对应 Bao 路径。
 - 最终 database/login role 当前由旧应用占用，但改名后的保留名称、新推导的 Bao path
   均不存在。
 - 已记录旧 database owner、grants、extensions、locale/encoding、连接配置和验证清单。
@@ -90,7 +90,7 @@ identifier 必须由管理员工具安全引用，不能把未经校验的值直
 
 - Database/Instance 身份及 Tenant 排他绑定正确；
 - OpenBao 凭据位置与 Database 管理范围及当前交付授权一致；
-- ExternalSecret Ready 且目标 Secret 已投射；
+- Tenant 已公布凭据位置，消费方集群的投射已就绪；
 - 新凭据可以通过 DNS host 和 IP hostaddr 分别登录空 database。
 
 ### 5. Restore
@@ -140,7 +140,7 @@ extension 应由 Tenant spec 创建。若 dump 仍包含 extension 定义，预�
 - 使用的 PostgreSQL major version 和命令版本；
 - dump/restore 返回码和对象差异；
 - DNS/IP TLS 登录结果；
-- ESO 投射与应用启动结果；
+- 消费方投射与应用启动结果；
 - 回滚演练结果；
 - 哪些命令或前置检查需要修订。
 

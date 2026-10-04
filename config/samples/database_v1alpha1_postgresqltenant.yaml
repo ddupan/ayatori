@@ -1,4 +1,4 @@
-# 二选一：动态申请或显式引用已有 Database；当前只有绑定协调，没有供应/交付 controller。
+# 二选一：动态申请或显式引用已有 Database。凭据位置公布在 status，投射由消费方集群自行完成。
 apiVersion: database.ayatori.ddupan.top/v1alpha1
 kind: PostgreSQLTenant
 metadata:
@@ -12,7 +12,6 @@ spec:
     loginRole: new_app
   extensions:
     - pgcrypto
-  secretName: new-app-postgresql
 ---
 apiVersion: database.ayatori.ddupan.top/v1alpha1
 kind: PostgreSQLTenant
@@ -22,4 +21,3 @@ metadata:
 spec:
   databaseRef:
     name: imported-app
-  secretName: existing-app-postgresql

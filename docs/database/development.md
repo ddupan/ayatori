@@ -13,11 +13,11 @@
 | 纯领域 | Instance 无 registry 就绪判定、排他绑定、Released 不自动复用、管理范围与冲突规则 |
 | envtest | 三资源 schema/status、RBAC、resourceVersion 并发、绑定单边更新/重启、依赖 watch、finalizer |
 | 真实 PostgreSQL/OpenBao | 同名不修改、显式导入只读验证、创建不确定报冲突、可靠步骤幂等、Delete 故障重试 |
-| 测试集群 | Tenant/namespace 删除不 GC Database、ESO 交付/释放、人工重新绑定前的旧访问处置 |
+| 测试集群 | Tenant/namespace 删除不 GC Database、人工重新绑定前的旧访问处置 |
 
 需故障注入外部成功而 API 写入失败、后端响应丢失、双 Tenant 竞争、同名新 UID、依赖稍后出现、
 Instance 删除与 Released 引用。冲突必须给出可操作而不泄密的诊断；不要求自动认领不确定结果。
-envtest 不运行 GC 或 ESO；这些行为必须由测试集群验证。
+envtest 不运行 GC；这类行为必须由测试集群验证。Ayatori 不投射凭据，交付验收止于 OpenBao 与 Tenant status。
 三资源 API 类型与 CRD 已实现，`make test` 包含真实 API server 验证：作用域、
 静态默认值、非法声明、status 写入隔离、Condition 唯一性、resourceVersion 冲突与绑定记录回读。
 另有绑定 controller 的真实 API server 测试：动态记录幂等、资源侧写入后故障注入、
@@ -94,11 +94,11 @@ container 的 Docker/Dev Container 环境。
 | 层次 | Kubernetes | PostgreSQL / OpenBao | 用途 |
 | --- | --- | --- | --- |
 | 单元测试 | fake client | fake client | SQL 计划、状态转换和错误分类 |
-| controller 集成测试 | envtest | fake adapter | CRD、watch、status、finalizer、ExternalSecret 对象 |
+| controller 集成测试 | envtest | fake adapter | CRD、watch、status、finalizer |
 | adapter 集成测试 | 不需要 | Docker Compose | 真实协议、权限和幂等行为 |
-| E2E | 一次性 Kind + ESO | Kind 内测试实例 | 凭据投射、TLS、完整网络和删除路径 |
+| E2E | 一次性 Kind | Kind 内测试实例 | TLS、完整网络和删除路径 |
 
-envtest 只启动 API server 和 etcd，没有 kubelet、scheduler、ESO 或 controller-manager，
+envtest 只启动 API server 和 etcd，没有 kubelet、scheduler 或 controller-manager，
 因此不能用它验证 Deployment、Pod 调度或 Service 网络。此类行为必须留给 Kind
 E2E。
 
@@ -134,8 +134,7 @@ make lint
 启动临时 API server/etcd，测试结束后自动关闭。
 
 规格实现后，快速测试必须覆盖默认值/校验、Condition `observedGeneration`、三资源的
-状态与绑定、不可变字段、extension 只追加、冲突和外部错误分类。envtest 只断言 controller 创建了正确
-的 ExternalSecret；它不能证明 ESO 已生成 Secret。
+状态与绑定、不可变字段、extension 只追加、冲突、外部错误分类与 Tenant 公布的凭据位置。
 
 ### 2. 启动 PostgreSQL/OpenBao adapter 依赖
 
@@ -173,7 +172,7 @@ POSTGRES_DEV_PORT=25432 OPENBAO_DEV_PORT=28200 make dev-up
 后续执行 `dev-smoke` 和 controller 时必须使用相同端口变量。
 
 Compose 使用明文 PostgreSQL/OpenBao dev 模式，不覆盖生产 TLS 合同。DNS SAN、IP SAN、
-Kubernetes auth、最小 policy 和 ESO 必须在 Kind E2E fixture 中验证。
+Kubernetes auth 与最小 policy 必须在 Kind E2E fixture 中验证。
 
 ### 3. 运行针对临时依赖的测试或 controller
 
@@ -202,9 +201,8 @@ make install
 make run
 ```
 
-此时 controller 运行在开发容器内，可以直接访问上面的回环端口。若要验证 Tenant
-Ready，专用 Kind 还必须安装 ESO、创建测试 ClusterSecretStore，并让 Kind workload
-能够访问测试 OpenBao。不要把包含
+此时 controller 运行在开发容器内，可以直接访问上面的回环端口。Tenant Ready 只需
+Database 就绪与凭据位置公布，不需要 ESO。不要把包含
 `127.0.0.1` 端点的样例部署到 Kind 内；Pod 中的回环地址只指向 Pod 自身。
 
 ### 4. 清理

@@ -15,7 +15,7 @@
 
 在已存在的 PostgreSQL 实例上供应独立数据库、一个兼任 owner 的 login role、申请的扩展及
 应用凭据；支持管理员显式导入已有数据库。Kubernetes API 管理声明与绑定，OpenBao 保存
-应用凭据，ESO 向应用 namespace 投射 Secret。
+应用凭据，并在 Tenant status 公布其位置；投射由消费方集群自行完成（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
 不运行 PostgreSQL、VM、存储、备份或 OpenBao；不提供跨实例数据迁移、自动密码轮换、
 多角色权限产品或跨系统事务。备份与数据恢复仍由管理员负责。
@@ -58,7 +58,7 @@ Database 自身必须声明 `instanceRef`，手工登记时同时指定实际数
 - Kubernetes spec 保存声明；受保护的资源绑定记录与 status 保存身份关联、操作进度和观察。
   它们通过 API 持久化，不因 controller 重启而消失。
 - PostgreSQL catalog 是 database、role、grant、extension 实际状态的来源。
-- OpenBao 是应用凭据的事实来源；ESO 状态和目标 Secret 存在性说明投射结果。
+- OpenBao 是应用凭据的事实来源；Ayatori 不在控制面投射 Secret（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 - Instance、Database、Tenant 以 UID 区分对象身份；namespace/name 用于定位，
   同名新 UID 不继承旧绑定。数据库 OID 仅供诊断，不是永久身份或删除授权。
 - 不新增 PostgreSQL 所有权表、安装身份表或 Retain 墓碑；COMMENT 也不能授权认领。
@@ -95,7 +95,7 @@ endpoint 变更由管理员负责评估，不验证物理服务器连续性，�
 3. 先在 Database 写入 Tenant namespace/name/UID，再在 Tenant status 写入 Database
    name/UID；双向记录一致后才允许供应或交付。
 4. 按已确认步骤建立凭据、role、database、授权和扩展，逐步回读。
-5. 验证应用登录与 ESO 投射后，Tenant 才可 Ready。
+5. 验证应用登录、公布已确认凭据位置后，Tenant 才可 Ready。
 
 绑定前固定有效目标；绑定或开始外部供应后不得通过修改名称或引用实施隐式迁移。
 每个 Database 最多一个使用者，每个 Tenant 最多一个 Database。
@@ -140,8 +140,7 @@ Database 不得设置会让它随 Tenant 消失的 ownerReference。
   Kubernetes；API 写入失败时不能宣称释放完成。仍有在途操作时不得跳过必要协调。
 - 管理员检查数据、旧账号访问与凭据后，显式授权重新绑定。保留数据的复用可以不清空数据，
   但必须由管理员确认新使用者应获得这些数据及旧使用者的权限处置。
-- 删除旧投射 Secret 或解除绑定不等于撤销 PostgreSQL 访问；Retain 不承诺自动撤权。
-  ExternalSecret/Secret 的保留与清理细节需随凭据交付协议明确。
+- 解除绑定不等于撤销 PostgreSQL 访问；Retain 不承诺自动撤权。消费方集群中的投射由其自行清理。
 
 ### Delete
 
@@ -183,7 +182,7 @@ CREATEDB、CREATEROLE 或 replication 权限。撤销 PUBLIC CONNECT，再授予
 
 应用密码使用安全随机源，只写 OpenBao；已有可信凭据可复用，不因失败生成第二份密码。
 新建时先安全保存并回读凭据，再创建角色；凭据写入本身结果不确定也适用人工冲突规则。
-Kubernetes 应用由 ESO 投射同 namespace Secret，controller 不直接写明文 Secret。
+Ayatori 不创建 ExternalSecret 或含凭据的 Secret；消费方按 Tenant status 公布的位置与版本自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
 凭据仍输出 username/password/database/host/hostaddr/port/sslmode 七键，不生成带密码 URI。
 Tenant status 提供 Secret 引用与无认证信息的 OpenBao API URL。
@@ -219,7 +218,7 @@ ProvisioningFailed、CredentialProjectionFailed。Released 应明确显示未可
 | 场景 | 必须验证的结果 |
 | --- | --- |
 | Instance 登记与重验 | 无 registry 依赖；真实凭据/TLS/管理权限检查 |
-| 动态供应与重复 reconcile | 独立资源记录、排他绑定、密码不变、实际登录与投射成功 |
+| 动态供应与重复 reconcile | 独立资源记录、排他绑定、密码不变、实际登录成功、凭据位置已公布 |
 | 显式导入 | 无数据/密码/owner 隐式修改；错误目标、已占用或 Released 资源的申请被拒绝 |
 | 同名未知资源 | Conflict，原数据库/角色/凭据不变 |
 | 并发申请与单边绑定 | 最多一个使用者；失败方不能开始危险外部操作 |

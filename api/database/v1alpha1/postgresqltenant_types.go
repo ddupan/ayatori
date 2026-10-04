@@ -28,9 +28,6 @@ type PostgreSQLTenantSpec struct {
 	// +kubebuilder:validation:XValidation:rule="oldSelf.all(e, e in self)",message="extensions can only be appended; controller never drops installed extensions"
 	// +optional
 	Extensions []string `json:"extensions,omitempty"`
-	// SecretName 指定 Tenant namespace 内的投射目标，省略时使用合同约定的默认名称。
-	// +optional
-	SecretName ObjectName `json:"secretName,omitempty"`
 }
 
 type PostgreSQLTenantStatus struct {
@@ -41,9 +38,14 @@ type PostgreSQLTenantStatus struct {
 	DatabaseRef *BoundDatabaseReference `json:"databaseRef,omitempty"`
 	// +optional
 	Phase string `json:"phase,omitempty"`
-	// SecretName 是已观察到的同 namespace 投射目标，不包含凭据值。
+	// CredentialRef 与 CredentialVersion 公布 OpenBao 中已确认的应用凭据位置和版本，不含凭据值。
+	// 投射由消费方所在集群自行完成：Ayatori 控制面可能不运行 workload，Tenant namespace
+	// 只是租户与 RBAC 边界，不代表 workload 所在 namespace。
 	// +optional
-	SecretName ObjectName `json:"secretName,omitempty"`
+	CredentialRef *CredentialReference `json:"credentialRef,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	CredentialVersion int64 `json:"credentialVersion,omitempty"`
 	// CredentialURL 只含 OpenBao API 位置，禁止嵌入认证信息。
 	// +optional
 	CredentialURL string `json:"credentialURL,omitempty"`

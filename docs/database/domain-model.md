@@ -41,7 +41,7 @@ Database 保护目标和管理范围、排他绑定、导入验证与 Retain/Del
 
 Tenant 表达申请与交付要求；可显式申请未绑定且可用的资源，不增加反向授权名单。
 绑定后检查数据库满足要求、
-应用凭据可登录且 ESO 投射完成，才可 Ready。Tenant 删除意味着释放使用关系。
+应用凭据可登录且已公布确认凭据位置，才可 Ready；投射归消费方（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。Tenant 删除意味着释放使用关系。
 
 第一版 Database 的生命周期边界包含一个 database、一个兼任 owner 的 LoginRole 及其
 应用凭据。LoginRole 与 CredentialLocation 随 Database 保留，不能因为 Tenant 消失就
