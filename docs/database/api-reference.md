@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装、应用登录验证与凭据位置公布已实现；导入未接入；Retain/Delete 回收已实现 |
+| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装、应用登录验证与凭据位置公布已实现；Retain/Delete 回收与显式导入已实现 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
 | 最后更新 | 2026-09-29 |
 
@@ -81,7 +81,7 @@ Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database �
 
 Tenant 删除记录 Database `status.phase=Released` 后移除 Tenant finalizer；释放后 `reclaimPolicy`
 固定（CEL）。Retain 只在删除 Database 时放行 finalizer；Delete 由 controller 逐步清理外部对象后
-删除 Database。Released 重新开放尚未实现。见[释放与回收](README.md#释放与回收)。
+删除 Database。Released 重新开放即删除旧记录后重新导入，见[显式导入](README.md#显式导入与重新开放)。
 
 ## 通用约定
 
@@ -138,7 +138,7 @@ Database 是平台管理的集群级资源，不归属于应用 namespace，也�
 普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放；
 这些资源管理操作由平台管理员授权。controller 的绑定协调权限与用户申请权限分别配置。
 
-以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入与 Released 重新开放尚未实现：
+以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD：
 
 | 内容 | 合同 |
 | --- | --- |

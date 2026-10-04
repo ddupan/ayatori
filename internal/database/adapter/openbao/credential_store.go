@@ -50,3 +50,22 @@ func (c *Credentials) DestroyCredential(ctx context.Context, location credential
 	}
 	return nil
 }
+
+// ReadLatestCredential 读取导入时管理员声明位置的最新版本及其版本号；登记后改用确认版本读取。
+func (c *Credentials) ReadLatestCredential(ctx context.Context, location credentialdomain.Location) (credentialdomain.ApplicationCredential, int64, error) {
+	if location.Mount != c.mount {
+		return credentialdomain.ApplicationCredential{}, 0, ErrInvalidLocation
+	}
+	secret, err := c.read(ctx, location.Path)
+	if err != nil {
+		return credentialdomain.ApplicationCredential{}, 0, err
+	}
+	if secret.VersionMetadata == nil || secret.VersionMetadata.Version < 1 {
+		return credentialdomain.ApplicationCredential{}, 0, ErrUnavailable
+	}
+	value, err := credentialdomain.ParseApplicationCredential(secret.Data)
+	if err != nil {
+		return credentialdomain.ApplicationCredential{}, 0, ErrConflict
+	}
+	return value, int64(secret.VersionMetadata.Version), nil
+}

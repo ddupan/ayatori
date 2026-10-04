@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	instanceUID      = "instance-id"
 	sourceProvision  = "Provision"
 	extensionHstore  = "hstore"
 	extensionPlpgsql = "plpgsql"
@@ -35,14 +36,14 @@ func fixture(t *testing.T) (database.Snapshot, database.Dependencies) {
 	tenantID := binding.TenantIdentity{Namespace: "apps", Name: testApplication, UID: "tenant"}
 	databaseID := binding.Identity{Name: binding.DynamicDatabaseName(tenantID.UID), UID: "database"}
 	return database.Snapshot{
-		Binding: binding.Database{Identity: databaseID, Tenant: &tenantID, Instance: testInstance, InstanceUID: "instance-id",
+		Binding: binding.Database{Identity: databaseID, Tenant: &tenantID, Instance: testInstance, InstanceUID: instanceUID,
 			Name: testApplication, LoginRole: testApplication, Source: sourceProvision},
 		Protected: true,
 	}, database.Dependencies{
 		Tenant: &binding.Tenant{Identity: tenantID, Database: &databaseID, Phase: binding.Bound,
 			Request: binding.Request{Provision: &binding.ProvisionRequest{Instance: testInstance}}},
 		TenantProtected: true,
-		Instance:        &database.Instance{Identity: binding.Identity{Name: testInstance, UID: "instance-id"}, Ready: true, Endpoint: endpoint},
+		Instance:        &database.Instance{Identity: binding.Identity{Name: testInstance, UID: instanceUID}, Ready: true, Endpoint: endpoint},
 	}
 }
 
@@ -292,4 +293,8 @@ func TestExtensions(t *testing.T) {
 	if db.ObserveExtensions(database.ExtensionFacts{Available: available, Installed: []string{"citext", extensionHstore, extensionTrigram, extensionPlpgsql}}, nil) != database.VerifyLogin {
 		t.Fatal("扩展齐全后应验证登录")
 	}
+}
+
+func instanceExtensions(names ...string) instance.ExtensionSet {
+	return instance.NewExtensionSet(names)
 }

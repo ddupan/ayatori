@@ -45,7 +45,7 @@ func newProvisioningFixture(t *testing.T) *provisioningFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object := &databasev1alpha1.PostgreSQLInstance{Name: "supply-instance", Spec: databasev1alpha1.PostgreSQLInstanceSpec{
+	object := &databasev1alpha1.PostgreSQLInstance{Name: supplyInstance, Spec: databasev1alpha1.PostgreSQLInstanceSpec{
 		Endpoint:           databasev1alpha1.PostgreSQLEndpoint{Host: fixtureHost, HostAddr: fixtureAddress, Port: int32(f.port), SSLMode: "disable"},
 		AdminCredentialRef: databasev1alpha1.AdminCredentialReference{Name: secretName, UsernameKey: managementUsernameKey, PasswordKey: managementPasswordKey},
 	}}
@@ -127,7 +127,7 @@ func (f *provisioningFixture) bound(t *testing.T, name string, extensions ...str
 	t.Helper()
 	tenant := &databasev1alpha1.PostgreSQLTenant{Name: strings.ReplaceAll(name, "_", "-"), Namespace: controllerNamespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{Provision: &databasev1alpha1.DatabaseProvisionRequest{
-			InstanceRef: databasev1alpha1.InstanceReference{Name: "supply-instance"},
+			InstanceRef: databasev1alpha1.InstanceReference{Name: supplyInstance},
 			Database:    databasev1alpha1.PostgreSQLIdentifier(name), LoginRole: databasev1alpha1.PostgreSQLIdentifier(name),
 		}, Extensions: extensions}}
 	if err := f.api.Create(f.ctx, tenant); err != nil {

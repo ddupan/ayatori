@@ -27,7 +27,7 @@ envtest 不运行 GC；这类行为必须由测试集群验证。Ayatori 不投�
 在测试中由 fixture 提供，不能把它当成完整 Instance/Database 观察验证。
 
 Retain 释放与 Delete 清理已由 envtest 与真实 PostgreSQL/OpenBao 集成测试覆盖；GC、namespace
-删除与 Released 重新开放仍需测试集群或后续切片验收。
+删除仍需测试集群验收；导入与重新导入由真实后端集成测试覆盖。
 
 绑定规则另有不依赖 Kubernetes 的单元测试；service 测试只验证操作顺序、失败停止与最终
 身份回读，不模拟 API server。原真实 API controller 测试覆盖完整分层调用，另验证 service

@@ -15,11 +15,13 @@ import (
 
 // Snapshot 是 Database 自身的持久状态，不含 resourceVersion 或 Conditions。
 type Snapshot struct {
-	Binding       binding.Database
-	ReclaimPolicy ReclaimPolicy
-	Protected     bool
-	Credential    CredentialState
-	Resources     ResourceState
+	Binding binding.Database
+	// ImportLocation 是导入资源在 spec 中声明的已有凭据位置；动态供应为 nil。
+	ImportLocation *credential.Location
+	ReclaimPolicy  ReclaimPolicy
+	Protected      bool
+	Credential     CredentialState
+	Resources      ResourceState
 }
 
 type Instance struct {
@@ -65,6 +67,7 @@ type Database struct {
 	snapshot     Snapshot
 	dependencies Dependencies
 	missing      []string
+	pending      *registration
 }
 
 func Reconstitute(snapshot Snapshot, dependencies Dependencies) *Database {
@@ -224,6 +227,10 @@ func (d *Database) ObserveExtensions(facts ExtensionFacts, err error) Action {
 		}
 	}
 	if len(d.missing) != 0 {
+		if !d.RequiresProvisioning() {
+			d.reportResources(ResourceUnavailable, "导入资源缺少申请的扩展："+strings.Join(d.missing, ", ")+"；导入不安装扩展")
+			return Wait
+		}
 		return InstallExtensions
 	}
 	return VerifyLogin
@@ -242,7 +249,13 @@ func (d *Database) LoginVerified(err error) {
 		d.reportResources(ResourceUnavailable, "已确认的应用凭据无法登录目标数据库")
 		return
 	}
-	d.reportResources(ResourceAvailable, "数据库、角色、权限与扩展已收敛，应用凭据可登录；Tenant 凭据交付尚未完成")
+	if !d.RequiresProvisioning() {
+		d.register()
+		d.snapshot.Binding.Phase = Available
+		d.reportResources(ResourceAvailable, "导入资源已验证，应用凭据可登录；可被 Tenant 显式申请")
+		return
+	}
+	d.reportResources(ResourceAvailable, "数据库、角色、权限与扩展已收敛，应用凭据可登录")
 }
 
 // Ready 表示资源已收敛且应用凭据本轮实际登录成功。

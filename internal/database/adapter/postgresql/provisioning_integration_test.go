@@ -26,7 +26,7 @@ func testProvisioningLogin(t *testing.T, f *provisioningFixture) {
 	if database.Status.DatabaseOID == 0 || database.Status.RoleOID != 0 {
 		t.Fatal("数据库确认未独立保存，或角色未最后创建")
 	}
-	f.service.Forget("supply-instance")
+	f.service.Forget(supplyInstance)
 	f.reconcile(t, database, databasedomain.ResourcePending)
 	f.reconcile(t, database, databasedomain.ResourcePending)
 	if database.Status.RoleOID == 0 {
@@ -207,6 +207,8 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 	t.Run("Delete 回收", func(t *testing.T) { testReclaimDelete(t, f) })
 	t.Run("Retain 保留外部资源", func(t *testing.T) { testReclaimRetain(t, f) })
 	t.Run("回收遇到同名重建", func(t *testing.T) { testReclaimConflict(t, f) })
+	t.Run("导入与重新开放", func(t *testing.T) { testImport(t, f) })
+	t.Run("导入 owner 不符", func(t *testing.T) { testImportOwnerMismatch(t, f) })
 	t.Run("实际manager观察与重启", func(t *testing.T) { testProvisioningManager(t, f) })
 }
 
