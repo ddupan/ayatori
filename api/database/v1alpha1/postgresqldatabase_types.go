@@ -48,9 +48,17 @@ type PostgreSQLDatabaseStatus struct {
 	// +kubebuilder:validation:Maximum=4294967295
 	// +optional
 	DatabaseOID int64 `json:"databaseOID,omitempty"`
-	// Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
+	// Phase 是资源生命周期阶段（Available、Released）；它不是操作授权或绑定的替代记录。
 	// +optional
 	Phase string `json:"phase,omitempty"`
+	// CredentialPhase 是应用凭据准备的进度，由 controller 写入并作为下一轮的依据。
+	// +kubebuilder:validation:Enum=Pending;Pinned;Prepared;Conflict;Unavailable;Stopped;InvalidTarget
+	// +optional
+	CredentialPhase string `json:"credentialPhase,omitempty"`
+	// ResourcePhase 是 PostgreSQL 资源供应、验证或回收的进度；Conflict 需人工处理后才会继续。
+	// +kubebuilder:validation:Enum=Pending;Available;Reclaiming;Conflict;Unavailable;Stopped
+	// +optional
+	ResourcePhase string `json:"resourcePhase,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

@@ -169,8 +169,9 @@ Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段�
 检查 Provision 来源、双向绑定 UID、申请目标、finalizer、删除/Released 状态及当前 Instance Ready，
 并决定下一步；导入资源不执行本流程。顺序为固定位置 → 确认后端尚无凭据 → 创建并回读
 → 保存确认版本。每轮最多执行一次外部写入，保存后由状态变化或 30 秒依赖重查推动下一轮。
-Reconciler 直接读写 API（resourceVersion 保护），负责 CR 与聚合之间的映射以及领域阶段与
-`CredentialsReady`/Reason 的转换。后端依赖在 bootstrap 显式组装，不在 Reconcile 中构造。
+Reconciler 直接读写 API（resourceVersion 保护），负责 CR 与聚合之间的映射。领域阶段持久化在
+`status.credentialPhase` 与 `status.resourcePhase`，下一轮只从这两个字段还原；Condition 的
+Reason/Message 只用于呈现，保留既有拼写。后端依赖在 bootstrap 显式组装，不在 Reconcile 中构造。
 
 不使用持久化的"创建中"检查点。创建结果丢失或确认保存失败时，下一轮会读到固定位置已有
 值而 CR 没有确认版本，按 Conflict 停止，不认领、不重新生成密码；位置仍为空则正常重试。

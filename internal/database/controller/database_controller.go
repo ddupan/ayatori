@@ -331,10 +331,11 @@ func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
 		ReclaimPolicy: database.ReclaimPolicy(object.Spec.ReclaimPolicy),
 		Protected:     controllerutil.ContainsFinalizer(object, DatabaseFinalizer),
 		Credential: database.CredentialState{
-			Version: object.Status.CredentialVersion,
+			Version: object.Status.CredentialVersion, Phase: database.CredentialPhase(object.Status.CredentialPhase),
 		},
 		Resources: database.ResourceState{
-			RoleOID: uint32(object.Status.RoleOID), DatabaseOID: uint32(object.Status.DatabaseOID), Phase: database.ResourcePending,
+			RoleOID: uint32(object.Status.RoleOID), DatabaseOID: uint32(object.Status.DatabaseOID),
+			Phase: database.ResourcePhase(object.Status.ResourcePhase),
 		},
 	}
 	if ref := object.Status.CredentialRef; ref != nil {
@@ -343,11 +344,18 @@ func snapshot(object *databasev1alpha1.PostgreSQLDatabase) database.Snapshot {
 	if ref := object.Spec.CredentialRef; ref != nil {
 		result.ImportLocation = &credential.Location{Mount: ref.Mount, Path: ref.Path}
 	}
+	if result.Credential.Phase == "" {
+		result.Credential.Phase = database.CredentialPending
+	}
+	if result.Resources.Phase == "" {
+		result.Resources.Phase = database.ResourcePending
+	}
+	// 阶段只来自显式字段；Condition 只是呈现，这里仅取回诊断消息以保留冲突的首次原因。
 	if condition := meta.FindStatusCondition(object.Status.Conditions, credentialsReadyCondition); condition != nil {
-		result.Credential.Phase, result.Credential.Message = credentialPhase(condition.Reason), condition.Message
+		result.Credential.Message = condition.Message
 	}
 	if condition := meta.FindStatusCondition(object.Status.Conditions, resourcesReadyCondition); condition != nil {
-		result.Resources.Phase, result.Resources.Message = database.ResourcePhase(condition.Reason), condition.Message
+		result.Resources.Message = condition.Message
 	}
 	return result
 }
@@ -357,6 +365,7 @@ func presentCredential(object *databasev1alpha1.PostgreSQLDatabase, state databa
 		object.Status.CredentialRef = &databasev1alpha1.CredentialReference{Mount: state.Location.Mount, Path: state.Location.Path}
 	}
 	object.Status.CredentialVersion = state.Version
+	object.Status.CredentialPhase = string(state.Phase)
 	status := metav1.ConditionFalse
 	if state.Phase == database.CredentialPrepared {
 		status = metav1.ConditionTrue
@@ -369,6 +378,7 @@ func presentCredential(object *databasev1alpha1.PostgreSQLDatabase, state databa
 
 func presentResources(object *databasev1alpha1.PostgreSQLDatabase, state database.ResourceState) {
 	object.Status.RoleOID, object.Status.DatabaseOID = int64(state.RoleOID), int64(state.DatabaseOID)
+	object.Status.ResourcePhase = string(state.Phase)
 	status := metav1.ConditionFalse
 	if state.Phase == database.ResourceAvailable {
 		status = metav1.ConditionTrue
@@ -379,7 +389,7 @@ func presentResources(object *databasev1alpha1.PostgreSQLDatabase, state databas
 	})
 }
 
-// 持久化 API 的 Reason 保持兼容，领域内部只使用准备阶段。
+// Condition Reason 只用于呈现，保持既有拼写；controller 不从 Reason 还原阶段。
 var credentialReasons = map[database.CredentialPhase]string{
 	database.CredentialPending:       "PreparationPending",
 	database.CredentialPinned:        "LocationPinned",
@@ -388,15 +398,6 @@ var credentialReasons = map[database.CredentialPhase]string{
 	database.CredentialUnavailable:   "DependencyUnavailable",
 	database.CredentialStopped:       "PreparationStopped",
 	database.CredentialInvalidTarget: "InvalidTarget",
-}
-
-func credentialPhase(reason string) database.CredentialPhase {
-	for phase, value := range credentialReasons {
-		if value == reason {
-			return phase
-		}
-	}
-	return database.CredentialPending
 }
 
 // +kubebuilder:rbac:groups=database.ayatori.ddupan.top,resources=postgresqldatabases,verbs=get;list;watch;update;patch;delete

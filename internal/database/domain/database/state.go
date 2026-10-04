@@ -14,17 +14,17 @@ var (
 	ErrUncertain   = errors.New("external operation outcome is uncertain; manual resolution required")
 )
 
-// CredentialPhase 表达凭据准备进度，不依赖 Kubernetes Condition 的类型或 Reason。
-type CredentialPhase uint8
+// CredentialPhase 表达凭据准备进度，持久化在 status.credentialPhase，不依赖 Condition 的 Reason。
+type CredentialPhase string
 
 const (
-	CredentialPending CredentialPhase = iota
-	CredentialPinned
-	CredentialPrepared
-	CredentialConflict
-	CredentialUnavailable
-	CredentialStopped
-	CredentialInvalidTarget
+	CredentialPending       CredentialPhase = "Pending"
+	CredentialPinned        CredentialPhase = "Pinned"
+	CredentialPrepared      CredentialPhase = "Prepared"
+	CredentialConflict      CredentialPhase = "Conflict"
+	CredentialUnavailable   CredentialPhase = "Unavailable"
+	CredentialStopped       CredentialPhase = "Stopped"
+	CredentialInvalidTarget CredentialPhase = "InvalidTarget"
 )
 
 type CredentialState struct {
