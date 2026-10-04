@@ -11,7 +11,6 @@ import (
 	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"github.com/jackc/pgx/v5"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,21 +105,30 @@ func testImport(t *testing.T, f *provisioningFixture) {
 		t.Fatalf("Tenant 未能申请导入资源：%+v", tenant.Status)
 	}
 
-	// 重新开放 = 释放后删除 Retain 旧记录，再重新导入；新记录拥有新 UID。
+	// 释放后保留旧绑定身份，只等待管理员；清除 spec.tenantRef 即重新开放，同一记录按确认身份重新验证。
 	f.release(t, database)
-	if err := f.api.Delete(f.ctx, database); err != nil {
+	f.reconcile(t, database, databasedomain.ResourceStopped)
+	confirmed := database.Status.DeepCopy()
+	database.Spec.TenantRef = nil
+	if err := f.api.Update(f.ctx, database); err != nil {
 		t.Fatal(err)
 	}
-	if err := reconcileOnce(f.ctx, f.reconciler, database); err != nil {
+	f.reconcile(t, database, databasedomain.ResourceAvailable)
+	if database.Status.Phase != databasedomain.Available || database.Status.RoleOID != confirmed.RoleOID ||
+		database.Status.DatabaseOID != confirmed.DatabaseOID || database.Status.CredentialVersion != confirmed.CredentialVersion {
+		t.Fatalf("重新开放应回到 Available 并保留确认身份：%+v", database.Status)
+	}
+	next := &databasev1alpha1.PostgreSQLTenant{Name: "imported-next", Namespace: controllerNamespace,
+		Spec: databasev1alpha1.PostgreSQLTenantSpec{DatabaseRef: &databasev1alpha1.DatabaseReference{Name: databasev1alpha1.ObjectName(database.Name)}}}
+	if err := f.api.Create(f.ctx, next); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(database), database); !apierrors.IsNotFound(err) {
-		t.Fatal("Retain 旧记录应可删除", err)
+	if _, err := tenants.Reconcile(f.ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(next)}); err != nil {
+		t.Fatal(err)
 	}
-	reopened := f.importRecord(t, "imported-app-reopened", importedName)
-	f.reconcile(t, reopened, databasedomain.ResourceAvailable)
-	if reopened.UID == database.UID || reopened.Spec.TenantRef != nil {
-		t.Fatal("重新导入应是不带旧绑定的新记录")
+	if err := f.api.Get(f.ctx, client.ObjectKeyFromObject(database), database); err != nil || database.Spec.TenantRef == nil ||
+		string(database.Spec.TenantRef.UID) != string(next.UID) {
+		t.Fatal("重新开放后新 Tenant 应能绑定", err)
 	}
 }
 

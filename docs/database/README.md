@@ -253,7 +253,7 @@ Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotRead
    OpenBao 在线。尚未产生 Database 的 Tenant 直接删除。
 2. `Released` 之后 `reclaimPolicy` 由 CEL 固定；Released 不再供应，也不自动分配给新 Tenant。
 3. **Retain**：保留数据库、角色与凭据，不撤销访问。管理员删除 Database CR 时只移除 finalizer，
-   外部对象原样保留。重新开放即删除旧记录后重新导入，见下节。
+   外部对象原样保留。重新开放见下节。
 4. **Delete**（仅 Provision 来源；导入资源不隐含删除授权）：`DatabaseReconciler` 按已确认 OID
    逐步清理，每轮一步，对象已不存在则跳过，同名但身份不符则 Conflict 并保留 finalizer：
    - 阻止应用登录（`NOLOGIN`）、关闭连接入口、以 owner 身份终止该角色在本库的会话，再
@@ -269,12 +269,18 @@ Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotRead
 
 ## 显式导入与重新开放
 
-管理员以 `source: Import` 登记已有对象：`instanceRef`、`database`、`loginRole` 与 `spec.credentialRef`
-（已有七键凭据的位置，必须位于部署配置的 mount 与前缀内）。导入也是 Released 资源重新开放的唯一
-途径：对照 PV 的静态供应，删除 Retain 的旧 Database 记录（外部对象保留）后重新导入，新记录拥有
-新 UID，旧 Tenant 的绑定身份不会延续，因此不需要单独的“重新开放”字段。
+管理员以 `source: Import` 登记尚无记录的已有对象：`instanceRef`、`database`、`loginRole` 与
+`spec.credentialRef`（已有七键凭据的位置，必须位于部署配置的 mount 与前缀内）。
 
-`DatabaseReconciler`（需启用凭据准备与资源供应）只读验证，全部通过后首次登记：
+Released 资源已具备导入成功的全部确认（OID、凭据位置与版本、Instance UID），不需要删除后重新
+导入。对照 PV 清除 `claimRef`：管理员处置旧访问后清除 Released Database 的 `spec.tenantRef`，
+这就是重新开放的显式授权；controller 按确认身份重新验证后回到 `Available`，可被新 Tenant 以
+`databaseRef` 申请，新绑定写入新 Tenant 的 UID。仍保留旧 `tenantRef` 的 Released 记录只报告等待。
+来源不变：动态供应的资源重新开放后仍可使用 Delete 回收。旧使用者已持有的密码不会因此失效；
+如需改密，由管理员在清除 `tenantRef` 前人工处理（Bao 版本变化会被视为漂移并报 Conflict）。
+
+导入与重新开放都由 `DatabaseReconciler`（需启用凭据准备与资源供应）只读验证，不再创建对象。
+导入在全部通过后首次登记：
 
 1. 读取 `spec.credentialRef` 最新版本，内容须与 database、loginRole 与 Instance endpoint 一致；
 2. 数据库与角色存在，owner 就是 loginRole，管理账号对该库有 CONNECT；

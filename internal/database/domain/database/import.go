@@ -9,22 +9,29 @@ import (
 // Available 是导入资源完成登记后的阶段，表示可以被 Tenant 显式申请。
 const Available = "Available"
 
-// 导入是管理员对已有对象的显式登记，也是 Released 资源重新开放的唯一途径：删除 Retain 的旧记录后
-// 重新导入，新记录拥有新 UID，旧绑定身份不会延续。导入只读验证，不改密码、owner 或权限，不装扩展。
+// 导入是管理员对尚无记录的已有对象的显式登记。Released 资源已具备导入成功的全部确认，重新开放
+// 只需管理员清除 spec.tenantRef（对照 PV 清除 claimRef），按确认身份重新验证后回到 Available。
+// 两者都只读验证，不改密码、owner 或权限，不装扩展。
 type registration struct {
 	roleOID, databaseOID uint32
 	version              int64
 }
 
-// PlanImport 判断本轮能否验证导入目标；冲突需要人工处理，不自动重入。
+// Verifies 表示本记录只读验证而不供应：导入资源，或已释放的资源（等待或已被管理员重新开放）。
+func (d *Database) Verifies() bool {
+	return !d.RequiresProvisioning() || d.released()
+}
+
+// PlanImport 判断本轮能否验证导入或重新开放的目标；冲突需要人工处理，不自动重入。
 func (d *Database) PlanImport() Action {
+	registered := d.snapshot.Resources.DatabaseOID != 0
 	switch {
-	case d.released():
-		d.reportResources(ResourceStopped, "Database 已释放；如需重新开放，请删除本记录后重新导入")
+	case d.released() && d.snapshot.Binding.Tenant != nil:
+		d.reportResources(ResourceStopped, "Database 已释放；管理员处置旧访问后清除 spec.tenantRef 即可重新开放")
 		return Wait
 	case d.snapshot.Resources.Phase == ResourceConflict:
 		return Wait
-	case d.snapshot.ImportLocation == nil:
+	case !registered && d.snapshot.ImportLocation == nil:
 		d.reportResources(ResourceUnavailable, "导入资源缺少 spec.credentialRef")
 		return Wait
 	}

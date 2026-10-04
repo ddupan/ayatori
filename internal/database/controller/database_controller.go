@@ -97,7 +97,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	if r.Credentials == nil {
 		return ctrl.Result{}, nil
 	}
-	if !db.RequiresProvisioning() {
+	if db.Verifies() {
 		if r.PostgreSQL == nil {
 			return ctrl.Result{}, nil
 		}
@@ -160,8 +160,8 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	return r.save(ctx, state, db, false)
 }
 
-// importDatabase 只读验证管理员登记的已有对象：凭据、catalog 身份与 owner、扩展、实际登录；
-// 全部通过后首次登记确认身份，之后每轮按确认身份重新验证。不改密码、owner、权限或扩展。
+// importDatabase 只读验证导入或重新开放的资源：凭据、catalog 身份与 owner、扩展、实际登录；
+// 导入在全部通过后首次登记确认身份，之后每轮按确认身份重新验证。不改密码、owner、权限或扩展。
 func (r *DatabaseReconciler) importDatabase(ctx context.Context, state *databaseState, db *database.Database) error {
 	if db.PlanImport() == database.Wait {
 		return r.save(ctx, state, db, true)
@@ -281,11 +281,13 @@ func (r *DatabaseReconciler) save(ctx context.Context, state *databaseState, db 
 		if r.PostgreSQL != nil || lifecycle {
 			presentResources(object, desired.Resources)
 		}
-		// 导入登记写入实例身份与 Available；Released 由 TenantReconciler 写入，这里不覆盖。
+		// 导入登记写入实例身份；导入或重新开放验证通过后写 Available。Released 由 TenantReconciler
+		// 在有绑定时写入；管理员清除 spec.tenantRef 后才允许回到 Available，因此不会覆盖释放记录。
 		if object.Status.InstanceUID == "" && desired.Binding.InstanceUID != "" {
 			object.Status.InstanceUID = types.UID(desired.Binding.InstanceUID)
 		}
-		if object.Status.Phase == "" && desired.Binding.Phase == database.Available {
+		if desired.Binding.Phase == database.Available && object.Spec.TenantRef == nil &&
+			(object.Status.Phase == "" || object.Status.Phase == database.Released) {
 			object.Status.Phase = database.Available
 		}
 		ready := metav1.Condition{

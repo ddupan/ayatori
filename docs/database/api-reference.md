@@ -81,7 +81,7 @@ Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database �
 
 Tenant 删除记录 Database `status.phase=Released` 后移除 Tenant finalizer；释放后 `reclaimPolicy`
 固定（CEL）。Retain 只在删除 Database 时放行 finalizer；Delete 由 controller 逐步清理外部对象后
-删除 Database。Released 重新开放即删除旧记录后重新导入，见[显式导入](README.md#显式导入与重新开放)。
+删除 Database。Released 重新开放：管理员清除 `spec.tenantRef` 后按确认身份重新验证，见[显式导入与重新开放](README.md#显式导入与重新开放)。
 
 ## 通用约定
 

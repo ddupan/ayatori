@@ -10,7 +10,7 @@
 Ayatori 不投射 Secret，消费方集群自行读取。
 Tenant 删除先把 Database 记为 Released 再移除 finalizer；Database 按回收策略保留或清理，见
 [释放与回收](README.md#释放与回收)。Delete 清理遇 Conflict 时保留 finalizer，核实同名对象后
-再处理；不要为了消除等待状态直接移除 finalizer。Released 重新开放：处置旧访问后删除 Retain 记录，再按[显式导入](README.md#显式导入与重新开放)登记。
+再处理；不要为了消除等待状态直接移除 finalizer。Released 重新开放：处置旧访问后清除 Database 的 `spec.tenantRef`，见[显式导入与重新开放](README.md#显式导入与重新开放)。
 
 凭据准备现在可单独启用，见[部署参数](deployment.md)。观察 Database 的
 `CredentialsReady`、固定 `status.credentialRef` 和 `status.credentialVersion`，不要导出

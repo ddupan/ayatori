@@ -82,8 +82,41 @@ func TestImportRejects(t *testing.T) {
 	if db.ObserveExtensions(database.ExtensionFacts{Available: []string{extensionHstore}}, nil) != database.Wait {
 		t.Fatal("导入资源不安装扩展")
 	}
+}
+
+// Released 已具备导入成功的全部确认；管理员清除 tenantRef 即重新开放，按确认身份只读验证。
+func TestReopenReleased(t *testing.T) {
+	const manager, role, owned = 5, 11, 22
+	snapshot, dependencies := fixture(t)
 	snapshot.Binding.Phase = database.Released
-	if database.Reconstitute(snapshot, dependencies).PlanImport() != database.Wait {
-		t.Fatal("已释放的导入记录不再验证，需删除后重新导入")
+	snapshot.Resources = database.ResourceState{RoleOID: role, DatabaseOID: owned, Phase: database.ResourceAvailable}
+	location := testLocation
+	snapshot.Credential = database.CredentialState{Location: &location, Version: 1, Phase: database.CredentialPrepared}
+	held := database.Reconstitute(snapshot, dependencies)
+	if !held.Verifies() || held.PlanImport() != database.Wait || held.Snapshot().Resources.Phase != database.ResourceStopped {
+		t.Fatal("仍保留旧绑定身份时只等待管理员处置")
+	}
+	snapshot.Binding.Tenant = nil
+	reopened := database.Reconstitute(snapshot, dependencies)
+	if !reopened.Verifies() || reopened.PlanImport() != database.InspectResources {
+		t.Fatal("清除 tenantRef 后应按确认身份重新验证")
+	}
+	value, err := credential.NewApplicationCredential(testApplication, "password", testApplication, dependencies.Instance.Endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := database.ResourceFacts{RoleOID: role, DatabaseOID: owned, OwnerOID: role, ManagerOID: manager, ManagerConnect: true}
+	if reopened.ObserveImport(value, 1, nil, facts, nil) != database.InspectExtensions ||
+		reopened.ObserveExtensions(database.ExtensionFacts{}, nil) != database.VerifyLogin {
+		t.Fatal("确认身份一致时应继续验证扩展与登录")
+	}
+	reopened.LoginVerified(nil)
+	if state := reopened.Snapshot(); state.Binding.Phase != database.Available || !reopened.Ready() ||
+		state.Resources.RoleOID != role || state.Credential.Version != 1 {
+		t.Fatalf("重新开放应回到 Available 且保留确认身份：%+v", state)
+	}
+	recreated := database.Reconstitute(snapshot, dependencies)
+	if recreated.ObserveImport(value, 1, nil, database.ResourceFacts{RoleOID: 12, DatabaseOID: owned, OwnerOID: 12, ManagerConnect: true}, nil) != database.Wait {
+		t.Fatal("释放期间对象被重建时不得重新开放")
 	}
 }

@@ -227,8 +227,8 @@ func (d *Database) ObserveExtensions(facts ExtensionFacts, err error) Action {
 		}
 	}
 	if len(d.missing) != 0 {
-		if !d.RequiresProvisioning() {
-			d.reportResources(ResourceUnavailable, "导入资源缺少申请的扩展："+strings.Join(d.missing, ", ")+"；导入不安装扩展")
+		if d.Verifies() {
+			d.reportResources(ResourceUnavailable, "缺少申请的扩展："+strings.Join(d.missing, ", ")+"；只读验证的资源不安装扩展")
 			return Wait
 		}
 		return InstallExtensions
@@ -249,10 +249,10 @@ func (d *Database) LoginVerified(err error) {
 		d.reportResources(ResourceUnavailable, "已确认的应用凭据无法登录目标数据库")
 		return
 	}
-	if !d.RequiresProvisioning() {
+	if d.Verifies() {
 		d.register()
 		d.snapshot.Binding.Phase = Available
-		d.reportResources(ResourceAvailable, "导入资源已验证，应用凭据可登录；可被 Tenant 显式申请")
+		d.reportResources(ResourceAvailable, "资源已只读验证，应用凭据可登录；可被 Tenant 显式申请")
 		return
 	}
 	d.reportResources(ResourceAvailable, "数据库、角色、权限与扩展已收敛，应用凭据可登录")
