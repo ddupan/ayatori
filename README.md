@@ -35,9 +35,13 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [ADR-0007：复用 Node API 建立按需实现的 Compute 能力](docs/decisions/0007-compute-node-and-vm-boundary.md)
 - [ADR-0008：将 PostgreSQL Tenant Operator 合并为 Ayatori Database 模块](docs/decisions/0008-merge-postgresql-tenant-operator.md)
 - [ADR-0009：分离 Database 资源与 Tenant 申请](docs/decisions/0009-database-resource-and-claim.md)
+- [ADR-0013：Dev/Prod 以 LXC 上的 API-only 控制面运行](docs/decisions/0013-api-only-control-plane-on-lxc.md)
+- [部署与发布](deploy/README.md)
 
 ## 当前状态
 
 Ayatori 处于设计与早期实现阶段。当前使用 Job controller 验证第一个完整控制循环与 adapter
 边界；它不是通用 Job Service 或 FaaS 产品承诺。首批实际产品方向是 Database 与 LoadBalancer；
 Bucket/Object Storage 由 CI Terraform 管理，不进入 Ayatori（ADR-0011）。
+Database 模块已在 Dev 与 Prod 上线（v0.1.x，API-only 控制面，ADR-0013），通过 homelab-infra 的
+GitOps 目录申请数据库。
