@@ -198,6 +198,17 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              credentialPhase:
+                description: CredentialPhase 是应用凭据准备的进度，由 controller 写入并作为下一轮的依据。
+                enum:
+                - Pending
+                - Pinned
+                - Prepared
+                - Conflict
+                - Unavailable
+                - Stopped
+                - InvalidTarget
+                type: string
               credentialRef:
                 description: CredentialRef 在首次外部写入前固定凭据位置；部署配置变化不迁移此位置。
                 properties:
@@ -234,7 +245,17 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Phase 暂不冻结供应子阶段枚举；它不是操作授权或绑定的替代记录。
+                description: Phase 是资源生命周期阶段（Available、Released）；它不是操作授权或绑定的替代记录。
+                type: string
+              resourcePhase:
+                description: ResourcePhase 是 PostgreSQL 资源供应、验证或回收的进度；Conflict 需人工处理后才会继续。
+                enum:
+                - Pending
+                - Available
+                - Reclaiming
+                - Conflict
+                - Unavailable
+                - Stopped
                 type: string
               roleOID:
                 description: RoleOID 只在角色创建并回读成功后保存，后续不按同名认领；角色在数据库之后创建。

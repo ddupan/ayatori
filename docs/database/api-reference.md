@@ -26,6 +26,7 @@ Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 
 | Database | `status.instanceUID` | 观察时的 Instance 身份 |
 | Database | `status.credentialRef.mount/path` | 首次写入前固定的 KV v2 位置，不随部署配置迁移 |
 | Database | `status.credentialVersion` | 创建并回读成功后确认的正整数版本；省略表示未确认 |
+| Database | `status.credentialPhase`、`status.resourcePhase` | 凭据准备与资源供应/验证/回收的阶段，controller 据此继续；Condition Reason 只用于呈现 |
 | Database | `status.roleOID`、`status.databaseOID` | 分别创建并回读成功后确认的 PostgreSQL OID；不能凭同名补记 |
 | Tenant | `spec.provision.instanceRef.name` | 动态申请来源，与 `spec.databaseRef` 互斥且必须二选一 |
 | Tenant | `spec.provision.database/loginRole` | 可省略，语义默认值由 controller 解析，不由 CRD 推导 |
