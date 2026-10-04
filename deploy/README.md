@@ -76,4 +76,27 @@ manager 会持续报告 OpenBao 登录失败并重试。
 - 修改 `k0s_disabled_components` 需要先 `k0s reset` 再重装；k0s 版本与配置变更会重启 API。
 - Flux 不选主，每台 LXC 单实例；kustomize-controller 使用 cluster-admin。
 - 第三方镜像只固定 digest，未做 cosign 验签。
-- etcd 与 LXC 尚无备份；控制面开始承载不可重建的状态前必须先建立备份与恢复。
+- 备份：`ayatori-backup.timer` 每日以 `k0s backup` 把 etcd 快照、PKI 与 k0s.yaml 写入
+  `/var/backups/ayatori`（部署方挂载的独立卷，未挂载时部署失败），保留最新 7 份。恢复见下节。
+  这不是离机备份。
+
+## 恢复
+
+按原地址重建 LXC（homelab-infra Incus Terraform；备份卷独立于实例，重建后仍在），安装相同版本的
+k0s 后恢复并启动，再执行部署 role 恢复容器与身份：
+
+```sh
+k0s restore --config-out /etc/k0s/k0s.yaml /var/backups/ayatori/k0s_backup_<时间>.tar.gz
+k0s install controller --config /etc/k0s/k0s.yaml --disable-components <role defaults 中的列表>
+k0s start
+```
+
+恢复保留原 PKI（CA 指纹不变），OpenBao 的 kubernetes auth 无需更新 CA，已签发的证书 kubeconfig
+仍有效。恢复到不同地址的主机时需先把 `/etc/k0s/k0s.yaml` 的 `spec.api.address` 改为新地址，
+且 OpenBao mount 的 `kubernetes_host` 也要随之修改。2026-10-04 已在临时 LXC 演练：恢复后
+apiserver Ready，演练前写入的标记、Instance、Flux 对象与同步的 Secret 均在，CA 指纹与源一致；
+演练环境不运行 controller，避免与原环境双写。
+
+恢复较旧的快照不会破坏外部资源：快照之后新建的 Database 在 PostgreSQL/OpenBao 中成为未登记
+对象，同名再供应只报冲突，可用 `source: Import` 重新登记；快照之后已删除的 Database 记录会因
+已登记 OID 不存在而报告不可用或冲突，由管理员按 Retain 删除记录。均需人工对账。
