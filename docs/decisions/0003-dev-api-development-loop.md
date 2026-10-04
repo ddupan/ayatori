@@ -1,6 +1,6 @@
 # ADR-0003：直接连接 Dev API 的开发循环
 
-- 状态：Accepted
+- 状态：Accepted；Flux 与 in-cluster controller 部署的部分已被 [ADR-0013](0013-api-only-control-plane-on-lxc.md) 取代
 - 日期：2026-09-17
 
 ## 背景

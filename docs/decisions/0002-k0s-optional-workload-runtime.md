@@ -1,6 +1,6 @@
 # ADR-0002：采用 k0s 与可选工作负载运行时
 
-- 状态：Accepted
+- 状态：Accepted；Dev/Prod 默认 managed runtime 与集群内 Flux 的部分已被 [ADR-0013](0013-api-only-control-plane-on-lxc.md) 取代
 - 日期：2026-09-17
 
 ## 背景

@@ -1,13 +1,13 @@
 # 部署与配置
 
-> 本页区分已实现的 Instance 观测、认证、凭据准备和资源创建配置，与尚未接入的完整供应/交付合同。
-> 完整 Database 服务仍不可部署使用；当前可执行入口见 [模块说明](README.md)。
+> 本页是 manager 的配置合同。Dev/Prod 的实际部署由部署 role 完成，见
+> [deploy/README.md](../../deploy/README.md) 与 [ADR-0013](../decisions/0013-api-only-control-plane-on-lxc.md)。
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Review |
-| 环境 | homelab Kubernetes + 外部 PostgreSQL/OpenBao |
-| 最后更新 | 2026-09-25 |
+| 状态 | Accepted |
+| 环境 | LXC 上的 API-only k0s + 外部 PostgreSQL/OpenBao |
+| 最后更新 | 2026-10-04 |
 
 本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测已接入 manager；
 OpenBao 认证与资源供应需显式启用；Ayatori 不投射凭据，消费方集群自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
@@ -20,11 +20,9 @@ OpenBao 认证与资源供应需显式启用；Ayatori 不投射凭据，消费�
 3. 创建 PostgreSQL controller 管理 role 和管理 database 连接权限。
 4. 在 OpenBao KV v2 写入管理 role 凭据。
 5. 配置 OpenBao Kubernetes auth 与 controller policy；消费方集群读取应用凭据的 policy 由其接入时单独授予。
-6. 安装 ESO，配置独立的管理凭据同步身份和租户凭据读取身份。管理员在 controller
-   namespace 创建管理 ExternalSecret，确认管理 Secret 已同步；另创建供租户使用的
-   `ClusterSecretStore`。
-7. 创建公开 CA bundle ConfigMap，并挂载到 controller 和需要直接验证数据库的应用。
-8. 部署 controller，再创建 Instance；等待 Ready 后才创建 Tenant。
+6. 部署控制面（部署 role）：k0s、ESO、Flux 与 manager；ESO 以 namespaced SecretStore 只读管理凭据
+   并同步为管理 Secret，Flux 从 release tag 同步 Instance 等对象。
+7. manager 以 `--database-root-cert` 读取公开 CA；Instance Ready 后才创建 Tenant。
 
 任何一步都不得把真实密码、Token、kubeconfig 或 CA 私钥提交进 Git。
 
@@ -49,7 +47,8 @@ Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径�
 | `--database-provision-resources` | 已实现，默认 false | 启用角色/数据库及 ACL 创建；要求管理 Secret namespace、凭据 mount 和认证配置，先升级 CRD |
 | `--openbao-service-account-namespace` | 已实现，启用时必填 | TokenRequest 目标 SA 的固定 namespace |
 | `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
-| `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience，必须匹配 OpenBao role |
+| `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience。OpenBao 不持有 reviewer JWT 时登录 JWT 兼作 TokenReview 凭据，必须设为 API audience（k0s 为 `https://kubernetes.default.svc`），部署 role 已如此配置 |
+| `--leader-election-namespace` | 已实现，默认空 | 集群外运行时选主 Lease 所在 namespace，与 `--leader-elect` 一起使用 |
 | `--database-credential-prefix` | 已实现，默认 `applications` | Database UID 路径的 mount-relative 前缀；不迁移已有位置 |
 | `--database-credential-url-base` | 已实现，默认空 | OpenBao API 地址，只用于 Tenant status 中不含认证信息的 `credentialURL` |
 | `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
@@ -73,7 +72,9 @@ in-cluster 配置。禁止另要求 `/var/run/secrets/.../token` 文件或解析
 [最小 RBAC](../../config/samples/database_openbao_auth_rbac.yaml)。集群外 RoleBinding subject
 对应 kubeconfig 的用户/组，集群内可绑定 manager SA；登录目标 SA 可以独立于调用者身份。
 controller 不创建 SA、Role/RoleBinding，也不向自己授予权限。不要求 `get secrets` 来获取 JWT。
-OpenBao role 还需限制 SA 名称、namespace 与 audience，TokenReview reviewer 身份由管理员配置。
+OpenBao role 限制 SA 名称与 namespace。homelab 的 mount 不持有 reviewer JWT，以登录 JWT 自身调用
+TokenReview（两个登录 SA 绑定 `system:auth-delegator`），因此 role 不校验 audience，JWT 必须是
+API audience。
 
 示例启动参数（仅示意，不包含真实 kubeconfig 或凭据）：
 
@@ -172,7 +173,7 @@ v1alpha1 尚不承诺跨版本转换。升级前备份 CR/绑定、PostgreSQL �
 ```text
 PostgreSQL TLS 与备份验证
   -> OpenBao auth/policy 验证
-  -> ClusterSecretStore Ready
+  -> SecretStore Valid / 管理 Secret 已同步
   -> controller Ready/leader elected
   -> Instance Ready
   -> 测试 Tenant Ready

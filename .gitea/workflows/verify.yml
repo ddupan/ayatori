@@ -2,7 +2,14 @@ name: Verify
 
 on:
   # 合并前完成全量验证，合并到 main 后不重复运行同一套检查。
+  # 只改文档、部署 role/Flux 清单或 Release 工作流时不运行；deploy/** 由 Deploy 工作流检查。
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'deploy/**'
+      - '.gitea/workflows/release.yml'
+      - '.gitea/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:
