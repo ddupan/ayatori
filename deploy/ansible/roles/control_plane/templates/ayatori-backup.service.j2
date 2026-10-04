@@ -1,0 +1,11 @@
+[Unit]
+Description=Ayatori k0s 备份（etcd、PKI、k0s.yaml）
+After=k0scontroller.service
+RequiresMountsFor={{ backup_dir }}
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/local/bin/k0s backup --save-path={{ backup_dir }}
+# 只保留最新 {{ backup_keep }} 份。
+ExecStartPost=/bin/sh -c 'ls -1t {{ backup_dir }}/k0s_backup_*.tar.gz | tail -n +{{ backup_keep + 1 }} | xargs -r rm -f --'

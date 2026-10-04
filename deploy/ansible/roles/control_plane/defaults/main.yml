@@ -4,7 +4,7 @@
 #   ayatori_gitops（可选）: {url, path, branch=main}，Flux 同步其中的 namespace、Tenant 与 Database
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，
 # Release 工作流校验它与 galaxy.yml、git tag 一致。
-ayatori_version: v0.1.1
+ayatori_version: v0.1.2
 # 完全不可用的 release 不升版本而是重发同名 tag，部署时重新拉取并按镜像 ID 变化重启。
 ayatori_image: zot.ad.ddupan.top/panxiao81/ayatori-manager:{{ ayatori_version }}
 
@@ -54,6 +54,9 @@ ayatori_repository: https://git.ddupan.top/panxiao81/ayatori.git
 openbao_address: https://bao.ad.ddupan.top:8200
 control_namespace: ayatori-system
 deploy_state_dir: /var/lib/ayatori-deploy
+# 部署方须把独立卷挂载到此处（homelab-infra 为 Incus custom volume）。
+backup_dir: /var/backups/ayatori
+backup_keep: 7
 # 每个集群外进程一个 k0s 证书用户；uid 是镜像内的运行用户，kubeconfig 只对其可读。
 identities_dir: /etc/ayatori-control-plane
 identities:

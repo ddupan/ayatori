@@ -23,3 +23,6 @@
 
 - name: 部署控制面容器
   ansible.builtin.import_tasks: containers.yml
+
+- name: 部署 k0s 备份
+  ansible.builtin.import_tasks: backup.yml
