@@ -1,0 +1,32 @@
+{
+ "collection_info": {
+  "namespace": "panxiao81",
+  "name": "ayatori",
+  "version": "0.1.0",
+  "authors": [
+   "panxiao81"
+  ],
+  "readme": "README.md",
+  "tags": [
+   "infrastructure"
+  ],
+  "description": "\u90e8\u7f72 Ayatori API-only \u63a7\u5236\u9762",
+  "license": [
+   "Apache-2.0"
+  ],
+  "license_file": null,
+  "dependencies": {},
+  "repository": "https://git.ddupan.top/panxiao81/ayatori",
+  "documentation": null,
+  "homepage": null,
+  "issues": null
+ },
+ "file_manifest_file": {
+  "name": "FILES.json",
+  "ftype": "file",
+  "chksum_type": "sha256",
+  "chksum_sha256": "c92e758751eeedbac67eb361f3a56f18ac49318c921e26936963d551eff8dad3",
+  "format": 1
+ },
+ "format": 1
+}

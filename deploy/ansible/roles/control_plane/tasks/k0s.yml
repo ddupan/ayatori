@@ -1,0 +1,49 @@
+- name: 安装 k0s 二进制
+  ansible.builtin.get_url:
+    url: https://github.com/k0sproject/k0s/releases/download/{{ k0s_version | urlencode }}/k0s-{{ k0s_version }}-amd64
+    dest: /usr/local/bin/k0s
+    mode: "0755"
+    checksum: sha256:{{ k0s_sha256 }}
+  register: k0s_download
+  retries: 3
+  delay: 5
+  until: k0s_download is succeeded
+  notify: 重启 k0s
+
+- name: 创建 k0s 配置目录
+  ansible.builtin.file:
+    path: /etc/k0s
+    state: directory
+    mode: "0700"
+
+- name: 写入 k0s 配置
+  ansible.builtin.template:
+    src: k0s.yaml.j2
+    dest: /etc/k0s/k0s.yaml
+    mode: "0600"
+  notify: 重启 k0s
+
+# ponytail: disable-components 写入 install 生成的 unit；修改组件列表需先 k0s reset 再重装。
+- name: 安装 k0s controller 服务
+  ansible.builtin.command: >-
+    k0s install controller --config /etc/k0s/k0s.yaml
+    --disable-components {{ k0s_disabled_components | join(',') }}
+  args:
+    creates: /etc/systemd/system/k0scontroller.service
+
+- name: 启动 k0s controller
+  ansible.builtin.systemd_service:
+    name: k0scontroller
+    enabled: true
+    state: started
+
+- name: 立即应用 k0s 变更
+  ansible.builtin.meta: flush_handlers
+
+- name: 等待 API Ready
+  ansible.builtin.command: k0s kubectl get --raw /readyz
+  register: k0s_ready
+  retries: 30
+  delay: 5
+  until: k0s_ready.rc == 0
+  changed_when: false

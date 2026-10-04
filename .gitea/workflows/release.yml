@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  # 版本 tag 是 Dev/Prod 共用的制品：Flux 同步该 tag 的清单，manager 镜像以同名 tag 发布。
+  push:
+    tags: ['v*']
+
+jobs:
+  # job id 是 SPIFFE ID 的一部分：zot 只授权
+  # spiffe://ddupan.top/ci/panxiao81/ayatori/publish-image 写入 panxiao81/ayatori-manager。
+  publish-image:
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 30
+    env:
+      PUSH_REGISTRY: zot-push.ad.ddupan.top
+      PULL_REGISTRY: zot.ad.ddupan.top
+      IMAGE_REPOSITORY: panxiao81/ayatori-manager
+      SPIRE_AGENT_SOCKET: /run/spire/agent-sockets/spire-agent.sock
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify release consistency
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          make manifests
+          git diff --exit-code
+          # 部署 role 的版本即 release：Flux 同步该 tag、quadlet 拉取同名镜像。
+          grep -qx "version: ${TAG#v}" deploy/ansible/galaxy.yml
+          grep -qx "ayatori_version: ${TAG}" deploy/ansible/roles/control_plane/defaults/main.yml
+
+      - name: Build and publish image
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          KO_DOCKER_REPO: zot-push.ad.ddupan.top/panxiao81/ayatori-manager
+          KO_DEFAULTBASEIMAGE: gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+        run: |
+          set -euo pipefail
+          set +x
+          export DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+          ko="go run github.com/google/ko@v0.19.1"
+          /opt/spire/bin/spire-agent api fetch jwt -audience zot -socketPath "$SPIRE_AGENT_SOCKET" -output json |
+            jq -er '.[0].svids[0].svid' | $ko login "$PUSH_REGISTRY" --username zot --password-stdin
+          ref=$($ko build ./cmd --bare --platform=linux/amd64 --tags="$TAG" --sbom=none)
+          image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@${ref##*@}"
+          echo "ayatori_image: $image"
+          printf '## Published image\n\n- `%s`\n- tag `%s`, source `%s`\n' "$image" "$TAG" "$GITHUB_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

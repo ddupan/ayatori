@@ -1,0 +1,16 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+metadata:
+  name: k0s
+spec:
+  api:
+    address: {{ ayatori_api_address }}
+    sans: {{ ayatori_api_sans | to_json }}
+  controllerManager:
+    extraArgs:
+      # API-only 不运行 Pod；只保留 namespace 删除收尾。
+      controllers: namespace
+  storage:
+    type: etcd
+  telemetry:
+    enabled: false

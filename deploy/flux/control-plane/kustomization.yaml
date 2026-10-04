@@ -1,0 +1,7 @@
+# ${VAR} 由环境的 Flux Kustomization postBuild.substitute 提供（见 deploy/<env>/vars.yml）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../../config/rbac/role.yaml
+- rbac.yaml
+- postgresql.yaml

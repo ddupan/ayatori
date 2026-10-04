@@ -46,12 +46,13 @@ func (o managerOptions) configuration() ctrl.Options {
 	utilruntime.Must(executionv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(databasev1alpha1.AddToScheme(scheme))
 	return ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                o.metricsOptions(),
-		WebhookServer:          webhook.NewServer(o.webhookOptions()),
-		HealthProbeBindAddress: o.probeAddr,
-		LeaderElection:         o.enableLeaderElection,
-		LeaderElectionID:       "a6325ed6.ddupan.top",
+		Scheme:                  scheme,
+		Metrics:                 o.metricsOptions(),
+		WebhookServer:           webhook.NewServer(o.webhookOptions()),
+		HealthProbeBindAddress:  o.probeAddr,
+		LeaderElection:          o.enableLeaderElection,
+		LeaderElectionID:        "a6325ed6.ddupan.top",
+		LeaderElectionNamespace: o.leaderElectionNS,
 		// 保持默认不主动释放选主 Lease：manager 停止后还要完成组件清理。
 	}
 }
