@@ -1,7 +1,7 @@
 # Database 模块
 
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
-管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装与应用登录验证；导入、Tenant 交付与回收尚未完成。
+管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证与凭据位置公布；导入与回收尚未完成。
 
 ## 当前设计（2026-09-24）
 
@@ -181,7 +181,7 @@ controller-runtime 串行执行，多副本部署依靠既有 leader election；
 
 成功只设置 `CredentialsReady=True`；只准备凭据时 Database Ready 保持 False/ProvisioningIncomplete，
 Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后续创建需另行启用下述用例。
-ESO 投射、Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
+Retain 释放或 Delete 清理尚未接入，也不会解除 finalizer。不要作为完整 DBaaS 部署。
 
 单元测试穷举前置条件；真实 API server + 隔离 Bao 验证创建、状态确认、幂等、重启、
 依赖恢复、固定位置、不确定结果、确认保存失败和删除边界；实际 manager 验证 watch 驱动
@@ -220,8 +220,8 @@ OID 只保存在 CR，表示本次成功创建的回读身份，不是 registry 
 OID 不是跨集群/备份恢复的稳定身份，恢复后须人工核对，不能靠匹配 OID 推导管理权。
 
 `ResourcesReady=True` 与 Database `Ready=True/DatabaseReady` 表示数据库、角色、权限与扩展
-已收敛且应用凭据本轮登录成功；每轮（约 30 秒）重新验证，凭据失效即撤销就绪。Tenant Ready
-仍需 ESO 交付，尚未接入。当前不轮换密码，也不撤销其他数据库的 PUBLIC 权限。管理员须保证共享实例中其他数据库的接入策略满足隔离要求。
+已收敛且应用凭据本轮登录成功；每轮（约 30 秒）重新验证，凭据失效即撤销就绪。Tenant 随之
+可用，见下节。当前不轮换密码，也不撤销其他数据库的 PUBLIC 权限。管理员须保证共享实例中其他数据库的接入策略满足隔离要求。
 
 真实 API server + PostgreSQL + OpenBao 测试覆盖实际密码登录、owner 建表、应用管理权限拒绝、
 无关账号连接拒绝、重试/重启、权限恢复、同名冲突、角色重建、并发授权、创建结果丢失、
@@ -232,6 +232,17 @@ OID 不是跨集群/备份恢复的稳定身份，恢复后须人工核对，不
 [CREATE DATABASE 非事务与 owner 权限合同](https://www.postgresql.org/docs/17/sql-createdatabase.html)
 和 [CREATEROLE 的成员授权](https://www.postgresql.org/docs/17/role-attributes.html)。
 不新增 controller 通用生命周期框架，继续采用既有直接观察、resourceVersion 保护和条件报告。
+
+## Tenant 凭据位置公布
+
+Ayatori 的凭据交付止于 OpenBao（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）：
+控制面可能不运行 workload，Tenant namespace 只是租户边界，因此不创建 ExternalSecret 或 Secret。
+`TenantReconciler` 在绑定完成后公布 Database 已确认凭据的 `credentialRef`、`credentialVersion`，
+以及设置 `--database-credential-url-base` 时不含认证信息的 `credentialURL`。
+
+Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotReady`（已公布位置，等待资源、
+扩展与应用登录验证），最后 `Ready=True/CredentialsAvailable`。消费方集群按公布的位置与版本自行
+投射（例如固定该版本的 ExternalSecret）；其读取 policy 在接入时单独授予。
 
 ## OpenBao Kubernetes 认证会话
 

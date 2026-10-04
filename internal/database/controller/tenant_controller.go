@@ -23,6 +23,8 @@ const dependencyRetry = 30 * time.Second
 type TenantReconciler struct {
 	Client client.Client
 	Reader client.Reader
+	// CredentialURLBase 是 OpenBao API 地址，只用于在 status 中给出不含认证信息的凭据位置。
+	CredentialURLBase string
 }
 
 // +kubebuilder:rbac:groups=database.ayatori.ddupan.top,resources=postgresqltenants,verbs=get;list;watch;update;patch
@@ -53,7 +55,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 		}
 	}
 	if tenant.Phase != binding.Binding && tenant.Phase != binding.Bound {
-		if err := r.present(ctx, object, binding.Binding, "BindingPending", "申请目标已固定，等待资源侧绑定", nil); err != nil {
+		if err := r.present(ctx, object, tenantStatus{phase: binding.Binding, reason: "BindingPending", message: "申请目标已固定，等待资源侧绑定"}); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -183,11 +185,33 @@ func (r *TenantReconciler) confirm(ctx context.Context, object *databasev1alpha1
 	if issue := facts.CanBind(current); issue != nil {
 		return r.wait(ctx, latest, current.Phase, issue.Reason, issue.Message)
 	}
-	if err := r.present(ctx, latest, binding.Bound, "BindingComplete",
-		"双向绑定已记录；尚未执行供应、应用登录验证或凭据交付，不能 Ready", &facts.Identity); err != nil {
+	if err := r.present(ctx, latest, r.availability(observed, facts.Identity)); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: dependencyRetry}, nil
+}
+
+// availability 公布 OpenBao 中已确认凭据的位置，并在 Database 就绪后宣告 Tenant 可用。
+// Ayatori 不向 workload 投射 Secret：控制面可能不运行 workload，Tenant namespace 只是租户边界；
+// 消费方所在集群按公布的位置与版本自行读取（例如用其自身的 ESO）。
+func (r *TenantReconciler) availability(database *databasev1alpha1.PostgreSQLDatabase, identity binding.Identity) tenantStatus {
+	status := tenantStatus{phase: binding.Bound, database: &identity}
+	ref := database.Status.CredentialRef
+	switch {
+	case ref == nil || database.Status.CredentialVersion == 0:
+		status.reason, status.message = "CredentialsPending", "双向绑定已记录；等待 Database 确认应用凭据"
+		return status
+	case !currentReady(database.Generation, database.Status.Conditions):
+		status.reason, status.message = "DatabaseNotReady", "应用凭据已确认；等待 Database 资源、扩展与应用登录验证"
+	default:
+		status.ready = true
+		status.reason, status.message = "CredentialsAvailable", "数据库已就绪；应用凭据位置已公布，由消费方集群自行投射"
+	}
+	status.credentialRef, status.credentialVersion = ref, database.Status.CredentialVersion
+	if r.CredentialURLBase != "" {
+		status.credentialURL = r.CredentialURLBase + "/v1/" + ref.Mount + "/data/" + ref.Path
+	}
+	return status
 }
 
 func (r *TenantReconciler) database(ctx context.Context, name string) (*databasev1alpha1.PostgreSQLDatabase, error) {
@@ -200,23 +224,41 @@ func (r *TenantReconciler) database(ctx context.Context, name string) (*database
 
 // wait 呈现不能继续的原因，并按低频重试等待依赖或人工处理。
 func (r *TenantReconciler) wait(ctx context.Context, object *databasev1alpha1.PostgreSQLTenant, phase, reason, message string) (ctrl.Result, error) {
-	if err := r.present(ctx, object, phase, reason, message, nil); err != nil {
+	if err := r.present(ctx, object, tenantStatus{phase: phase, reason: reason, message: message}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: dependencyRetry}, nil
 }
 
-func (r *TenantReconciler) present(ctx context.Context, object *databasev1alpha1.PostgreSQLTenant, phase, reason, message string, database *binding.Identity) error {
+// tenantStatus 是一轮协调要呈现的结果；未设置的引用字段保留原值。
+type tenantStatus struct {
+	phase, reason, message string
+	ready                  bool
+	database               *binding.Identity
+	credentialRef          *databasev1alpha1.CredentialReference
+	credentialVersion      int64
+	credentialURL          string
+}
+
+func (r *TenantReconciler) present(ctx context.Context, object *databasev1alpha1.PostgreSQLTenant, status tenantStatus) error {
 	previous := object.Status.DeepCopy()
-	object.Status.Phase = phase
+	object.Status.Phase = status.phase
 	object.Status.ObservedGeneration = object.Generation
-	if database != nil {
+	if status.database != nil {
 		object.Status.DatabaseRef = &databasev1alpha1.BoundDatabaseReference{
-			Name: databasev1alpha1.ObjectName(database.Name), UID: types.UID(database.UID),
+			Name: databasev1alpha1.ObjectName(status.database.Name), UID: types.UID(status.database.UID),
 		}
 	}
+	if status.credentialRef != nil {
+		object.Status.CredentialRef = status.credentialRef.DeepCopy()
+		object.Status.CredentialVersion, object.Status.CredentialURL = status.credentialVersion, status.credentialURL
+	}
+	ready := metav1.ConditionFalse
+	if status.ready {
+		ready = metav1.ConditionTrue
+	}
 	meta.SetStatusCondition(&object.Status.Conditions, metav1.Condition{
-		Type: readyCondition, Status: metav1.ConditionFalse, Reason: reason, Message: message,
+		Type: readyCondition, Status: ready, Reason: status.reason, Message: status.message,
 		ObservedGeneration: object.Generation,
 	})
 	if equality.Semantic.DeepEqual(*previous, object.Status) {

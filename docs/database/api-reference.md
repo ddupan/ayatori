@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装与应用登录验证已实现；导入、交付与删除清理未接入 |
+| 状态 | API、绑定、凭据准备、角色/数据库创建、扩展安装、应用登录验证与凭据位置公布已实现；导入与删除清理未接入 |
 | API group/version | `database.ayatori.ddupan.top/v1alpha1` |
 | 最后更新 | 2026-09-29 |
 
@@ -30,9 +30,9 @@ Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 
 | Tenant | `spec.provision.instanceRef.name` | 动态申请来源，与 `spec.databaseRef` 互斥且必须二选一 |
 | Tenant | `spec.provision.database/loginRole` | 可省略，语义默认值由 controller 解析，不由 CRD 推导 |
 | Tenant | `spec.databaseRef.name` | 显式申请已有 Database，不额外指定 Instance |
-| Tenant | `spec.extensions`、`spec.secretName` | 扩展集合与同 namespace 的交付目标 |
+| Tenant | `spec.extensions` | 扩展集合，只能追加 |
 | Tenant | `status.databaseRef.name/uid` | 资源侧绑定成功后写入 |
-| Tenant | `status.secretName`、`status.credentialURL` | 交付观察，不包含密码或认证信息 |
+| Tenant | `status.credentialRef`、`status.credentialVersion`、`status.credentialURL` | OpenBao 中已确认凭据的位置与版本，不包含密码或认证信息 |
 
 三资源均有 status subresource、observedGeneration 和按 type 唯一的 Conditions。
 Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应子阶段枚举。
@@ -53,7 +53,8 @@ Instance UID；角色在数据库之后创建，角色确认要求先有数据�
 OID 时转 Conflict；依赖故障不清空确认。旧 CRD 裁剪 OID 会阻止继续下一步，
 但不能回滚已发出的外部创建，因此必须先升级 CRD 再启用供应。
 `ResourcesReady=True/Available` 与 Database `Ready=True/DatabaseReady` 表示数据库、角色、owner
-移交、ACL 与扩展已收敛且应用凭据本轮登录成功；Tenant Ready 仍需凭据交付。
+移交、ACL 与扩展已收敛且应用凭据本轮登录成功；此时 Tenant `Ready=True/CredentialsAvailable`
+并公布凭据位置，依次经过 CredentialsPending、DatabaseNotReady。
 Tenant `spec.extensions` 只能追加，最多 64 项、每项 1–63 字节。
 详见[资源创建闭环](README.md#postgresql-资源创建闭环)。
 
@@ -98,9 +99,7 @@ Ready=False/DeletionPending 并保留绑定与 finalizer，Database 的保护也
 - database/role identifier 继续匹配 `^[a-z][a-z0-9_]{0,62}$`。
 - 动态申请的 database/loginRole 省略时继续以 Tenant metadata.name 为语义默认值；
   显式导入资源使用实际目标，不从新 Tenant 名称重新推导。最终互斥字段须经 API 评审。
-- 投射仍位于 Tenant namespace，ExternalSecret 默认命名沿用
-  `<instanceRef>-<metadata.name>-postgresql`；目标 Secret 可由申请指定，省略时同名。
-  有效 Instance 名称与 Tenant 名称合计不超过 241 字符；完整名称须满足 API 名称校验。
+- Ayatori 不投射凭据；消费方集群按 Tenant status 公布的位置与版本自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 - 任何 spec/status/错误不得出现密码、Token 或完整秘密响应。
 
 ## PostgreSQLInstance
@@ -141,7 +140,7 @@ Database 是平台管理的集群级资源，不归属于应用 namespace，也�
 普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放；
 这些资源管理操作由平台管理员授权。controller 的绑定协调权限与用户申请权限分别配置。
 
-以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入、交付与回收尚未实现：
+以下是行为合同，具体 schema 见当前 API 切片与生成的 CRD；导入与回收尚未实现：
 
 | 内容 | 合同 |
 | --- | --- |

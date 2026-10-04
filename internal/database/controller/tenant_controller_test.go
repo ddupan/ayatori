@@ -127,7 +127,7 @@ func testDynamicBinding(t *testing.T, apiClient client.Client) {
 	if tenant.ResourceVersion != beforeTenant || database.ResourceVersion != beforeDatabase {
 		t.Fatal("幂等重试产生了无意义写入")
 	}
-	assertNotReady(t, tenant, "BindingComplete")
+	assertNotReady(t, tenant, "CredentialsPending")
 }
 
 // 只在真实 API 调用边界注入错误，底层仍使用 API server 的并发、status 与 CEL 语义。
@@ -384,7 +384,7 @@ func testPresentationVersion(t *testing.T, apiClient client.Client) {
 	writer := &afterBindClient{Client: apiClient, after: func() {
 		current := tenant.DeepCopy()
 		reload(t, apiClient, current)
-		current.Spec.SecretName = "updated-delivery"
+		current.Spec.Extensions = []string{"pgcrypto"}
 		current.Annotations = map[string]string{"example.test/keep": "preserved"}
 		if err := apiClient.Update(t.Context(), current); err != nil {
 			t.Fatal(err)
@@ -400,7 +400,7 @@ func testPresentationVersion(t *testing.T, apiClient client.Client) {
 	}
 	reconcileOK(t, bindingTestReconciler(apiClient, apiClient), tenant)
 	reload(t, apiClient, tenant)
-	if tenant.Status.Phase != phaseBound || tenant.Spec.SecretName != "updated-delivery" ||
+	if tenant.Status.Phase != phaseBound || len(tenant.Spec.Extensions) != 1 ||
 		tenant.Annotations["example.test/keep"] != "preserved" {
 		t.Fatal("重新协调未完成绑定或覆盖了其他字段")
 	}

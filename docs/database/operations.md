@@ -5,8 +5,9 @@
 
 ## 当前绑定切片的限制
 
-源码已接入绑定、Instance 观测与可选的 Bao 凭据准备，未接入 PostgreSQL 供应、ESO 交付或删除清理。
-Bound/BindingComplete 只表示 Kubernetes 双向记录一致，Ready 仍为 False。
+源码已接入绑定、Instance 观测、Bao 凭据准备与 PostgreSQL 供应（均需显式启用），未接入导入或删除清理。
+绑定后 Tenant 依次报告 CredentialsPending、DatabaseNotReady，最后 CredentialsAvailable 并公布凭据位置；
+Ayatori 不投射 Secret，消费方集群自行读取。
 Tenant 删除会保留 `database.ayatori.ddupan.top/tenant-protection` 并报告 DeletionPending；
 Database 的 `database.ayatori.ddupan.top/database-protection` 也尚无清理后移除路径。
 这是未完成能力的明确边界，不是已经实现的 Retain/Delete 恢复逻辑。不要将此切片部署为
@@ -31,7 +32,7 @@ Secret 事件立即入队，30 秒重查覆盖 PostgreSQL 权限等没有 Kubern
 Instance 删除不要求 PostgreSQL 可达，但必须可读取所有 Database/Tenant 引用。
 
 先看 Instance、Database、Tenant 的 Ready Condition、绑定 UID、阶段与 observedGeneration，
-再核对 PostgreSQL catalog、OpenBao metadata、ExternalSecret 与 Secret 投射状态。
+再核对 PostgreSQL catalog、OpenBao metadata 与 Tenant 公布的凭据位置；消费方投射在其集群排查。
 具体 kubectl 资源名、finalizer 名称与人工确认字段在 API 实现后补齐，不提供猜测的 patch 命令。
 不得把 Secret data、密码或带 Token 的请求粘贴到 issue/日志。
 
@@ -45,7 +46,6 @@ Instance 删除不要求 PostgreSQL 可达，但必须可读取所有 Database/T
 | InsufficientPrivileges | PostgreSQL/OpenBao 权限与 Kubernetes RBAC |
 | InstanceNotReady | 当前目标的管理能力，不检查 registry |
 | Conflict | 绑定 UID、未知同名资源、失败步骤与外部结果确定性 |
-| CredentialProjectionFailed | 授权的凭据位置、Store、ESO 与目标 Secret |
 | Released | 资源已保留，不代表可直接交给另一个 Tenant |
 
 ## 创建不确定或同名冲突
@@ -65,7 +65,7 @@ Tenant 删除后 Database 及实际资源保留，进入 Released，保存旧绑
 不要删除 Database 对象来“释放名称”，也不要只修改 UID 或 Ready 强行交付。
 
 管理员先确认数据是否允许交给新使用者、旧角色是否共享、旧账号访问如何撤销或保留、
-新使用者如何获得凭据，以及原 ExternalSecret/Secret 的处置。删除 Secret 不会撤销已持有密码
+新使用者如何获得凭据，以及消费方集群中原投射的处置。删除 Secret 不会撤销已持有密码
 的 PostgreSQL 访问。完成这些处置后，才通过显式授权重新绑定；不自动回到可分配状态。
 具体凭据关联与解除绑定字段尚待 API 评审，当前不能宣称已有可执行恢复命令。
 

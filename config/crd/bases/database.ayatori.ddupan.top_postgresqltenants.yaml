@@ -105,12 +105,6 @@ spec:
                 required:
                 - instanceRef
                 type: object
-              secretName:
-                description: SecretName 指定 Tenant namespace 内的投射目标，省略时使用合同约定的默认名称。
-                maxLength: 253
-                minLength: 1
-                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
-                type: string
             type: object
             x-kubernetes-validations:
             - message: exactly one of provision and databaseRef is required
@@ -179,9 +173,32 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              credentialRef:
+                description: |-
+                  CredentialRef 与 CredentialVersion 公布 OpenBao 中已确认的应用凭据位置和版本，不含凭据值。
+                  投射由消费方所在集群自行完成：Ayatori 控制面可能不运行 workload，Tenant namespace
+                  只是租户与 RBAC 边界，不代表 workload 所在 namespace。
+                properties:
+                  mount:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  path:
+                    description: Path 是 mount 内的逻辑路径，不含 KV v2 的 data/ API 前缀。
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                required:
+                - mount
+                - path
+                type: object
               credentialURL:
                 description: CredentialURL 只含 OpenBao API 位置，禁止嵌入认证信息。
                 type: string
+              credentialVersion:
+                format: int64
+                minimum: 1
+                type: integer
               databaseRef:
                 description: DatabaseRef 只有在资源侧确认绑定后才写入。
                 properties:
@@ -207,12 +224,6 @@ spec:
                 format: int64
                 type: integer
               phase:
-                type: string
-              secretName:
-                description: SecretName 是已观察到的同 namespace 投射目标，不包含凭据值。
-                maxLength: 253
-                minLength: 1
-                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
                 type: string
             type: object
         required:

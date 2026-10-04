@@ -7,8 +7,8 @@ import (
 
 // 本文件是 Database 的显式依赖图：后端 adapter → Reconciler。
 // 构造只在启动时执行；Reconciler 不持有容器或动态查找依赖。
-func wireTenantController(writer client.Client, reader client.Reader) *databasecontroller.TenantReconciler {
-	return &databasecontroller.TenantReconciler{Client: writer, Reader: reader}
+func wireTenantController(writer client.Client, reader client.Reader, credentialURLBase string) *databasecontroller.TenantReconciler {
+	return &databasecontroller.TenantReconciler{Client: writer, Reader: reader, CredentialURLBase: credentialURLBase}
 }
 
 // wireInstanceController 中的 reader 必须直连 API server：Secret 内容不进入共享 cache。

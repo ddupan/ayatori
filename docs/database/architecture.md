@@ -11,9 +11,8 @@ Kubernetes API
                          |
               Ayatori Database controllers
                    |          |          |
-              PostgreSQL   OpenBao   ExternalSecret
-                catalog                  |
-                                        ESO → Secret
+              PostgreSQL   OpenBao
+                catalog      ↑ 消费方集群按 Tenant status 公布的位置自行读取
 ```
 
 Kubernetes 保存声明、绑定与操作进度；PostgreSQL 保存实际数据库状态；OpenBao 保存应用凭据。
@@ -48,7 +47,7 @@ Delete 由资源侧明确授权，在 finalizer 保护下按管理范围清理�
 
 管理 Secret 固定在 controller namespace，管理员维护其 ExternalSecret；controller 只读。
 有效值变化刷新管理连接，不直接访问 Bao 获取管理凭据，不自行实现连接池。
-应用凭据写 OpenBao，由 ESO 投射；controller 不直接写明文 Secret。
+应用凭据写 OpenBao 并在 Tenant status 公布位置，不在控制面投射 Secret（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 TLS、DNS/IP SAN、七键凭据输出和最小权限合同继续适用。
 
 ## 导航

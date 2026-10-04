@@ -7,7 +7,7 @@
 
 ## 保护目标
 
-- 应用密码只存在于 OpenBao、ESO 投射的目标 Secret 和需要使用它的进程内存中。
+- 应用密码只存在于 OpenBao、消费方集群自行投射的 Secret 和需要使用它的进程内存中；Ayatori 控制面不保存其副本。
 - controller 只能在 Database 已确认的管理范围和当前绑定/操作授权内修改资源；未知同名对象报冲突。
 - namespace 租户不能越权管理 Instance、Database 导入/回收、其他 namespace 或 controller 配置。
 - PostgreSQL 和 OpenBao 的网络身份使用受信 CA 验证，不因 DNS 不可用而降级 TLS。
@@ -30,7 +30,7 @@ Kubernetes 管理员、OpenBao 管理员和 PostgreSQL 管理员是平台信任�
 - 管理凭据只从 Instance 引用的 controller namespace Secret 读取，不复制到
   CR/status/Event/metric/trace；管理员维护 ExternalSecret，由 ESO 同步该 Secret。
 - 动态供应密码使用密码学安全随机源；已有可靠关联时复用 OpenBao 现值，结果不确定时停止并报冲突。
-- controller 创建 ExternalSecret，不直接创建含 data/stringData 的 Secret。
+- controller 不创建 ExternalSecret 或含 data/stringData 的 Secret；只在 Tenant status 公布凭据位置。
 - 日志字段允许 namespace/name、UID、generation、阶段和错误类别；禁止记录请求/响应体、
   DSN、Authorization header、密码或完整 OpenBao URL path 作为 metric label。
 - panic、错误包装和测试失败输出必须经过凭据泄漏测试。
@@ -71,8 +71,8 @@ Kubernetes RBAC 应把 Instance 管理、Database 导入、Released 重新开放
 ## 发布前安全验收
 
 - 使用错误 CA、错误 DNS 名和错误 IP 时连接失败；正确 DNS/IP SAN 均成功。
-- namespace 用户不能修改 Instance 或跨 namespace Tenant/ExternalSecret。
-- controller/ESO 的 OpenBao policy 互相隔离，越权请求被拒绝。
+- namespace 用户不能修改 Instance 或跨 namespace Tenant。
+- controller 与消费方集群读取身份的 OpenBao policy 互相隔离，越权请求被拒绝。
 - 应用 login 不能创建 role/database，也不能连接其他租户 database。
 - 日志、Event、Condition、metrics、CR 导出和测试 artifact 不含 canary password/token。
 - 伪造 COMMENT、同名 database/role 或错误 UID metadata 均不能绕过 Conflict。
