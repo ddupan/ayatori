@@ -9,6 +9,7 @@ resources:
 - bases/execution.ayatori.ddupan.top_jobclasses.yaml
 - bases/execution.ayatori.ddupan.top_kubernetesexecutionparameters.yaml
 - bases/execution.ayatori.ddupan.top_opensandboxexecutionparameters.yaml
+- bases/network.ayatori.ddupan.top_loadbalancers.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

@@ -45,3 +45,37 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - network.ayatori.ddupan.top
+  resources:
+  - loadbalancers
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.ayatori.ddupan.top
+  resources:
+  - loadbalancers/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - network.ayatori.ddupan.top
+  resources:
+  - loadbalancers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ipaddresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch

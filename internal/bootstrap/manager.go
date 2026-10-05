@@ -18,6 +18,7 @@ import (
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	executionv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1"
+	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 )
 
 func newManager(options options) (ctrl.Manager, error) {
@@ -45,6 +46,7 @@ func (o managerOptions) configuration() ctrl.Options {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(executionv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(databasev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(networkv1alpha1.AddToScheme(scheme))
 	return ctrl.Options{
 		Scheme:                  scheme,
 		Metrics:                 o.metricsOptions(),
