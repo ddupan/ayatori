@@ -43,3 +43,30 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: 安装证书到期导出脚本
+  ansible.builtin.template:
+    src: ayatori-cert-metrics.sh.j2
+    dest: /usr/local/libexec/ayatori-cert-metrics
+    mode: "0755"
+
+- name: 写入证书到期导出 unit
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    mode: "0644"
+  loop: [ayatori-cert-metrics.service, ayatori-cert-metrics.timer]
+
+- name: 启用证书到期导出 timer
+  ansible.builtin.systemd_service:
+    name: ayatori-cert-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# 部署可能刚签发 kubeconfig，立即刷新一次。
+- name: 刷新证书到期指标
+  ansible.builtin.systemd_service:
+    name: ayatori-cert-metrics.service
+    state: started
+  changed_when: false

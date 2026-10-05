@@ -1,0 +1,9 @@
+[Unit]
+Description=每小时导出 Ayatori 证书到期时间
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target
