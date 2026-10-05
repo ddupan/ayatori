@@ -1,4 +1,5 @@
-# 所有容器使用 host 网络访问本机 API，只监听 127.0.0.1；端口互不冲突。
+# 所有容器使用 host 网络访问本机 API。metrics 监听 LXC 地址供中央 vmagent 采集（LAN 明文，与其他
+# homelab exporter 一致），健康检查等其他端口只监听 127.0.0.1；端口互不冲突。
 containers:
   - name: external-secrets
     image: "{{ eso_image }}"
@@ -9,7 +10,7 @@ containers:
       - --enable-cluster-external-secret-reconciler=false
       - --enable-cluster-push-secret-reconciler=false
       - --enable-generator-state=false
-      - --metrics-addr=127.0.0.1:8180
+      - --metrics-addr={{ ayatori_api_address }}:8180
       - --live-addr=127.0.0.1:8182
     memory: 256M
 
@@ -22,7 +23,7 @@ containers:
       - --storage-path=/data
       - --storage-addr=127.0.0.1:9090
       - --storage-adv-addr=127.0.0.1:9090
-      - --metrics-addr=127.0.0.1:8280
+      - --metrics-addr={{ ayatori_api_address }}:8280
       - --health-addr=127.0.0.1:9440
     memory: 256M
 
@@ -34,7 +35,7 @@ containers:
       - --no-remote-bases
       - --concurrent=1
       - --concurrent-ssa=1
-      - --metrics-addr=127.0.0.1:8281
+      - --metrics-addr={{ ayatori_api_address }}:8281
       - --health-addr=127.0.0.1:9441
     memory: 512M
 
@@ -45,6 +46,8 @@ containers:
       - --leader-elect
       - --leader-election-namespace={{ control_namespace }}
       - --health-probe-bind-address=127.0.0.1:8081
+      - --metrics-bind-address={{ ayatori_api_address }}:8080
+      - --metrics-secure=false
       - --webhook-port=-1
       - --zap-devel=false
       - --openbao-address={{ openbao_address }}
@@ -61,3 +64,18 @@ containers:
       - --database-provision-resources
       - --database-credential-url-base={{ openbao_address }}
     memory: 256M
+
+  # 只导出 CR 状态（Flux 对象与 Ayatori Instance/Database/Tenant），不导出内置资源。
+  - name: kube-state-metrics
+    image: "{{ ksm_image }}"
+    identity: kube-state-metrics
+    volumes: ["{{ identities_dir }}/kube-state-metrics-config:/config:ro"]
+    args:
+      - --kubeconfig=/identity/kubeconfig
+      - --custom-resource-state-only
+      - --custom-resource-state-config-file=/config/custom-resource-state.yaml
+      - --host={{ ayatori_api_address }}
+      - --port=8085
+      - --telemetry-host=127.0.0.1
+      - --telemetry-port=8086
+    memory: 128M

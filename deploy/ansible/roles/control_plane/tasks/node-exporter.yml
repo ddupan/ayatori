@@ -1,0 +1,45 @@
+- name: 下载 node_exporter
+  ansible.builtin.get_url:
+    url: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+    dest: "{{ deploy_state_dir }}/node_exporter-{{ node_exporter_version }}.tar.gz"
+    mode: "0600"
+    checksum: sha256:{{ node_exporter_sha256 }}
+  register: node_exporter_download
+  retries: 3
+  delay: 5
+  until: node_exporter_download is succeeded
+
+- name: 安装 node_exporter
+  ansible.builtin.unarchive:
+    src: "{{ deploy_state_dir }}/node_exporter-{{ node_exporter_version }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts: [--strip-components=1, --wildcards, "*/node_exporter"]
+    creates: /usr/local/bin/node_exporter-{{ node_exporter_version }}.installed
+  notify: 重启 node_exporter
+
+- name: 记录 node_exporter 版本
+  ansible.builtin.copy:
+    content: "{{ node_exporter_version }}\n"
+    dest: /usr/local/bin/node_exporter-{{ node_exporter_version }}.installed
+    mode: "0644"
+
+- name: 创建 textfile 目录
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: 写入 node_exporter unit
+  ansible.builtin.template:
+    src: node-exporter.service.j2
+    dest: /etc/systemd/system/node-exporter.service
+    mode: "0644"
+  notify: 重启 node_exporter
+
+- name: 启用 node_exporter
+  ansible.builtin.systemd_service:
+    name: node-exporter
+    enabled: true
+    state: started
+    daemon_reload: true
