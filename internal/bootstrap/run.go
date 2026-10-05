@@ -33,6 +33,9 @@ func Run() error {
 	}
 	// manager 的 worker 完全停止后才释放组件持有的资源。
 	defer closeDatabaseConnections()
+	if err := registerLoadBalancerControllers(manager, options.lb); err != nil {
+		return err
+	}
 
 	setupLog.Info("Starting manager")
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {

@@ -43,7 +43,8 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	}
 	t.Setenv("KUBECONFIG", path)
 	t.Setenv("POD_NAMESPACE", "")
-	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1")
+	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1",
+		"--loadbalancer-address-pool=10.62.0.0/24")
 	manager, err := newManager(options)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +71,9 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeDatabaseConnections()
+	if err := registerLoadBalancerControllers(manager, options.lb); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- manager.Start(ctx) }()
 	defer func() {

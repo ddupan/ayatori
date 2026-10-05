@@ -203,3 +203,10 @@ Host 不可达时删除等待，不跳过；需要强制完成时由管理员先
   reload 失败、宣告先于配置的拒绝、删除顺序）、Programmed/Degraded/Available 判定。
 - envtest：Address 并发认领冲突、同名重建、finalizer、controller 重启后从 status 与 Address 恢复。
 - adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、gobgpd + 对端 gobgp、PowerDNS。
+
+## 实现进度
+
+- 切片 1（API 与 VIP 分配）：`network.ayatori.ddupan.top/v1alpha1 LoadBalancer`、Address 认领/释放与
+  孤儿回收已实现；`--loadbalancer-address-pool` 为空时不启用。数据面、Hostname 尚未接入，
+  `Programmed` 恒为 False（Reason `DataPlanePending`）。CRD 暂不加入 `deploy/flux/crds`，
+  待数据面切片可用后再部署。

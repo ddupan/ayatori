@@ -9,6 +9,7 @@ import (
 type options struct {
 	manager  managerOptions
 	database databaseOptions
+	lb       loadBalancerOptions
 	openBao  openBaoOptions
 	logging  zap.Options
 }
@@ -16,6 +17,7 @@ type options struct {
 func (o *options) bindFlags(flags *flag.FlagSet) {
 	o.manager.bindFlags(flags)
 	o.database.bindFlags(flags)
+	o.lb.bindFlags(flags)
 	o.openBao.bindFlags(flags)
 	o.logging.Development = true
 	o.logging.BindFlags(flags)
