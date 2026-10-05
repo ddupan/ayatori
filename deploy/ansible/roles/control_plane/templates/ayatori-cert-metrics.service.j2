@@ -1,0 +1,8 @@
+[Unit]
+Description=导出 Ayatori 证书到期时间
+After=k0scontroller.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/local/libexec/ayatori-cert-metrics

@@ -1,0 +1,21 @@
+#!/bin/sh
+# 导出 k0s PKI 与各身份 kubeconfig 客户端证书的到期时间，供 node_exporter textfile collector 采集。
+# k0s 重启时轮换 PKI 中的服务端证书；kubeconfig 客户端证书不会自动轮换。
+set -eu
+out={{ node_exporter_textfile_dir }}/ayatori_certificates.prom
+tmp="$out.tmp"
+not_after() { date -d "$(openssl x509 -noout -enddate | cut -d= -f2)" +%s; }
+{
+  echo '# HELP ayatori_certificate_not_after_timestamp_seconds 证书到期时间。'
+  echo '# TYPE ayatori_certificate_not_after_timestamp_seconds gauge'
+  for f in /var/lib/k0s/pki/*.crt /var/lib/k0s/pki/etcd/*.crt; do
+    echo "ayatori_certificate_not_after_timestamp_seconds{source=\"k0s-pki\",path=\"$f\"} $(not_after < "$f")"
+  done
+  for k in {{ identities_dir }}/*/kubeconfig; do
+    identity=$(basename "$(dirname "$k")")
+    t=$(sed -n 's/^ *client-certificate-data: *//p' "$k" | base64 -d | not_after)
+    echo "ayatori_certificate_not_after_timestamp_seconds{source=\"kubeconfig\",identity=\"$identity\"} $t"
+  done
+} > "$tmp"
+chmod 0644 "$tmp"
+mv "$tmp" "$out"

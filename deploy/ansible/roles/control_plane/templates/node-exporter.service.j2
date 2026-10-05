@@ -14,7 +14,7 @@ ExecStart=/usr/local/bin/node_exporter \
   --collector.cpu --collector.meminfo --collector.pressure \
   --collector.filesystem --collector.filesystem.mount-points-include=^(/|{{ backup_dir }})$ \
   --collector.netdev --collector.netdev.device-include=^eth0$ \
-  --collector.systemd --collector.systemd.unit-include=^(k0scontroller|external-secrets|flux-source-controller|flux-kustomize-controller|ayatori-manager|kube-state-metrics|ayatori-backup)\.service$ \
+  --collector.systemd --collector.systemd.unit-include=^(k0scontroller|external-secrets|flux-source-controller|flux-kustomize-controller|ayatori-manager|kube-state-metrics|ayatori-backup|ayatori-cert-metrics)\.service$ \
   --collector.textfile --collector.textfile.directory={{ node_exporter_textfile_dir }} \
   --collector.time
 Restart=on-failure

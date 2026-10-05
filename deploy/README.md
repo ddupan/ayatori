@@ -18,8 +18,9 @@ deploy/
 一个 git tag `vX.Y.Z` 就是一个 release，其中的部署 role、Flux 清单与 manager 镜像是同一组
 制品：
 
-1. 在 main 上提交，把 `deploy/ansible/galaxy.yml` 的 `version` 与 role defaults 的
-   `ayatori_version` 改为新版本。
+1. 攒够一批变更再发版：功能 PR 不修改版本号；发版时单独提交，把 `deploy/ansible/galaxy.yml` 的
+   `version` 与 role defaults 的 `ayatori_version` 改为新版本。未发版的变更在 Dev 以本地 role
+   直接部署验证。
 2. 在该提交上打 **annotated** tag 并推送，tag 说明写本版变更（用户可见的行为、部署注意事项），
    它就是 Gitea Release 的发布说明。Release 工作流校验两处版本与 tag 一致，用 buildx 构建 manager
    镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`，再以 tag 说明加镜像 digest
@@ -78,7 +79,7 @@ homelab-infra `platform/observability`）：
 
 | 端口 | 组件 | 内容 |
 |---|---|---|
-| 9100 | node_exporter（systemd 二进制） | 只开 cpu、meminfo、pressure、filesystem（`/` 与备份卷）、netdev（eth0）、systemd（控制面服务）、textfile（`ayatori_backup_last_success_timestamp_seconds`）、time |
+| 9100 | node_exporter（systemd 二进制） | 只开 cpu、meminfo、pressure、filesystem（`/` 与备份卷）、netdev（eth0）、systemd（控制面服务）、textfile（`ayatori_backup_last_success_timestamp_seconds`；`ayatori_certificate_not_after_timestamp_seconds`，由 `ayatori-cert-metrics.timer` 每小时导出 k0s PKI 与各 kubeconfig 客户端证书到期时间）、time |
 | 8085 | kube-state-metrics（quadlet） | 只导出 CR 状态：`gotk_resource_info`（Flux）、`ayatori_eso_resource_info`（ExternalSecret/SecretStore）、`ayatori_resource_info`（Instance/Database/Tenant 的 Ready、原因与阶段） |
 | 8080 | ayatori-manager | controller-runtime 指标 |
 | 8180 / 8280 / 8281 | ESO / Flux source / Flux kustomize | 各自进程指标 |
