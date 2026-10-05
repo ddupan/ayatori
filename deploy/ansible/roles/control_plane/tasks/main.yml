@@ -26,3 +26,6 @@
 
 - name: 部署 k0s 备份
   ansible.builtin.import_tasks: backup.yml
+
+- name: 部署主机指标采集
+  ansible.builtin.import_tasks: node-exporter.yml

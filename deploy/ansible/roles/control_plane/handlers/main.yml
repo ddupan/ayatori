@@ -8,4 +8,10 @@
     name: "{{ item }}"
     state: restarted
     daemon_reload: true
-  loop: [external-secrets, flux-source-controller, flux-kustomize-controller, ayatori-manager]
+  loop: [external-secrets, flux-source-controller, flux-kustomize-controller, ayatori-manager, kube-state-metrics]
+
+- name: 重启 node_exporter
+  ansible.builtin.systemd_service:
+    name: node-exporter
+    state: restarted
+    daemon_reload: true

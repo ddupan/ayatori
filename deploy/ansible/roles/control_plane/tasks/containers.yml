@@ -32,6 +32,23 @@
   loop: "{{ identities }}"
   notify: 重启控制面容器
 
+- name: 创建 kube-state-metrics 配置目录
+  ansible.builtin.file:
+    path: "{{ identities_dir }}/kube-state-metrics-config"
+    state: directory
+    owner: "65534"
+    group: "65534"
+    mode: "0500"
+
+- name: 写入 kube-state-metrics 自定义资源配置
+  ansible.builtin.copy:
+    src: custom-resource-state.yaml
+    dest: "{{ identities_dir }}/kube-state-metrics-config/custom-resource-state.yaml"
+    owner: "65534"
+    group: "65534"
+    mode: "0400"
+  notify: 重启控制面容器
+
 # 公开中央 CA，仅用于 PostgreSQL verify-full；OpenBao 使用系统信任根。
 - name: 获取 PostgreSQL 中央 CA
   ansible.builtin.get_url:

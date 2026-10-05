@@ -69,6 +69,22 @@ Promotion 即把 Prod 安装的 release 改为 Dev 已验收的 tag。
 （`/var/lib/k0s/pki/ca.crt`），由 homelab-infra 的 OpenBao Terraform 管理；合并前 ESO 与
 manager 会持续报告 OpenBao 登录失败并重试。
 
+## 监控
+
+各 LXC 上的 metrics 监听在 LXC 地址（LAN 明文，由 homelab 中央 vmagent 采集，告警规则在
+homelab-infra `platform/observability`）：
+
+| 端口 | 组件 | 内容 |
+|---|---|---|
+| 9100 | node_exporter（systemd 二进制） | 只开 cpu、meminfo、pressure、filesystem（`/` 与备份卷）、netdev（eth0）、systemd（控制面服务）、textfile（`ayatori_backup_last_success_timestamp_seconds`）、time |
+| 8085 | kube-state-metrics（quadlet） | 只导出 CR 状态：`gotk_resource_info`（Flux）、`ayatori_eso_resource_info`（ExternalSecret/SecretStore）、`ayatori_resource_info`（Instance/Database/Tenant 的 Ready、原因与阶段） |
+| 8080 | ayatori-manager | controller-runtime 指标 |
+| 8180 / 8280 / 8281 | ESO / Flux source / Flux kustomize | 各自进程指标 |
+
+node_exporter 不以容器运行：容器内重新挂载的 procfs 没有 LXCFS 覆盖，会读到宿主数据。非特权
+LXC 中 loadavg、vmstat、hwmon 等本就是宿主数据，因此只开启上表的 collector，宿主指标由宿主自己的
+node-exporter 负责。ESO v2 不导出状态条件指标，ExternalSecret/SecretStore 的状态改由 KSM 导出。
+
 ## 已知限制
 
 - k0s 客户端证书一年到期：删除 `/etc/ayatori-control-plane/<identity>/kubeconfig` 后重跑

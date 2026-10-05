@@ -1,0 +1,29 @@
+[Unit]
+Description=node_exporter（只采集容器内可信的指标）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nobody
+Group=nogroup
+# 非特权 LXC 中 loadavg、vmstat、hwmon/thermal 等是宿主数据，由宿主自己的 node-exporter 负责；
+# 这里只开启经 LXCFS 虚拟化或属于本容器的 collector。
+ExecStart=/usr/local/bin/node_exporter \
+  --web.listen-address={{ ayatori_api_address }}:9100 \
+  --collector.disable-defaults \
+  --collector.cpu --collector.meminfo --collector.pressure \
+  --collector.filesystem --collector.filesystem.mount-points-include=^(/|{{ backup_dir }})$ \
+  --collector.netdev --collector.netdev.device-include=^eth0$ \
+  --collector.systemd --collector.systemd.unit-include=^(k0scontroller|external-secrets|flux-source-controller|flux-kustomize-controller|ayatori-manager|kube-state-metrics|ayatori-backup)\.service$ \
+  --collector.textfile --collector.textfile.directory={{ node_exporter_textfile_dir }} \
+  --collector.time
+Restart=on-failure
+RestartSec=10
+MemoryMax=64M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
