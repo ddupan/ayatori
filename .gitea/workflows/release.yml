@@ -32,6 +32,7 @@ jobs:
 
       # 与其他仓库相同：runner 提供 dockerd，buildx 以 docker-container driver 构建并附带 provenance/SBOM。
       - name: Build and publish image
+        id: image
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
@@ -51,3 +52,26 @@ jobs:
           image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"
           echo "ayatori_image: $image"
           printf '## Published image\n\n- `%s`\n- tag `%s`, source `%s`\n' "$image" "$TAG" "$GITHUB_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      # 发布说明取自 annotated tag 的说明；同名 tag 重发时更新已有 Release。
+      - name: Publish release notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          notes="$(git tag -l --format='%(contents)' "$TAG")"
+          body="$(printf '%s\n\n## 制品\n\n- manager 镜像：`%s`\n- 部署 role：`git+https://git.ddupan.top/%s.git#/deploy/ansible`，version `%s`\n' "$notes" "$IMAGE" "$GITHUB_REPOSITORY" "$TAG")"
+          payload="$(jq -n --arg tag "$TAG" --arg body "$body" '{tag_name: $tag, name: $tag, body: $body}')"
+          auth=(-H "Authorization: token ${TOKEN}" -H 'Content-Type: application/json')
+          id="$(curl -fsS "${auth[@]}" "${API}/releases/tags/${TAG}" 2>/dev/null | jq -r '.id // empty' || true)"
+          if [ -n "$id" ]; then
+            curl -fsS -X PATCH "${auth[@]}" -d "$payload" "${API}/releases/${id}" > /dev/null
+          else
+            curl -fsS -X POST "${auth[@]}" -d "$payload" "${API}/releases" > /dev/null
+          fi
