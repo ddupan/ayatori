@@ -234,3 +234,8 @@ LB 主机部署（homelab-infra）须保证：
 - 切片 2（HAProxy adapter）：`haproxy.Hosts` 的 Observe/Apply/Remove 已实现，以真实 HAProxy 3.4 +
   dataplaneapi v3.4.3 容器做 contract test（回读一致、端口增删、不影响其他 LoadBalancer、
   经 VIP 的健康转发与无健康后端时拒绝）。尚未接入 Reconciler。
+- 切片 3a（gobgpd adapter）：`gobgp.Speakers` 的 Announced/Announce/Withdraw 已实现，使用官方
+  `github.com/osrg/gobgp/v4/api`；contract test 在进程内运行两个真实 GoBGP 并建立 eBGP 会话，
+  验证对端收到与撤回 /32、重复操作幂等。尚未接入 Reconciler（3b）。
+- 后续切片 4：endpoint 集合变化改走 Data Plane API 的 server 接口（runtime 生效、不 reload），
+  移除时先 drain；新建 LoadBalancer、端口或检查参数变化仍整段替换并 reload。
