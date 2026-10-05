@@ -149,7 +149,33 @@ func snapshot(object *networkv1alpha1.LoadBalancer) loadbalancer.Snapshot {
 		Owner:     address.Owner{Namespace: object.Namespace, Name: object.Name, UID: string(object.UID)},
 		Requested: requested,
 		Address:   recorded,
+		Ports:     ports(object.Spec.Ports),
 	}
+}
+
+func ports(specs []networkv1alpha1.LoadBalancerPort) []loadbalancer.Port {
+	result := make([]loadbalancer.Port, 0, len(specs))
+	for _, spec := range specs {
+		check := spec.HealthCheck
+		port := loadbalancer.Port{
+			Port:          spec.Port,
+			ProxyProtocol: loadbalancer.ProxyProtocol(spec.ProxyProtocol),
+			IdleTimeout:   spec.IdleTimeout.Duration,
+			HealthCheck: loadbalancer.HealthCheck{
+				Path: check.Path, ExpectedStatuses: check.ExpectedStatuses,
+				Interval: check.Interval.Duration, Timeout: check.Timeout.Duration,
+				HealthyThreshold: check.HealthyThreshold, UnhealthyThreshold: check.UnhealthyThreshold,
+			},
+		}
+		if check.Port != nil {
+			port.HealthCheck.Port = *check.Port
+		}
+		for _, endpoint := range spec.Endpoints {
+			port.Endpoints = append(port.Endpoints, loadbalancer.Endpoint{Address: endpoint.Address, Port: endpoint.Port})
+		}
+		result = append(result, port)
+	}
+	return result
 }
 
 func ipAddress(addr netip.Addr, object *networkv1alpha1.LoadBalancer) *networkingv1.IPAddress {

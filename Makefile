@@ -77,6 +77,15 @@ lint-database-integration: golangci-lint ## 检查集成测试构建标签下的
 	"$(GOLANGCI_LINT)" run --build-tags=integration \
 		./internal/database/... ./internal/infra/... ./internal/bootstrap/...
 
+.PHONY: test-loadbalancer-integration
+test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API 容器验证 LoadBalancer。
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+		go test -tags=integration -race -count=1 ./internal/loadbalancer/...
+
+.PHONY: lint-loadbalancer-integration
+lint-loadbalancer-integration: golangci-lint ## 检查集成测试构建标签下的 LoadBalancer 代码。
+	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/loadbalancer/...
+
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	"$(GOLANGCI_LINT)" run --fix
@@ -169,6 +178,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -185,6 +195,10 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.13.1
+OAPI_CODEGEN_VERSION ?= v2.8.0
+# 与 LB 主机部署的 dataplaneapi 版本一致；升级时同时更新校验和并重新生成。
+DATAPLANEAPI_VERSION ?= v3.4.3
+DATAPLANEAPI_SPEC_SHA256 ?= 035a0dc6f44251fdf5c5b5a32bd62827c027c238a774888b899f1b6bce20a566
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -207,6 +221,19 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: oapi-codegen
+oapi-codegen: $(OAPI_CODEGEN) ## Download oapi-codegen locally if necessary.
+$(OAPI_CODEGEN): $(LOCALBIN)
+	$(call go-install-tool,$(OAPI_CODEGEN),github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen,$(OAPI_CODEGEN_VERSION))
+
+.PHONY: generate-dataplaneapi
+generate-dataplaneapi: oapi-codegen ## 从固定版本的 Data Plane API spec 生成 HAProxy adapter 客户端；去掉 x-go-type 以免依赖 client-native。
+	@spec="$(LOCALBIN)/dataplane_spec-$(DATAPLANEAPI_VERSION).yaml"; \
+	curl -fsSL -o "$$spec" https://raw.githubusercontent.com/haproxytech/dataplaneapi/$(DATAPLANEAPI_VERSION)/specification/build/dataplane_spec.yaml && \
+	echo "$(DATAPLANEAPI_SPEC_SHA256)  $$spec" | sha256sum -c - && \
+	sed -E '/^\s*x-go-type: /d; /^\s*x-go-type-import:/{N;d}' "$$spec" > "$$spec.local" && \
+	"$(OAPI_CODEGEN)" -config internal/loadbalancer/adapter/haproxy/dataplaneapi/oapi-codegen.yaml "$$spec.local"
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.

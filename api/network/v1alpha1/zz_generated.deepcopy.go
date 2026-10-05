@@ -119,7 +119,6 @@ func (in *LoadBalancerPort) DeepCopyInto(out *LoadBalancerPort) {
 		copy(*out, *in)
 	}
 	out.IdleTimeout = in.IdleTimeout
-	out.DrainTimeout = in.DrainTimeout
 	in.HealthCheck.DeepCopyInto(&out.HealthCheck)
 }
 

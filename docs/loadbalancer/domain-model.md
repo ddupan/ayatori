@@ -72,7 +72,6 @@ spec:
           port: 5432
       proxyProtocol: None      # None | V1 | V2
       idleTimeout: 1h
-      drainTimeout: 30s        # endpoint 被移出集合后保留已有连接的上限
       healthCheck:
         type: HTTP             # TCP | HTTP
         port: 8008             # 为空表示使用各 endpoint 自身端口（AWS traffic-port）
@@ -96,7 +95,11 @@ DNS 名称，由数据面经 LAN resolver（Blocky，`lab.ddupan.top` 条件转�
   默认 fail-open，与按角色选主（如 PostgreSQL primary）冲突。
 - **不健康即断开**：endpoint 被健康检查判为失败时断开其已有连接（同 AWS 默认；HAProxy
   `on-marked-down shutdown-sessions`）。
-- **移出即排空**：endpoint 从集合移除时停止新连接，已有连接最多保留 `drainTimeout`。
+- **移出即排空**：endpoint 从集合移除时停止新连接；已有连接由 reload 前的旧 worker 继续服务，
+  上限是 LB 主机的 `hard-stop-after`。HAProxy 无法按端口设置排空时长，因此不提供
+  `drainTimeout` 字段。
+- **新 server 先验证后接流量**：server 以 `init-state fully-down` 起始，连续通过检查才接收流量，
+  避免新加入的副本在首次检查前收到连接。
 
 后续特性：上述行为确有需求时再开放为字段，参照 OCI `isFailOpen`、GCP
 `connectionPersistenceOnUnhealthyBackends` 与 AWS `connection_termination`。例如健康检查抖动
@@ -187,9 +190,27 @@ Deleting：逐 Host Withdraw → 确认撤回 → Remove → 确认配置已删�
 
 Host 不可达时删除等待，不跳过；需要强制完成时由管理员先将该 Host 移出配置。
 
+## HAProxy 映射与部署契约
+
+adapter（`adapter/haproxy`）经 Data Plane API v3 的 `full_section` 读写，客户端由
+`make generate-dataplaneapi` 从固定版本的 OpenAPI spec 生成（去掉 `x-go-type`，不依赖
+client-native）。每个端口对应 frontend `lb_<uid>_<port>` 与 backend `lb_<uid>_<port>_backend`
+（HAProxy 3.3 起二者不能同名）；同一 LoadBalancer 的全部端口在一个事务中提交，只触发一次
+reload。Observe 将期望配置翻译后与回读结果逐字段比较，并以主机最近一次 reload 结果判断是否
+已生效。
+
+LB 主机部署（homelab-infra）须保证：
+
+- `haproxy.cfg` 中 `lb_` 前缀 section 只由 Ayatori 写入；
+- `net.ipv4.ip_nonlocal_bind=1`，frontend 可在宣告前绑定 VIP；
+- reload 前以 `server-state-file` 保存 server 状态，否则每次 reload 所有 server 回到
+  `fully-down`，主机上全部 LB 中断约 rise × interval；
+- `hard-stop-after` 限定旧 worker 排空时长；
+- DNS endpoint 所用的 `resolvers` section 指向 LAN resolver。
+
 ## 待评审
 
-1. **HAProxy 对象归属**：以 LoadBalancer UID 命名 frontend/backend，使 Observe 无需额外索引。
+1. **HAProxy 对象归属**：以 LoadBalancer UID 命名 frontend/backend（见上节），使 Observe 无需额外索引。
    Ayatori 是 `haproxy.cfg` 的唯一写入方，因此可以按主机清扫无主对象与无主宣告；首版只依赖
    finalizer 正常删除，清扫留作后续，是否接受？
 2. **指定 VIP 的授权**：首版任何有权创建 LoadBalancer 的 namespace 都可请求 Pool 内的空闲 VIP；
@@ -210,3 +231,6 @@ Host 不可达时删除等待，不跳过；需要强制完成时由管理员先
   孤儿回收已实现；`--loadbalancer-address-pool` 为空时不启用。数据面、Hostname 尚未接入，
   `Programmed` 恒为 False（Reason `DataPlanePending`）。CRD 暂不加入 `deploy/flux/crds`，
   待数据面切片可用后再部署。
+- 切片 2（HAProxy adapter）：`haproxy.Hosts` 的 Observe/Apply/Remove 已实现，以真实 HAProxy 3.4 +
+  dataplaneapi v3.4.3 容器做 contract test（回读一致、端口增删、不影响其他 LoadBalancer、
+  经 VIP 的健康转发与无健康后端时拒绝）。尚未接入 Reconciler。

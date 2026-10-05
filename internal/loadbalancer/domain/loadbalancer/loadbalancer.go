@@ -15,6 +15,7 @@ type Snapshot struct {
 	Requested netip.Addr
 	// Address 是 status 中已确认的 VIP；一经记录不再改变。
 	Address netip.Addr
+	Ports   []Port
 }
 
 // Action 是聚合要求 Reconciler 执行的下一步。
