@@ -47,7 +47,7 @@
 - name: 安装证书到期导出脚本
   ansible.builtin.template:
     src: ayatori-cert-metrics.sh.j2
-    dest: /usr/local/libexec/ayatori-cert-metrics
+    dest: /usr/local/sbin/ayatori-cert-metrics
     mode: "0755"
 
 - name: 写入证书到期导出 unit
