@@ -1,6 +1,6 @@
 # ADR-0012：以独立 L4 LoadBalancer 统一 VIP 与入口
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-10-04
 - 依据：维护者讨论、homelab-infra/wiki 现状盘点与成熟方案调研；落实
   [ADR-0006](0006-demand-driven-resource-scope.md) 中的 `LoadBalancer` 方向。
@@ -54,7 +54,7 @@ Ayatori `LoadBalancer` 并回写 Service status 的 CCM 类组件，由消费方
 
 ### 北向资源
 
-- `LoadBalancer`（namespaced）：表达 VIP（自动分配或指定）、listener、backend endpoint 与健康
+- `LoadBalancer`（namespaced，API group `network.ayatori.ddupan.top`）：表达 VIP（自动分配或指定）、listener、backend endpoint 与健康
   检查；status 公布已分配 VIP、按 LB 主机的数据面就绪与各 endpoint 健康 conditions。namespace
   是消费方与 RBAC 边界（例如一个 workload 集群或一个平台组件），不表示共置。
 - VIP 分配采用上游 `networking.k8s.io/v1 IPAddress` 的模式：每个已分配 VIP 是一个集群级对象，
@@ -66,6 +66,8 @@ Ayatori `LoadBalancer` 并回写 Service status 的 CCM 类组件，由消费方
   homelab-infra 地址清单。按消费方隔离地址段的需求出现后再引入池选择（参照 MetalLB/Cilium
   的 selector、priority 与重叠池 Conflicting 语义）。
 - 共享 VIP（多个 LoadBalancer 使用同一 IP 不同端口）首版不支持。
+- 每个 LoadBalancer 获得 Ayatori 维护的域名，A 记录指向 VIP，位于 Ayatori 独占的 PowerDNS
+  zone（Prod `lb.lab.ddupan.top`，Dev `dev-lb.lab.ddupan.top`）；详见领域模型。
 - 健康检查需支持探测端口与流量端口不同（如代理 :5432、探测 Patroni `:8008/primary`）。按角色
   只选一个后端时，无健康后端即拒绝连接，不回退到全部后端；后端被判失败时断开其现有连接
   （HAProxy `on-marked-down shutdown-sessions`）。
@@ -120,14 +122,14 @@ Ayatori `LoadBalancer` 并回写 Service status 的 CCM 类组件，由消费方
 
 ## 后续模式（不在首版）
 
-- **DNS 型（无 VIP，保留源地址）**：适用于 SSH 等需要客户端源地址的入口。依赖一套新的、
-  具备管理 API 与冗余的 DNS 基础设施（独立 zone，不在 `ad.ddupan.top` 下，不写 Samba；Samba
-  逐步退回只维护 AD DNS），该建设属于 homelab-infra。就绪后再以 ADR 决定接入方式与写入归属。
+- **DNS 型（无 VIP，保留源地址）**：适用于 SSH 等需要客户端源地址的入口。PowerDNS 已成为
+  `lab.ddupan.top` 的权威服务并提供 HTTP API；向 Ayatori 控制面开放 API 后即可实现，按健康
+  endpoint 维护独占 zone 中的记录，不写 Samba。
 
 ## 未决项（API 评审与首个切片前确定）
 
 - Prod LB 主机形态（非特权 LXC 或 VM）与网段；VyOS BGP 配置在 Dev 网络以测试 /32 验证。
-- Dev/Prod VIP 地址段与是否复用内置 `IPAddress`。
+- Dev/Prod VIP 地址段；PowerDNS API 向控制面开放与两个 zone 的创建委派。
 - Data Plane API runtime/reload 端点的具体路径与字段：以部署版本自带的 `/v3/docs` 核对。
 - 消费方访问 Ayatori API 的身份与按 namespace 的 RBAC 签发方式。
 - LoadBalancer 删除与 VIP 回收语义（释放即可复用，或保留期）；指定 VIP 的授权方式。

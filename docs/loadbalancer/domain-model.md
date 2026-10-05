@@ -1,6 +1,6 @@
 # LoadBalancer 领域模型
 
-状态：草案，待评审。日期：2026-10-04。决策依据见
+状态：已评审，API 字段随切片 1 落地。日期：2026-10-05。决策依据见
 [ADR-0012](../decisions/0012-l4-loadbalancer.md)。分层与命名沿用
 [Database 领域模型](../database/domain-model.md#分层)。
 
@@ -14,8 +14,9 @@
 | Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 gobgpd，首版来自 controller 配置 |
 | Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、VIP 是否宣告 |
 | Announcement | 某台 Host 上的 gobgpd 对某个 VIP /32 的宣告 |
+| Hostname | Ayatori 为 LoadBalancer 生成并维护的域名，A 记录指向其 VIP |
 
-LoadBalancer 一对一 Address；首版每个 LoadBalancer 落地到全部 Host，每台 Host 一个 Attachment。
+LoadBalancer 一对一 Address、一对一 Hostname；首版每个 LoadBalancer 落地到全部 Host，每台 Host 一个 Attachment。
 Host 不是 API 资源，也不持有 LoadBalancer 集合；Attachment 只作为 LoadBalancer status 的一部分
 存在。
 
@@ -29,7 +30,8 @@ Host 不是 API 资源，也不持有 LoadBalancer 集合；Attachment 只作为
   需要换地址就新建 LoadBalancer。
 - **先配置后宣告**：某 Host 只有在本轮观察到配置与期望一致且 reload 已成功后，才允许宣告。
 - **先撤回后删除**：删除或从 Host 摘除时，先撤回宣告，确认撤回后才删除配置。
-- **删除完成条件**：所有 Host 均已撤回并删除配置后才释放 Address、移除 finalizer。
+- **先删记录后释放**：Hostname 的记录删除确认后才释放 Address，避免名字指向已分给他人的 VIP。
+- **删除完成条件**：所有 Host 均已撤回并删除配置、记录已删除后才释放 Address、移除 finalizer。
 
 listener、endpoint 与健康检查是 LoadBalancer 的核心语义，以领域包中的普通结构体表达期望
 配置（见下节），也是 controller 与 adapter 的契约。字段合法性由 CRD schema/CEL 保证，聚合
@@ -84,7 +86,8 @@ spec:
 
 每个 port 拥有自己的 endpoint 集合，endpoint 为“地址 + 端口”，同 Octavia pool/member 与 AWS
 TargetGroup/Target。k8s Service 的每个端口对应一组“节点 IP + NodePort”。endpoint 地址可以是
-DNS 名称，由数据面按平台配置的 resolver 周期解析（HAProxy `resolvers`）；解析结果只影响
+DNS 名称，由数据面经 LAN resolver（Blocky，`lab.ddupan.top` 条件转发至 PowerDNS）周期解析
+（HAProxy `resolvers`）；解析结果只影响
 数据面转发，不进入 Address 分配或宣告。健康检查端口覆盖作用于该 port 下的全部 endpoint。
 
 固定行为（各家不一致，此处明确定义并由所有 adapter 以共同 contract test 保证）：
@@ -104,6 +107,19 @@ DNS 名称，由数据面按平台配置的 resolver 周期解析（HAProxy `res
 
 健康检查使用 PROXY protocol 时探测也需携带 PROXY 头（AWS PPv2 同此行为），由 adapter 处理。
 
+### Hostname
+
+参照 AWS NLB 的 DNS 名称：每个 LoadBalancer 获得 `<name>.<namespace>.<zone>`，A 记录指向
+VIP，公布在 `status.hostname`。消费方需要可读名称时，在自己的记录中以 CNAME 指向它。
+不由 Ayatori 维护 DNS 的消费方（包括未部署 external-dns 的 k8s 集群）因此也能获得稳定名称。
+
+- zone 由 Ayatori 独占写入，经 PowerDNS HTTP API 管理：Prod `lb.lab.ddupan.top`，Dev
+  `dev-lb.lab.ddupan.top`。独占 zone 使归属无需 TXT 标记，也不与 Terraform、external-dns、
+  Poweradmin 管理的名字冲突。zone 本身由 homelab-infra 创建并委派。
+- 首版不支持在 spec 中指定任意名称。
+- Address 确认后即发布记录，不等待 `Programmed`：VIP 固定，记录不随健康变化。
+- 名称由 namespace/name 决定；同名重建的 LoadBalancer 覆盖记录为自己的 VIP。
+
 ### Address 规则（`domain/address`）
 
 VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实现锁或位图。领域只提供纯规则：
@@ -121,12 +137,18 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
 
+Address 复用内置 `networking.k8s.io/v1 IPAddress`（envtest 1.37 验证：Service CIDR 外的地址
+可以创建，名称强制规范化，重复创建返回 AlreadyExists，非 `ipallocator.k8s.io` managed-by 标签的
+对象不被 apiserver repair loop 回收；parentRef 可指向 CRD）。parentRef 不含 UID，以
+annotation 记录 LoadBalancer UID。VIP 池不得与 Ayatori API server 的 Service CIDR 重叠。
+
 后端接口在 controller 中声明，只列使用方需要的方法：
 
 - `ProxyBackend`（实现：`haproxy.Hosts`）：`Observe(host, lb)` 返回 `HostFacts` 的配置部分；
   `Apply(host, lb)`、`Remove(host, lb)` 执行变更。adapter 自行决定走 runtime server 接口
   （仅 endpoint 变化，无需 reload）还是配置变更 + reload，并处理 version/409 重试。
 - `RouteBackend`（实现：`gobgp.Speakers`）：`Announced(host, vip)`、`Announce`、`Withdraw`。
+- `DNSBackend`（实现：`powerdns.Zone`）：`Record(name)`、`Publish(name, vip)`、`Remove(name)`。
 
 两者独立：代理与路由宣告都可能被替换，且故障相互独立。Kubernetes 侧不加接口。
 
@@ -139,6 +161,7 @@ gobgpd 重启后丢失的宣告与配置漂移。
 LoadBalancer status：
 
 - `address`：已确认的 VIP。
+- `hostname`：已发布的域名。
 - `hosts[]`：每台 Host 的 Attachment（`Pending`、`Configured`、`Announced`、`Withdrawn`、
   `Unavailable`）与说明。
 - `ports[].endpoints[]`：各 endpoint 在该 port 健康检查下的观察，只做呈现，不参与状态迁移——
@@ -159,7 +182,7 @@ Host 从配置中移除时，其 Attachment 不再参与 Programmed 判定；残
 ```text
 任意阶段 → Deleting
 Deleting：逐 Host Withdraw → 确认撤回 → Remove → 确认配置已删除且 reload 成功
-全部 Host 完成 → 删除 Address → 移除 finalizer
+全部 Host 完成 → 删除 Hostname 记录并确认 → 删除 Address → 移除 finalizer
 ```
 
 Host 不可达时删除等待，不跳过；需要强制完成时由管理员先将该 Host 移出配置。
@@ -169,12 +192,9 @@ Host 不可达时删除等待，不跳过；需要强制完成时由管理员先
 1. **HAProxy 对象归属**：以 LoadBalancer UID 命名 frontend/backend，使 Observe 无需额外索引。
    Ayatori 是 `haproxy.cfg` 的唯一写入方，因此可以按主机清扫无主对象与无主宣告；首版只依赖
    finalizer 正常删除，清扫留作后续，是否接受？
-2. **内置 `IPAddress` 的 parentRef 不含 UID**：同名重建的 LoadBalancer 会采用旧 Address。若复用
-   内置类型，需要以 label/annotation 补记 UID；若改用自定义 CRD，可直接在 spec 中记录。由切片 1
-   的 envtest 结果决定。
-3. **指定 VIP 的授权**：首版任何有权创建 LoadBalancer 的 namespace 都可请求 Pool 内的空闲 VIP；
+2. **指定 VIP 的授权**：首版任何有权创建 LoadBalancer 的 namespace 都可请求 Pool 内的空闲 VIP；
    按 namespace 限定可请求范围留作后续。
-4. **Pool 与 Host 的配置来源**：首版放在 controller 配置，变更需重启 controller；出现频繁变更
+3. **Pool、Host 与 DNS zone 的配置来源**：首版放在 controller 配置，变更需重启 controller；出现频繁变更
    或多池需求时再改为 API 资源。
 
 ## 测试分层
@@ -182,4 +202,4 @@ Host 不可达时删除等待，不跳过；需要强制完成时由管理员先
 - 领域单测：VIP 候选与认领判定、孤儿判定、`PlanHost` 在各 `HostFacts` 组合下的下一步（含
   reload 失败、宣告先于配置的拒绝、删除顺序）、Programmed/Degraded/Available 判定。
 - envtest：Address 并发认领冲突、同名重建、finalizer、controller 重启后从 status 与 Address 恢复。
-- adapter 集成测试：容器中的真实 HAProxy + dataplaneapi 与 gobgpd + 对端 gobgp。
+- adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、gobgpd + 对端 gobgp、PowerDNS。
