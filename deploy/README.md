@@ -20,8 +20,10 @@ deploy/
 
 1. 在 main 上提交，把 `deploy/ansible/galaxy.yml` 的 `version` 与 role defaults 的
    `ayatori_version` 改为新版本。
-2. 在该提交上打 tag 并推送。Release 工作流校验两处版本与 tag 一致，用 ko 构建 manager
-   镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`。
+2. 在该提交上打 **annotated** tag 并推送，tag 说明写本版变更（用户可见的行为、部署注意事项），
+   它就是 Gitea Release 的发布说明。Release 工作流校验两处版本与 tag 一致，用 buildx 构建 manager
+   镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`，再以 tag 说明加镜像 digest
+   创建（重发时更新）Gitea Release。
 
 完全不可用的 release 不升版本：修复合并后删除并在修复提交上重打同名 tag，Release 覆盖同名
 镜像；部署时 role 重新拉取镜像，镜像变化才重启容器。
