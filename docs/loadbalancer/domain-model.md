@@ -208,6 +208,18 @@ LB 主机部署（homelab-infra）须保证：
 - `hard-stop-after` 限定旧 worker 排空时长；
 - DNS endpoint 所用的 `resolvers` section 指向 LAN resolver。
 
+## Controller 配置
+
+| 参数 | 含义 |
+| --- | --- |
+| `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
+| `--loadbalancer-host=<名称>,<Data Plane API URL>,<gobgpd 地址>` | LB 主机，可重复；为空时只分配 VIP |
+| `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（两个 API 的 mTLS） |
+| `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
+
+凭据 Secret 由部署方以 ExternalSecret 从 OpenBao 同步到 controller namespace，与 PostgreSQL 管理
+凭据相同；首版只在启动时读取，轮换需要重启 manager。LB 主机由 Ansible/Chef 部署并提供上述 API。
+
 ## 待评审
 
 1. **HAProxy 对象归属**：以 LoadBalancer UID 命名 frontend/backend（见上节），使 Observe 无需额外索引。
@@ -239,3 +251,6 @@ LB 主机部署（homelab-infra）须保证：
   验证对端收到与撤回 /32、重复操作幂等。尚未接入 Reconciler（3b）。
 - 后续切片 4：endpoint 集合变化改走 Data Plane API 的 server 接口（runtime 生效、不 reload），
   移除时先 drain；新建 LoadBalancer、端口或检查参数变化仍整段替换并 reload。
+- 切片 3b（接入 Reconciler）：`PlanHost` 按主机收敛（配置一致且 reload 成功后宣告；配置变化时
+  保留宣告重写；删除先撤回再删配置，任一主机不可达则等待），status 写 `hosts[]`、`Programmed`
+  与 `Degraded`；bootstrap 读取主机清单与凭据 Secret。Hostname/DNS 记录尚未接入。

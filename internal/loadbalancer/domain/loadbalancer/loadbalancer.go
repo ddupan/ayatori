@@ -1,4 +1,4 @@
-// Package loadbalancer 定义 LoadBalancer 聚合：VIP 认领、释放与 Programmed 判定。
+// Package loadbalancer 定义 LoadBalancer 聚合：VIP 认领与释放、逐主机收敛与 Programmed 判定。
 // 聚合只做判断与状态迁移，不访问 Kubernetes 或数据面；外部操作由 Reconciler 执行。
 package loadbalancer
 
@@ -41,12 +41,16 @@ const (
 	ReasonAddressOutOfPool = "AddressOutOfPool"
 	ReasonAddressConflict  = "AddressConflict"
 	ReasonDataPlanePending = "DataPlanePending"
+	ReasonProgrammed       = "Programmed"
+	ReasonHostsDegraded    = "HostsDegraded"
+	ReasonAllHostsReady    = "AllHostsReady"
 )
 
 type LoadBalancer struct {
-	snapshot Snapshot
-	reason   string
-	message  string
+	snapshot    Snapshot
+	reason      string
+	message     string
+	attachments []Attachment
 }
 
 func Reconstitute(snapshot Snapshot) *LoadBalancer {
@@ -55,8 +59,29 @@ func Reconstitute(snapshot Snapshot) *LoadBalancer {
 
 func (lb *LoadBalancer) Snapshot() Snapshot { return lb.snapshot }
 
-// Programmed 返回 Programmed condition 的 Reason 与说明；数据面接入前恒为未就绪。
-func (lb *LoadBalancer) Programmed() (reason, message string) { return lb.reason, lb.message }
+// Programmed 表示 VIP 已确认且至少一台 Host 已宣告。须在本轮 PlanHost 之后调用。
+func (lb *LoadBalancer) Programmed() (programmed bool, reason, message string) {
+	if lb.reason != ReasonDataPlanePending {
+		return false, lb.reason, lb.message
+	}
+	for _, attachment := range lb.attachments {
+		if attachment.Phase == AttachmentAnnounced {
+			return true, ReasonProgrammed, "VIP 已在至少一台主机宣告"
+		}
+	}
+	return false, ReasonDataPlanePending, "VIP 已分配，尚无主机完成宣告"
+}
+
+// Degraded 表示存在未完成配置或宣告的 Host，返回这些 Host 的名称。
+func (lb *LoadBalancer) Degraded() []string {
+	var hosts []string
+	for _, attachment := range lb.attachments {
+		if attachment.Phase != AttachmentAnnounced {
+			hosts = append(hosts, attachment.Host)
+		}
+	}
+	return hosts
+}
 
 // PlanAddress 根据当前占用决定 VIP 的下一步。taken 是已观察到的全部受管 Address。
 // 已记录的地址只会被重新认领，不会更换；被他人占用时报告冲突而不是改用新地址。
@@ -94,7 +119,7 @@ func (lb *LoadBalancer) claim(addr netip.Addr, taken map[netip.Addr]address.Owne
 		lb.report(ReasonAddressConflict, "VIP "+addr.String()+" 已被其他 LoadBalancer 占用")
 		return netip.Addr{}, Wait
 	case lb.snapshot.Address == addr:
-		lb.report(ReasonDataPlanePending, "VIP 已分配，数据面尚未接入")
+		lb.report(ReasonDataPlanePending, "")
 		return addr, Wait
 	default:
 		lb.AddressClaimed(addr)
@@ -105,7 +130,7 @@ func (lb *LoadBalancer) claim(addr netip.Addr, taken map[netip.Addr]address.Owne
 // AddressClaimed 记录已确认占用的 VIP。
 func (lb *LoadBalancer) AddressClaimed(addr netip.Addr) {
 	lb.snapshot.Address = addr
-	lb.report(ReasonDataPlanePending, "VIP 已分配，数据面尚未接入")
+	lb.report(ReasonDataPlanePending, "")
 }
 
 // PlanRelease 返回删除时需要释放的 Address：包括 status 未记录、但由本对象创建的占用。

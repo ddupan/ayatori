@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"net/netip"
+	"strings"
 	"time"
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
@@ -29,15 +30,38 @@ const (
 	managedBy          = "loadbalancer.network.ayatori.ddupan.top"
 	ownerUIDAnnotation = "network.ayatori.ddupan.top/loadbalancer-uid"
 	programmedType     = "Programmed"
+	degradedType       = "Degraded"
 	// pendingRetry 让池耗尽或冲突的对象在他人释放地址后重新尝试；释放没有指向它们的事件。
 	pendingRetry = 30 * time.Second
 	claimRetry   = time.Second
+	// hostRetry 跟进 reload 与宣告等主机侧进度。
+	hostRetry       = 5 * time.Second
+	observeInterval = 30 * time.Second
+	hostTimeout     = 10 * time.Second
 )
 
-// LoadBalancerReconciler 认领与释放 VIP，并写 LoadBalancer status。
+// ProxyBackend 读写 LB 主机代理上属于本 LoadBalancer 的配置，只返回事实。
+type ProxyBackend interface {
+	Observe(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) (loadbalancer.ProxyFacts, error)
+	Apply(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) error
+	Remove(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) error
+}
+
+// RouteBackend 在 LB 主机上宣告与撤回 VIP。
+type RouteBackend interface {
+	Announced(context.Context, loadbalancer.Host, netip.Addr) (bool, error)
+	Announce(context.Context, loadbalancer.Host, netip.Addr) error
+	Withdraw(context.Context, loadbalancer.Host, netip.Addr) error
+}
+
+// LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置与路由宣告，并写 LoadBalancer status。
+// Hosts 为空时只分配 VIP。
 type LoadBalancerReconciler struct {
 	Client client.Client
 	Pool   address.Pool
+	Hosts  []loadbalancer.Host
+	Proxy  ProxyBackend
+	Routes RouteBackend
 }
 
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers,verbs=get;list;watch;update;patch
@@ -59,6 +83,11 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	if !object.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(object, LoadBalancerFinalizer) {
 			return ctrl.Result{}, nil
+		}
+		// 先在全部主机撤回宣告并删除配置，再释放 VIP。
+		r.converge(ctx, lb, true)
+		if !lb.HostsReleased() {
+			return ctrl.Result{RequeueAfter: hostRetry}, r.save(ctx, object, lb)
 		}
 		owned, action := lb.PlanRelease(taken)
 		if action == loadbalancer.Finalize {
@@ -94,13 +123,59 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		}
 		lb.AddressClaimed(addr)
 	}
+	r.converge(ctx, lb, false)
 	if err := r.save(ctx, object, lb); err != nil {
 		return ctrl.Result{}, err
 	}
-	if object.Status.Address == "" {
+	switch {
+	case object.Status.Address == "":
 		return ctrl.Result{RequeueAfter: pendingRetry}, nil
+	case len(lb.Degraded()) > 0:
+		return ctrl.Result{RequeueAfter: hostRetry}, nil
+	default:
+		// 主机侧没有 watch；周期观察以发现 gobgpd 重启后丢失的宣告与配置漂移。
+		return ctrl.Result{RequeueAfter: observeInterval}, nil
 	}
-	return ctrl.Result{}, nil
+}
+
+// converge 在每台主机上至多执行一次写入；主机之间相互独立，失败只影响该主机的 Attachment。
+func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) {
+	if r.Proxy == nil {
+		return
+	}
+	vip := lb.Snapshot().Address
+	for _, host := range r.Hosts {
+		hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
+		facts, err := r.observe(hostCtx, host, lb)
+		var write error
+		switch lb.PlanHost(host.Name, facts, err, deleting) {
+		case loadbalancer.ApplyConfig:
+			write = r.Proxy.Apply(hostCtx, host, lb)
+		case loadbalancer.RemoveConfig:
+			write = r.Proxy.Remove(hostCtx, host, lb)
+		case loadbalancer.Announce:
+			write = r.Routes.Announce(hostCtx, host, vip)
+		case loadbalancer.Withdraw:
+			write = r.Routes.Withdraw(hostCtx, host, vip)
+		}
+		cancel()
+		if write != nil {
+			lb.HostFailed(host.Name, write)
+		}
+	}
+}
+
+func (r *LoadBalancerReconciler) observe(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) (loadbalancer.HostFacts, error) {
+	proxy, err := r.Proxy.Observe(ctx, host, lb)
+	if err != nil {
+		return loadbalancer.HostFacts{}, err
+	}
+	facts := loadbalancer.HostFacts{Proxy: proxy}
+	// 宣告只会在 VIP 确认后发生；VIP 未记录时不存在需要撤回的宣告。
+	if vip := lb.Snapshot().Address; vip.IsValid() {
+		facts.Announced, err = r.Routes.Announced(ctx, host, vip)
+	}
+	return facts, err
 }
 
 // addresses 返回全部已占用地址。非本 controller 管理的对象（如 ClusterIP）视为他人占用，
@@ -129,16 +204,34 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	if addr := lb.Snapshot().Address; addr.IsValid() {
 		status.Address = addr.String()
 	}
-	reason, message := lb.Programmed()
-	meta.SetStatusCondition(&status.Conditions, metav1.Condition{
-		Type: programmedType, Status: metav1.ConditionFalse, Reason: reason, Message: message,
-		ObservedGeneration: object.Generation,
-	})
+	status.Hosts = nil
+	for _, attachment := range lb.Attachments() {
+		status.Hosts = append(status.Hosts, networkv1alpha1.HostStatus{
+			Name: attachment.Host, Phase: string(attachment.Phase), Message: attachment.Message,
+		})
+	}
+	programmed, reason, message := lb.Programmed()
+	meta.SetStatusCondition(&status.Conditions, condition(programmedType, programmed, reason, message, object.Generation))
+	degraded := lb.Degraded()
+	if len(degraded) > 0 {
+		meta.SetStatusCondition(&status.Conditions, condition(degradedType, true, loadbalancer.ReasonHostsDegraded,
+			"未完成配置或宣告的主机："+strings.Join(degraded, ", "), object.Generation))
+	} else {
+		meta.SetStatusCondition(&status.Conditions, condition(degradedType, false, loadbalancer.ReasonAllHostsReady, "", object.Generation))
+	}
 	if equality.Semantic.DeepEqual(&object.Status, status) {
 		return nil
 	}
 	object.Status = *status
 	return r.Client.Status().Update(ctx, object)
+}
+
+func condition(kind string, value bool, reason, message string, generation int64) metav1.Condition {
+	status := metav1.ConditionFalse
+	if value {
+		status = metav1.ConditionTrue
+	}
+	return metav1.Condition{Type: kind, Status: status, Reason: reason, Message: message, ObservedGeneration: generation}
 }
 
 func snapshot(object *networkv1alpha1.LoadBalancer) loadbalancer.Snapshot {
