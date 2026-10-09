@@ -72,6 +72,7 @@ spec:
           port: 5432
       proxyProtocol: None      # None | V1 | V2
       idleTimeout: 1h
+      drainTimeout: 30s        # endpoint 被移出后保留已有连接的上限
       healthCheck:
         type: HTTP             # TCP | HTTP
         port: 8008             # 为空表示使用各 endpoint 自身端口（AWS traffic-port）
@@ -95,9 +96,9 @@ DNS 名称，由数据面经 LAN resolver（Blocky，`lab.ddupan.top` 条件转�
   默认 fail-open，与按角色选主（如 PostgreSQL primary）冲突。
 - **不健康即断开**：endpoint 被健康检查判为失败时断开其已有连接（同 AWS 默认；HAProxy
   `on-marked-down shutdown-sessions`）。
-- **移出即排空**：endpoint 从集合移除时停止新连接；已有连接由 reload 前的旧 worker 继续服务，
-  上限是 LB 主机的 `hard-stop-after`。HAProxy 无法按端口设置排空时长，因此不提供
-  `drainTimeout` 字段。
+- **移出即排空**：endpoint 从集合移除时转为 drain，停止新连接；会话归零或超过端口的
+  `drainTimeout`（默认 30s）后删除。超时仍有会话时删除触发 reload，剩余连接由旧 worker
+  服务至 LB 主机的 `hard-stop-after`。
 - **新 server 先验证后接流量**：server 以 `init-state fully-down` 起始，连续通过检查才接收流量，
   避免新加入的副本在首次检查前收到连接。
 
@@ -253,8 +254,13 @@ LB 主机部署（homelab-infra）须保证：
 - 切片 3a（gobgpd adapter）：`gobgp.Speakers` 的 Announced/Announce/Withdraw 已实现，使用官方
   `github.com/osrg/gobgp/v4/api`；contract test 在进程内运行两个真实 GoBGP 并建立 eBGP 会话，
   验证对端收到与撤回 /32、重复操作幂等。尚未接入 Reconciler（3b）。
-- 后续切片 4：endpoint 集合变化改走 Data Plane API 的 server 接口（runtime 生效、不 reload），
-  移除时先 drain；新建 LoadBalancer、端口或检查参数变化仍整段替换并 reload。
+- 切片 4（endpoint 走 runtime）：section 集合与 server 以外的参数不变时，adapter 逐个 server
+  收敛：新增经 server 接口写入（runtime 生效、不 reload）后显式设为 ready（dataplaneapi 动态
+  添加的 server 停在 maint）；移除先 drain，会话归零或超过 `drainTimeout` 后转 maint 并删除。
+  排空开始时刻只记在 controller 内存，重启后重新计时（只会延长排空）。新建、端口增减或检查、
+  超时等变化仍整段替换并 reload。Observe 对 IP endpoint 额外要求 runtime 为 ready；运行中的
+  进程尚未加载 backend 时视为 reload 未生效。contract test 验证新增与无会话移除不 reload、
+  有会话时在 `drainTimeout` 内保留。
 - 切片 3b（接入 Reconciler）：`PlanHost` 按主机收敛（配置一致且 reload 成功后宣告；配置变化时
   保留宣告重写；删除先撤回再删配置，任一主机不可达则等待），status 写 `hosts[]`、`Programmed`
   与 `Degraded`；bootstrap 读取主机清单与凭据 Secret。Hostname/DNS 记录尚未接入。

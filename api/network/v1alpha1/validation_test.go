@@ -79,7 +79,7 @@ func TestLoadBalancerAPI(t *testing.T) {
 		}
 		port := lb.Spec.Ports[0]
 		check := port.HealthCheck
-		if port.ProxyProtocol != "None" || port.IdleTimeout.Duration != time.Hour ||
+		if port.ProxyProtocol != "None" || port.IdleTimeout.Duration != time.Hour || port.DrainTimeout.Duration != 30*time.Second ||
 			check.Type != "TCP" || check.Interval.Duration != 5*time.Second || check.Timeout.Duration != 3*time.Second ||
 			check.HealthyThreshold != 2 || check.UnhealthyThreshold != 3 {
 			t.Fatalf("默认值未生效: %+v", port)

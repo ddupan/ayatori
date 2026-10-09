@@ -32,7 +32,10 @@ const (
 	uid        = "11111111-2222-3333-4444-555555555555"
 	otherUID   = "99999999-2222-3333-4444-555555555555"
 	passPort   = 7000
-	closedPort = 7001
+	// dataplaneapi 监听所有地址，两个 loopback 地址可作为两个不同的健康 endpoint。
+	loopback       = "127.0.0.1"
+	secondLoopback = "127.0.0.2"
+	closedPort     = 7001
 )
 
 const haproxyConfig = `global
@@ -187,7 +190,7 @@ func TestHostsContract(t *testing.T) {
 	ports := []loadbalancer.Port{
 		// dataplaneapi 自身作为健康后端：未认证的 /v3/health 返回 401，以此验证自定义期望状态码。
 		{Port: passPort, IdleTimeout: time.Hour, HealthCheck: withStatuses(check("/v3/health"), 401),
-			Endpoints: []loadbalancer.Endpoint{{Address: "127.0.0.1", Port: 5555}}},
+			Endpoints: []loadbalancer.Endpoint{{Address: loopback, Port: 5555}}},
 		// 唯一 endpoint 不可达：没有健康后端时必须拒绝，不回退。
 		{Port: closedPort, IdleTimeout: time.Hour, ProxyProtocol: loadbalancer.ProxyProtocolV2, HealthCheck: check(""),
 			Endpoints: []loadbalancer.Endpoint{{Address: "127.0.0.1", Port: 1}, {Address: "pg.example.invalid", Port: 5432}}},
@@ -244,7 +247,7 @@ func TestHostsContract(t *testing.T) {
 
 	t.Run("变更后检测漂移并收敛", func(t *testing.T) {
 		changed := []loadbalancer.Port{ports[0]}
-		changed[0].Endpoints = append(changed[0].Endpoints, loadbalancer.Endpoint{Address: "127.0.0.2", Port: 5555})
+		changed[0].Endpoints = append(changed[0].Endpoints, loadbalancer.Endpoint{Address: secondLoopback, Port: 5555})
 		if facts := converged(t, hosts, f, uid, changed); facts.Matches {
 			t.Fatal("期望变化后不应判为一致")
 		}
@@ -269,5 +272,100 @@ func TestHostsContract(t *testing.T) {
 		if facts := converged(t, hosts, f, otherUID, other); !facts.Matches {
 			t.Fatalf("其他 LoadBalancer 的配置不应受影响: %+v", facts)
 		}
+	})
+}
+
+func reloadCount(t *testing.T, f fixture) int {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.host.ProxyURL+"/v3/services/haproxy/reloads", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth(fixtureUser, fixturePassword)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(body), `"id"`)
+}
+
+// applyUntilMatches 模拟 Reconciler 逐轮 Apply，直到回读一致。
+func applyUntilMatches(t *testing.T, hosts *haproxy.Hosts, f fixture, lb *loadbalancer.LoadBalancer) {
+	t.Helper()
+	waitFor(t, func() bool {
+		facts, err := hosts.Observe(t.Context(), f.host, lb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if facts.Matches && facts.Reload == loadbalancer.ReloadSucceeded {
+			return true
+		}
+		if facts.Reload != loadbalancer.ReloadPending {
+			if err := hosts.Apply(t.Context(), f.host, lb); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return false
+	})
+}
+
+func TestHostsRuntimeEndpoints(t *testing.T) {
+	f := startFixture(t)
+	now := time.Now()
+	hosts := &haproxy.Hosts{HTTP: http.DefaultClient, Username: fixtureUser, Password: fixturePassword,
+		ConnectTimeout: 5 * time.Second, Now: func() time.Time { return now }}
+	port := loadbalancer.Port{Port: passPort, IdleTimeout: time.Hour, DrainTimeout: time.Minute,
+		HealthCheck: withStatuses(check("/v3/health"), 401),
+		Endpoints:   []loadbalancer.Endpoint{{Address: loopback, Port: 5555}}}
+	applyUntilMatches(t, hosts, f, aggregate(uid, []loadbalancer.Port{port}))
+	reloads := reloadCount(t, f)
+
+	t.Run("新增 endpoint 不 reload 且被启用", func(t *testing.T) {
+		port.Endpoints = append(port.Endpoints, loadbalancer.Endpoint{Address: secondLoopback, Port: 5555})
+		applyUntilMatches(t, hosts, f, aggregate(uid, []loadbalancer.Port{port}))
+		if got := reloadCount(t, f); got != reloads {
+			t.Fatalf("reload 次数 %d → %d", reloads, got)
+		}
+	})
+
+	t.Run("无会话的 endpoint 排空后删除且不 reload", func(t *testing.T) {
+		port.Endpoints = port.Endpoints[:1]
+		applyUntilMatches(t, hosts, f, aggregate(uid, []loadbalancer.Port{port}))
+		if got := reloadCount(t, f); got != reloads {
+			t.Fatalf("reload 次数 %d → %d", reloads, got)
+		}
+	})
+
+	t.Run("有会话时在 drainTimeout 内保留", func(t *testing.T) {
+		port.Endpoints = []loadbalancer.Endpoint{{Address: secondLoopback, Port: 5555}}
+		applyUntilMatches(t, hosts, f, aggregate(uid, []loadbalancer.Port{port}))
+		// 经 VIP 建立到唯一 endpoint 的会话，只发送半个请求使其保持。
+		connection, err := net.DialTimeout("tcp", f.ports[passPort], 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = connection.Close() }()
+		if _, err := connection.Write([]byte("GET /v3/health HTTP/1.1\r\n")); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+
+		port.Endpoints = []loadbalancer.Endpoint{{Address: loopback, Port: 5555}}
+		removed := aggregate(uid, []loadbalancer.Port{port})
+		for range 3 {
+			if err := hosts.Apply(t.Context(), f.host, removed); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if facts, err := hosts.Observe(t.Context(), f.host, removed); err != nil || facts.Matches {
+			t.Fatalf("仍有会话时不应删除排空中的 endpoint: %+v %v", facts, err)
+		}
+		now = now.Add(2 * time.Minute)
+		applyUntilMatches(t, hosts, f, removed)
 	})
 }

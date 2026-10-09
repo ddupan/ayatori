@@ -302,6 +302,7 @@ func ports(specs []networkv1alpha1.LoadBalancerPort) []loadbalancer.Port {
 			Port:          spec.Port,
 			ProxyProtocol: loadbalancer.ProxyProtocol(spec.ProxyProtocol),
 			IdleTimeout:   spec.IdleTimeout.Duration,
+			DrainTimeout:  spec.DrainTimeout.Duration,
 			HealthCheck: loadbalancer.HealthCheck{
 				Path: check.Path, ExpectedStatuses: check.ExpectedStatuses,
 				Interval: check.Interval.Duration, Timeout: check.Timeout.Duration,
