@@ -51,6 +51,11 @@ type LoadBalancer struct {
 	reason      string
 	message     string
 	attachments []Attachment
+
+	recordObserved  bool
+	recordPublished bool
+	recordReleased  bool
+	recordMessage   string
 }
 
 func Reconstitute(snapshot Snapshot) *LoadBalancer {

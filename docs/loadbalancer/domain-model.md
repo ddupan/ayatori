@@ -121,7 +121,10 @@ VIP，公布在 `status.hostname`。消费方需要可读名称时，在自己�
   Poweradmin 管理的名字冲突。zone 本身由 homelab-infra 创建并委派。
 - 首版不支持在 spec 中指定任意名称。
 - Address 确认后即发布记录，不等待 `Programmed`：VIP 固定，记录不随健康变化。
-- 名称由 namespace/name 决定；同名重建的 LoadBalancer 覆盖记录为自己的 VIP。
+- 名称由 namespace/name 决定；同名重建的 LoadBalancer 覆盖记录为自己的 VIP。CRD 要求
+  LoadBalancer 名称为 DNS label。记录 TTL 为 60 秒；status 只在回读确认指向 VIP 后写入
+  `hostname`，并以 `HostnamePublished` condition 呈现。
+- 删除时在全部 Host 清理后删除记录，回读确认不存在才释放 Address。
 
 ### Address 规则（`domain/address`）
 
@@ -216,6 +219,7 @@ LB 主机部署（homelab-infra）须保证：
 | `--loadbalancer-host=<名称>,<Data Plane API URL>,<gobgpd 地址>` | LB 主机，可重复；为空时只分配 VIP |
 | `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（两个 API 的 mTLS） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
+| `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
 凭据 Secret 由部署方以 ExternalSecret 从 OpenBao 同步到 controller namespace，与 PostgreSQL 管理
 凭据相同；首版只在启动时读取，轮换需要重启 manager。LB 主机由 Ansible/Chef 部署并提供上述 API。
@@ -254,3 +258,6 @@ LB 主机部署（homelab-infra）须保证：
 - 切片 3b（接入 Reconciler）：`PlanHost` 按主机收敛（配置一致且 reload 成功后宣告；配置变化时
   保留宣告重写；删除先撤回再删配置，任一主机不可达则等待），status 写 `hosts[]`、`Programmed`
   与 `Degraded`；bootstrap 读取主机清单与凭据 Secret。Hostname/DNS 记录尚未接入。
+- Hostname：`powerdns.Zone`（`github.com/joeig/go-powerdns/v3`）维护 A 记录，以 PowerDNS
+  Authoritative 5.0.7 容器做 contract test；Reconciler 在 VIP 确认后发布、删除时主机清理后
+  先删记录再释放 VIP。
