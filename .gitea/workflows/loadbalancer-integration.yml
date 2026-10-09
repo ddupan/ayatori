@@ -1,0 +1,54 @@
+name: LoadBalancer Integration
+
+on:
+  # 只在 LoadBalancer 相关代码或本工作流变化时，以真实 HAProxy + Data Plane API 与进程内 GoBGP 验证。
+  pull_request:
+    paths:
+      - 'api/network/**'
+      - 'internal/loadbalancer/**'
+      - '.gitea/workflows/loadbalancer-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: [self-hosted, pod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint integration build
+        run: make lint-loadbalancer-integration
+
+  test:
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Runner 提供本 job 可用的 Docker；workflow 只验证，不重复启动 daemon。
+      - name: Verify Docker availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          docker info --format 'Server={{.ServerVersion}} StorageDriver={{.Driver}}'
+
+      - name: Test LoadBalancer integration with real backends
+        run: make test-loadbalancer-integration

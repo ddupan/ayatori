@@ -113,10 +113,26 @@ type LoadBalancerStatus struct {
 	// +kubebuilder:validation:MaxLength=15
 	// +optional
 	Address string `json:"address,omitempty"`
+	// Hosts 是本轮在各 LB 主机上的落地进度，只呈现观察，不作为下一轮的依据。
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Hosts []HostStatus `json:"hosts,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type HostStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=Pending;Configured;Announced;Withdrawn;Unavailable
+	Phase string `json:"phase"`
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // LoadBalancer 是 namespace 内消费方声明的 L4 入口。

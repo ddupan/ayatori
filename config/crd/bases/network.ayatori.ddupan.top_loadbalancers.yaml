@@ -261,6 +261,33 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              hosts:
+                description: Hosts 是本轮在各 LB 主机上的落地进度，只呈现观察，不作为下一轮的依据。
+                items:
+                  properties:
+                    message:
+                      maxLength: 1024
+                      type: string
+                    name:
+                      maxLength: 63
+                      type: string
+                    phase:
+                      enum:
+                      - Pending
+                      - Configured
+                      - Announced
+                      - Withdrawn
+                      - Unavailable
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

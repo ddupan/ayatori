@@ -15,13 +15,9 @@ import (
 	api "github.com/osrg/gobgp/v4/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-)
 
-// Speaker 是一台 LB 主机上 gobgpd 的 gRPC 地址，如 lb1.example:50051。
-type Speaker struct {
-	Name    string
-	Address string
-}
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+)
 
 // Speakers 对任意 Speaker 执行同一套操作；Credentials 负责 mTLS。
 type Speakers struct {
@@ -34,8 +30,8 @@ type Speakers struct {
 var ipv4Unicast = &api.Family{Afi: api.Family_AFI_IP, Safi: api.Family_SAFI_UNICAST}
 
 // Announced 返回 Speaker 的全局 RIB 中是否已有该 VIP 的本地路径。
-func (s *Speakers) Announced(ctx context.Context, speaker Speaker, vip netip.Addr) (bool, error) {
-	client, err := s.client(speaker)
+func (s *Speakers) Announced(ctx context.Context, host loadbalancer.Host, vip netip.Addr) (bool, error) {
+	client, err := s.client(host)
 	if err != nil {
 		return false, err
 	}
@@ -64,8 +60,8 @@ func (s *Speakers) Announced(ctx context.Context, speaker Speaker, vip netip.Add
 }
 
 // Announce 宣告 VIP /32；重复宣告同一前缀只会替换原路径。
-func (s *Speakers) Announce(ctx context.Context, speaker Speaker, vip netip.Addr) error {
-	client, err := s.client(speaker)
+func (s *Speakers) Announce(ctx context.Context, host loadbalancer.Host, vip netip.Addr) error {
+	client, err := s.client(host)
 	if err != nil {
 		return err
 	}
@@ -74,8 +70,8 @@ func (s *Speakers) Announce(ctx context.Context, speaker Speaker, vip netip.Addr
 }
 
 // Withdraw 撤回 VIP /32；路径不存在时同样成功。
-func (s *Speakers) Withdraw(ctx context.Context, speaker Speaker, vip netip.Addr) error {
-	client, err := s.client(speaker)
+func (s *Speakers) Withdraw(ctx context.Context, host loadbalancer.Host, vip netip.Addr) error {
+	client, err := s.client(host)
 	if err != nil {
 		return err
 	}
@@ -105,19 +101,19 @@ func path(vip netip.Addr) *api.Path {
 	}
 }
 
-func (s *Speakers) client(speaker Speaker) (api.GoBgpServiceClient, error) {
+func (s *Speakers) client(host loadbalancer.Host) (api.GoBgpServiceClient, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if connection, ok := s.connections[speaker.Address]; ok {
+	if connection, ok := s.connections[host.SpeakerAddress]; ok {
 		return api.NewGoBgpServiceClient(connection), nil
 	}
-	connection, err := grpc.NewClient(speaker.Address, grpc.WithTransportCredentials(s.Credentials))
+	connection, err := grpc.NewClient(host.SpeakerAddress, grpc.WithTransportCredentials(s.Credentials))
 	if err != nil {
 		return nil, err
 	}
 	if s.connections == nil {
 		s.connections = map[string]*grpc.ClientConn{}
 	}
-	s.connections[speaker.Address] = connection
+	s.connections[host.SpeakerAddress] = connection
 	return api.NewGoBgpServiceClient(connection), nil
 }

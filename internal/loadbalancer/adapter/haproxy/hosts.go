@@ -26,12 +26,6 @@ import (
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
-// Host 是一台 LB 主机上 Data Plane API 的地址，如 https://lb1.example:5555。
-type Host struct {
-	Name string
-	URL  string
-}
-
 // Hosts 对任意 Host 执行同一套操作；HTTP 客户端负责 mTLS。
 type Hosts struct {
 	HTTP     *http.Client
@@ -44,7 +38,8 @@ type Hosts struct {
 }
 
 // Observe 读取该 LoadBalancer 在 Host 上的配置，并与期望比较。
-func (h *Hosts) Observe(ctx context.Context, host Host, uid, vip string, ports []loadbalancer.Port) (loadbalancer.ProxyFacts, error) {
+func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) (loadbalancer.ProxyFacts, error) {
+	uid, vip, ports := desired(lb)
 	api, err := h.client(host)
 	if err != nil {
 		return loadbalancer.ProxyFacts{}, err
@@ -64,8 +59,23 @@ func (h *Hosts) Observe(ctx context.Context, host Host, uid, vip string, ports [
 }
 
 // Apply 在一个事务中写入该 LoadBalancer 的全部 section 并删除多余端口，提交后由代理 reload。
-// 他人在提交前写入时提交返回 409，由下一轮重新观察。
-func (h *Hosts) Apply(ctx context.Context, host Host, uid, vip string, ports []loadbalancer.Port) error {
+// 他人在提交前写入时提交返回 409，由下一轮重新观察。删除时 Remove 以空期望走同一路径。
+func (h *Hosts) Apply(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
+	uid, vip, ports := desired(lb)
+	return h.apply(ctx, host, uid, vip, ports)
+}
+
+// Remove 在一个事务中删除该 LoadBalancer 在 Host 上的全部 section。
+func (h *Hosts) Remove(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
+	return h.apply(ctx, host, lb.Snapshot().Owner.UID, "", nil)
+}
+
+func desired(lb *loadbalancer.LoadBalancer) (uid, vip string, ports []loadbalancer.Port) {
+	snapshot := lb.Snapshot()
+	return snapshot.Owner.UID, snapshot.Address.String(), snapshot.Ports
+}
+
+func (h *Hosts) apply(ctx context.Context, host loadbalancer.Host, uid, vip string, ports []loadbalancer.Port) error {
 	api, err := h.client(host)
 	if err != nil {
 		return err
@@ -110,13 +120,8 @@ func (h *Hosts) Apply(ctx context.Context, host Host, uid, vip string, ports []l
 	})
 }
 
-// Remove 在一个事务中删除该 LoadBalancer 在 Host 上的全部 section。
-func (h *Hosts) Remove(ctx context.Context, host Host, uid string) error {
-	return h.Apply(ctx, host, uid, "", nil)
-}
-
-func (h *Hosts) client(host Host) (*dataplaneapi.ClientWithResponses, error) {
-	return dataplaneapi.NewClientWithResponses(strings.TrimSuffix(host.URL, "/")+"/v3",
+func (h *Hosts) client(host loadbalancer.Host) (*dataplaneapi.ClientWithResponses, error) {
+	return dataplaneapi.NewClientWithResponses(strings.TrimSuffix(host.ProxyURL, "/")+"/v3",
 		dataplaneapi.WithHTTPClient(h.HTTP),
 		dataplaneapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
 			request.SetBasicAuth(h.Username, h.Password)

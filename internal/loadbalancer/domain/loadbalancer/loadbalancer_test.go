@@ -41,7 +41,7 @@ func TestPlanAddress(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			lb := Reconstitute(c.snapshot)
 			got, action := lb.PlanAddress(pool, c.taken)
-			reason, _ := lb.Programmed()
+			_, reason, _ := lb.Programmed()
 			if got != c.want || action != c.action || reason != c.reason {
 				t.Fatalf("PlanAddress = %v %v %s, want %v %v %s", got, action, reason, c.want, c.action, c.reason)
 			}
@@ -55,7 +55,7 @@ func TestPoolExhausted(t *testing.T) {
 	if _, action := lb.PlanAddress(small, map[netip.Addr]address.Owner{vip1: other, vip2: other}); action != Wait {
 		t.Fatal("池耗尽时不应创建")
 	}
-	if reason, _ := lb.Programmed(); reason != ReasonPoolExhausted {
+	if _, reason, _ := lb.Programmed(); reason != ReasonPoolExhausted {
 		t.Fatalf("reason = %s", reason)
 	}
 }

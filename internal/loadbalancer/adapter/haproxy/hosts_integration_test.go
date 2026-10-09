@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
@@ -80,7 +82,7 @@ exec dataplaneapi -f /usr/local/etc/haproxy/dataplaneapi.yml
 
 type fixture struct {
 	id    string
-	host  haproxy.Host
+	host  loadbalancer.Host
 	ports map[int]string
 }
 
@@ -119,9 +121,9 @@ func startFixture(t *testing.T) fixture {
 		}
 		f.ports[port] = strings.TrimSpace(strings.Split(string(out), "\n")[0])
 	}
-	f.host = haproxy.Host{Name: "fixture", URL: "http://" + f.ports[5555]}
+	f.host = loadbalancer.Host{Name: "fixture", ProxyURL: "http://" + f.ports[5555]}
 	waitFor(t, func() bool {
-		response, err := http.Get(f.host.URL + "/v3/health")
+		response, err := http.Get(f.host.ProxyURL + "/v3/health")
 		if err == nil {
 			_ = response.Body.Close()
 		}
@@ -153,6 +155,12 @@ func check(path string) loadbalancer.HealthCheck {
 	return loadbalancer.HealthCheck{Path: path, Interval: time.Second, Timeout: time.Second, HealthyThreshold: 1, UnhealthyThreshold: 1}
 }
 
+func aggregate(id string, ports []loadbalancer.Port) *loadbalancer.LoadBalancer {
+	return loadbalancer.Reconstitute(loadbalancer.Snapshot{
+		Owner: address.Owner{UID: id}, Address: netip.MustParseAddr(fixtureVIP), Ports: ports,
+	})
+}
+
 func withStatuses(c loadbalancer.HealthCheck, statuses ...int32) loadbalancer.HealthCheck {
 	c.ExpectedStatuses = statuses
 	return c
@@ -164,7 +172,7 @@ func converged(t *testing.T, hosts *haproxy.Hosts, f fixture, id string, ports [
 	var facts loadbalancer.ProxyFacts
 	waitFor(t, func() bool {
 		var err error
-		facts, err = hosts.Observe(t.Context(), f.host, id, fixtureVIP, ports)
+		facts, err = hosts.Observe(t.Context(), f.host, aggregate(id, ports))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,14 +194,14 @@ func TestHostsContract(t *testing.T) {
 	}
 
 	other := []loadbalancer.Port{{Port: 7100, IdleTimeout: time.Minute, HealthCheck: check("")}}
-	if err := hosts.Apply(t.Context(), f.host, otherUID, fixtureVIP, other); err != nil {
+	if err := hosts.Apply(t.Context(), f.host, aggregate(otherUID, other)); err != nil {
 		t.Fatal(err)
 	}
 
 	if facts := converged(t, hosts, f, uid, ports); facts.Present || facts.Matches {
 		t.Fatalf("写入前不应存在配置: %+v", facts)
 	}
-	if err := hosts.Apply(t.Context(), f.host, uid, fixtureVIP, ports); err != nil {
+	if err := hosts.Apply(t.Context(), f.host, aggregate(uid, ports)); err != nil {
 		t.Fatal(err)
 	}
 	if facts := converged(t, hosts, f, uid, ports); !facts.Present || !facts.Matches || facts.Reload != loadbalancer.ReloadSucceeded {
@@ -240,7 +248,7 @@ func TestHostsContract(t *testing.T) {
 		if facts := converged(t, hosts, f, uid, changed); facts.Matches {
 			t.Fatal("期望变化后不应判为一致")
 		}
-		if err := hosts.Apply(t.Context(), f.host, uid, fixtureVIP, changed); err != nil {
+		if err := hosts.Apply(t.Context(), f.host, aggregate(uid, changed)); err != nil {
 			t.Fatal(err)
 		}
 		if facts := converged(t, hosts, f, uid, changed); !facts.Matches {
@@ -252,7 +260,7 @@ func TestHostsContract(t *testing.T) {
 	})
 
 	t.Run("删除只影响自身", func(t *testing.T) {
-		if err := hosts.Remove(t.Context(), f.host, uid); err != nil {
+		if err := hosts.Remove(t.Context(), f.host, aggregate(uid, nil)); err != nil {
 			t.Fatal(err)
 		}
 		if facts := converged(t, hosts, f, uid, nil); facts.Present {

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/gobgp"
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 var vip = netip.MustParseAddr("10.62.0.10")
@@ -96,7 +97,7 @@ func eventually(t *testing.T, condition func() bool) {
 
 func TestSpeakersContract(t *testing.T) {
 	speakerBGP, peerBGP := freePort(t), freePort(t)
-	speaker := gobgp.Speaker{Name: "lb1", Address: startServer(t, 65001, "10.0.0.1", speakerBGP, peerBGP, 65000, false)}
+	speaker := loadbalancer.Host{Name: "lb1", SpeakerAddress: startServer(t, 65001, "10.0.0.1", speakerBGP, peerBGP, 65000, false)}
 	peer := startServer(t, 65000, "10.0.0.2", peerBGP, speakerBGP, 65001, true)
 	speakers := &gobgp.Speakers{Credentials: insecure.NewCredentials()}
 	t.Cleanup(speakers.Close)
