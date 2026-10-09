@@ -57,7 +57,8 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	createLoadBalancerCredentials(t, config)
 	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1",
 		"--loadbalancer-address-pool=10.62.0.0/24", "--loadbalancer-host=lb1,https://127.0.0.1:1,127.0.0.1:1",
-		"--loadbalancer-credentials=default/loadbalancer-hosts")
+		"--loadbalancer-credentials=default/loadbalancer-hosts",
+		"--loadbalancer-dns-url=http://127.0.0.1:1", "--loadbalancer-dns-zone=lb.example.test")
 	manager, err := newManager(options)
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +133,7 @@ func createLoadBalancerCredentials(t *testing.T, config *rest.Config) {
 	secret := &corev1.Secret{Name: "loadbalancer-hosts", Namespace: "default", Data: map[string][]byte{
 		"username": []byte("ayatori"), "password": []byte("AYATORI-TEST-ONLY"),
 		"tls.crt": certificate, "tls.key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), "ca.crt": certificate,
+		"powerdns-api-key": []byte("AYATORI-TEST-ONLY"),
 	}}
 	if _, err := clientset.CoreV1().Secrets("default").Create(t.Context(), secret, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,11 +23,12 @@ type dataPlane struct {
 	configs     map[string]loadbalancer.Snapshot // host/uid → 已写入的期望
 	routes      map[string]bool                  // host/vip
 	unreachable map[string]bool
+	records     map[string]netip.Addr // hostname
 	events      []string
 }
 
 func newDataPlane() *dataPlane {
-	return &dataPlane{configs: map[string]loadbalancer.Snapshot{}, routes: map[string]bool{}, unreachable: map[string]bool{}}
+	return &dataPlane{configs: map[string]loadbalancer.Snapshot{}, routes: map[string]bool{}, unreachable: map[string]bool{}, records: map[string]netip.Addr{}}
 }
 
 var errUnreachable = errors.New("host unreachable")
@@ -68,6 +70,28 @@ func (d *dataPlane) Withdraw(_ context.Context, host loadbalancer.Host, vip neti
 	return nil
 }
 
+// zone 是同一数据面上的 DNS 记录，事件记入同一序列。
+type zone struct{ *dataPlane }
+
+func (d zone) Record(_ context.Context, name string) ([]netip.Addr, error) {
+	if addr, ok := d.records[name]; ok {
+		return []netip.Addr{addr}, nil
+	}
+	return nil, nil
+}
+
+func (d zone) Publish(_ context.Context, name string, vip netip.Addr) error {
+	d.records[name] = vip
+	d.events = append(d.events, "publish "+name)
+	return nil
+}
+
+func (d zone) Remove(_ context.Context, name string) error {
+	delete(d.records, name)
+	d.events = append(d.events, "unpublish "+name)
+	return nil
+}
+
 func (d *dataPlane) take() []string {
 	events := d.events
 	d.events = nil
@@ -75,6 +99,8 @@ func (d *dataPlane) take() []string {
 }
 
 var testHosts = []loadbalancer.Host{{Name: "lb1"}, {Name: "lb2"}}
+
+const applyFirst = "apply lb1"
 
 func conditionStatus(t *testing.T, c client.Client, lb *networkv1alpha1.LoadBalancer, kind string) string {
 	t.Helper()
@@ -94,7 +120,7 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 	create(t, c, lb)
 	converge(t, r, lb)
 
-	if events := plane.take(); !slices.Equal(events, []string{"apply lb1", "apply lb2", "announce lb1", "announce lb2"}) {
+	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "apply lb2", "announce lb1", "announce lb2"}) {
 		t.Fatalf("每台主机必须先配置后宣告，got %v", events)
 	}
 	if conditionStatus(t, c, lb, programmedType) != string(metav1.ConditionTrue) || conditionStatus(t, c, lb, degradedType) != string(metav1.ConditionFalse) {
@@ -107,7 +133,7 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 			t.Fatal(err)
 		}
 		converge(t, r, lb)
-		if events := plane.take(); !slices.Equal(events, []string{"apply lb1", "apply lb2"}) {
+		if events := plane.take(); !slices.Equal(events, []string{applyFirst, "apply lb2"}) {
 			t.Fatalf("got %v", events)
 		}
 	})
@@ -154,6 +180,45 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 		}
 		if len(plane.configs) != 0 || len(plane.routes) != 0 {
 			t.Fatalf("数据面应已清空: %v %v", plane.configs, plane.routes)
+		}
+	})
+}
+
+func TestLoadBalancerHostname(t *testing.T) {
+	c := environment(t)
+	plane := newDataPlane()
+	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Hosts: testHosts[:1], Proxy: plane, Routes: plane,
+		DNS: zone{plane}, DNSZone: "lb.lab.ddupan.top"}
+	lb := newLoadBalancer("api", "")
+	create(t, c, lb)
+	converge(t, r, lb)
+	const hostname = "api." + testNamespace + ".lb.lab.ddupan.top"
+	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "publish " + hostname, "announce lb1"}) {
+		t.Fatalf("VIP 确认后即发布记录，早于宣告完成，got %v", events)
+	}
+	if conditionStatus(t, c, lb, hostnameType) != string(metav1.ConditionTrue) || lb.Status.Hostname != hostname {
+		t.Fatalf("got %q %+v", lb.Status.Hostname, lb.Status.Conditions)
+	}
+
+	t.Run("记录被改写后恢复", func(t *testing.T) {
+		plane.records[hostname] = netip.MustParseAddr("10.62.0.99")
+		converge(t, r, lb)
+		if events := plane.take(); !slices.Equal(events, []string{"publish " + hostname}) {
+			t.Fatalf("got %v", events)
+		}
+	})
+
+	t.Run("删除时主机清理后先删记录再释放 VIP", func(t *testing.T) {
+		vip := lb.Status.Address
+		if err := c.Delete(t.Context(), lb); err != nil {
+			t.Fatal(err)
+		}
+		converge(t, r, lb)
+		if events := plane.take(); !slices.Equal(events, []string{"withdraw lb1", "remove lb1", "unpublish " + hostname}) {
+			t.Fatalf("got %v", events)
+		}
+		if err := c.Get(t.Context(), client.ObjectKey{Name: vip}, &networkingv1.IPAddress{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("记录删除后应释放 VIP: %v", err)
 		}
 	})
 }

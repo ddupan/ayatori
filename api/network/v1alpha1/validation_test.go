@@ -100,6 +100,12 @@ func TestLoadBalancerAPI(t *testing.T) {
 			lb.Spec.Ports[0].HealthCheck.Timeout.Duration = 3 * time.Second
 		},
 	}
+	t.Run("名称必须是 DNS label", func(t *testing.T) {
+		if err := c.Create(t.Context(), loadBalancer("with.dot", nil)); !apierrors.IsInvalid(err) {
+			t.Fatalf("Create = %v, want Invalid", err)
+		}
+	})
+
 	for name, mutate := range invalid {
 		t.Run(name, func(t *testing.T) {
 			if err := c.Create(t.Context(), loadBalancer("invalid", mutate)); !apierrors.IsInvalid(err) {

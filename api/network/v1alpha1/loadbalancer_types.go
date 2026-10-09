@@ -113,6 +113,10 @@ type LoadBalancerStatus struct {
 	// +kubebuilder:validation:MaxLength=15
 	// +optional
 	Address string `json:"address,omitempty"`
+	// Hostname 是已确认指向 VIP 的 DNS 名称 <name>.<namespace>.<zone>；未启用 DNS 时为空。
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
 	// Hosts 是本轮在各 LB 主机上的落地进度，只呈现观察，不作为下一轮的依据。
 	// +listType=map
 	// +listMapKey=name
@@ -139,8 +143,10 @@ type HostStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=lb
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') && size(self.metadata.name) <= 63",message="name must be a DNS label because it becomes part of the hostname"
 // +kubebuilder:validation:XValidation:rule="!(has(oldSelf.status) && has(oldSelf.status.address)) || (has(self.status) && has(self.status.address) && self.status.address == oldSelf.status.address)",message="recorded address cannot change or be removed"
 // +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address`
+// +kubebuilder:printcolumn:name="Hostname",type=string,JSONPath=`.status.hostname`
 // +kubebuilder:printcolumn:name="Programmed",type=string,JSONPath=`.status.conditions[?(@.type=='Programmed')].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type LoadBalancer struct {

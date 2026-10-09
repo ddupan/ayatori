@@ -31,6 +31,7 @@ const (
 	ownerUIDAnnotation = "network.ayatori.ddupan.top/loadbalancer-uid"
 	programmedType     = "Programmed"
 	degradedType       = "Degraded"
+	hostnameType       = "HostnamePublished"
 	// pendingRetry 让池耗尽或冲突的对象在他人释放地址后重新尝试；释放没有指向它们的事件。
 	pendingRetry = 30 * time.Second
 	claimRetry   = time.Second
@@ -54,14 +55,23 @@ type RouteBackend interface {
 	Withdraw(context.Context, loadbalancer.Host, netip.Addr) error
 }
 
+// DNSBackend 维护 Ayatori 独占 zone 中的 A 记录。
+type DNSBackend interface {
+	Record(context.Context, string) ([]netip.Addr, error)
+	Publish(context.Context, string, netip.Addr) error
+	Remove(context.Context, string) error
+}
+
 // LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置与路由宣告，并写 LoadBalancer status。
-// Hosts 为空时只分配 VIP。
+// Hosts 为空时只分配 VIP；DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
-	Client client.Client
-	Pool   address.Pool
-	Hosts  []loadbalancer.Host
-	Proxy  ProxyBackend
-	Routes RouteBackend
+	Client  client.Client
+	Pool    address.Pool
+	Hosts   []loadbalancer.Host
+	Proxy   ProxyBackend
+	Routes  RouteBackend
+	DNS     DNSBackend
+	DNSZone string
 }
 
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers,verbs=get;list;watch;update;patch
@@ -84,9 +94,13 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		if !controllerutil.ContainsFinalizer(object, LoadBalancerFinalizer) {
 			return ctrl.Result{}, nil
 		}
-		// 先在全部主机撤回宣告并删除配置，再释放 VIP。
+		// 先在全部主机撤回宣告并删除配置，再删除 DNS 记录，最后释放 VIP。
 		r.converge(ctx, lb, true)
 		if !lb.HostsReleased() {
+			return ctrl.Result{RequeueAfter: hostRetry}, r.save(ctx, object, lb)
+		}
+		r.record(ctx, lb, true)
+		if !lb.RecordReleased() {
 			return ctrl.Result{RequeueAfter: hostRetry}, r.save(ctx, object, lb)
 		}
 		owned, action := lb.PlanRelease(taken)
@@ -124,6 +138,7 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		lb.AddressClaimed(addr)
 	}
 	r.converge(ctx, lb, false)
+	r.record(ctx, lb, false)
 	if err := r.save(ctx, object, lb); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -162,6 +177,24 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 		if write != nil {
 			lb.HostFailed(host.Name, write)
 		}
+	}
+}
+
+// record 观察并至多写入一次 Hostname 的 A 记录。
+func (r *LoadBalancerReconciler) record(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) {
+	if r.DNS == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, hostTimeout)
+	defer cancel()
+	name := lb.Hostname(r.DNSZone)
+	record, err := r.DNS.Record(ctx, name)
+	switch lb.PlanRecord(record, err, deleting) {
+	case loadbalancer.PublishRecord:
+		lb.RecordPublished(r.DNS.Publish(ctx, name, lb.Snapshot().Address))
+	case loadbalancer.RemoveRecord:
+		// 删除结果由下一轮回读确认后才放行 VIP 释放。
+		_ = r.DNS.Remove(ctx, name)
 	}
 }
 
@@ -204,6 +237,14 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	if addr := lb.Snapshot().Address; addr.IsValid() {
 		status.Address = addr.String()
 	}
+	status.Hostname = ""
+	observed, published, recordMessage := lb.Published()
+	if published {
+		status.Hostname = lb.Hostname(r.DNSZone)
+	}
+	if observed {
+		meta.SetStatusCondition(&status.Conditions, condition(hostnameType, published, hostnameReason(published), recordMessage, object.Generation))
+	}
 	status.Hosts = nil
 	for _, attachment := range lb.Attachments() {
 		status.Hosts = append(status.Hosts, networkv1alpha1.HostStatus{
@@ -224,6 +265,13 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	}
 	object.Status = *status
 	return r.Client.Status().Update(ctx, object)
+}
+
+func hostnameReason(published bool) string {
+	if published {
+		return "Published"
+	}
+	return "Pending"
 }
 
 func condition(kind string, value bool, reason, message string, generation int64) metav1.Condition {
