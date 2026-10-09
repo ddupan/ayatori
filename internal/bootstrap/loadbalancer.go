@@ -76,7 +76,14 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 			return nil, err
 		}
 		if len(options.hosts) > 0 {
-			proxy, routes, err := loadBalancerBackends(secret, options)
+			certificate, err := newClientCertificate(secret, manager.GetAPIReader())
+			if err != nil {
+				return nil, err
+			}
+			if err := manager.Add(certificate); err != nil {
+				return nil, fmt.Errorf("set up LoadBalancer client certificate refresh: %w", err)
+			}
+			proxy, routes, err := loadBalancerBackends(secret, certificate, options)
 			if err != nil {
 				return nil, err
 			}
@@ -98,8 +105,7 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 	return cleanup, nil
 }
 
-// loadBalancerCredentials 在启动时读取一次凭据 Secret。
-// ponytail: 轮换需要重启 manager；需要热轮换时改用 tls.Config 的 GetClientCertificate 回调按 Secret 刷新。
+// loadBalancerCredentials 在启动时读取凭据 Secret；客户端证书此后由 clientCertificate 刷新。
 func loadBalancerCredentials(ctx context.Context, manager ctrl.Manager, reference string) (*corev1.Secret, error) {
 	namespace, name, ok := strings.Cut(reference, "/")
 	if !ok || namespace == "" || name == "" {
@@ -113,16 +119,15 @@ func loadBalancerCredentials(ctx context.Context, manager ctrl.Manager, referenc
 	return secret, nil
 }
 
-func loadBalancerBackends(secret *corev1.Secret, options loadBalancerOptions) (*haproxy.Hosts, *gobgp.Speakers, error) {
-	certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
-	if err != nil {
-		return nil, nil, fmt.Errorf("LoadBalancer client certificate: %w", err)
-	}
+// loadBalancerBackends 中客户端证书每次握手取最新值。
+// ponytail: 服务端 CA（ca.crt）、Basic 凭据只在启动时读取——CA 是寿命 10 年的内部根，轮换
+// 是罕见的有意操作，届时重启 manager；热更新 CA 需要自行实现证书链校验，不值得。
+func loadBalancerBackends(secret *corev1.Secret, certificate *clientCertificate, options loadBalancerOptions) (*haproxy.Hosts, *gobgp.Speakers, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(secret.Data["ca.crt"]) {
 		return nil, nil, errors.New("LoadBalancer credentials need a PEM ca.crt")
 	}
-	config := &tls.Config{Certificates: []tls.Certificate{certificate}, RootCAs: roots, MinVersion: tls.VersionTLS13}
+	config := &tls.Config{GetClientCertificate: certificate.get, RootCAs: roots, MinVersion: tls.VersionTLS13}
 	proxy := &haproxy.Hosts{
 		HTTP:           &http.Client{Transport: &http.Transport{TLSClientConfig: config}, Timeout: 30 * time.Second},
 		Username:       string(secret.Data["username"]),

@@ -125,7 +125,7 @@ func createLoadBalancerCredentials(t *testing.T, config *rest.Config) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	certificate := pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der})
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)

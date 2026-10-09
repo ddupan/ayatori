@@ -222,7 +222,11 @@ LB 主机部署（homelab-infra）须保证：
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
 凭据 Secret 由部署方以 ExternalSecret 从 OpenBao 同步到 controller namespace，与 PostgreSQL 管理
-凭据相同；首版只在启动时读取，轮换需要重启 manager。LB 主机由 Ansible/Chef 部署并提供上述 API。
+凭据相同。客户端证书由各环境独立的根 `pki-loadbalancer-<env>` 签发（3 天寿命，ESO 每天重签），
+manager 每分钟从 Secret 刷新、每次 TLS 握手取最新证书，轮换无需重启；刷新失败时沿用上一张。
+服务端 CA 与 Basic 凭据只在启动时读取：CA 是寿命 10 年的内部根，轮换时重启 manager。
+LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<hostname>.lab.ddupan.top`
+访问（ACME 证书只有 DNS SAN）。
 
 ## 待评审
 
