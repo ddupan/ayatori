@@ -40,11 +40,18 @@ Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应�
 `credentialRef.path` 是 mount 内逻辑路径，不包含 KV v2 的 `data/` 前缀。
 其部署允许范围、实际凭据读取和 URL 安全构造仍由后续 adapter/controller 验证。
 
-凭据位置与确认版本一旦写入便不可更改或移除；确认版本必须有对应位置。Conditions 描述
+凭据位置一旦写入便不可更改或移除；确认版本不可移除或回退，只能随 controller 改写连接信息
+前进；确认版本必须有对应位置。Conditions 描述
 当前可用性，不替代确认记录，也不能因读取暂时失败而清空记录。上述 schema 已有真实 API
 server 校验；独立的凭据准备用例在显式启用后填写这些字段，绑定 controller 不负责外部写入。
 未确认的已有值必须报 Conflict，不能用读取成功补记版本；已确认版本的恢复读取检查最新
-KV 版本，删除或版本漂移均需人工处理，不回退旧版本或生成替代密码。第一版不提供轮换入口。
+KV 版本，删除或非 controller 写入的版本漂移均需人工处理，不回退旧版本或生成替代密码。第一版
+不提供轮换入口。
+
+凭据的身份是 database 与 loginRole；host、hostaddr、port、sslmode 是 Instance 的可变连接信息。
+Instance `spec.endpoint` 变化时，controller 以确认版本为 CAS 前提、用同一密码写入只更新连接信息的
+下一版本，并更新 `credentialVersion`，Tenant status 随之公布新版本；固定 `credentialVersion` 的消费方
+需改用新版本（旧版本中的密码仍有效）。database/loginRole 不一致仍报 Conflict。
 `CredentialsReady` 条件只描述凭据准备结果；它不授权实际数据库交付。
 创建结果丢失时，下一轮读到未确认的已有值即停在 Conflict；位置仍为空则重试。
 完整执行和测试边界见[凭据准备闭环](README.md#凭据准备闭环)。

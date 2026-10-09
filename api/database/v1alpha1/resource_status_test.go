@@ -42,4 +42,16 @@ func testResourceStatus(t *testing.T, api client.Client) {
 			t.Fatal("已确认 OID 不得覆盖或移除", err)
 		}
 	}
+	// 改写连接信息会产生凭据下一版本：确认版本只能前进，不能回退或移除。
+	for _, version := range []int64{0, -1} {
+		invalid = object.DeepCopy()
+		invalid.Status.CredentialVersion = version
+		if err := api.Status().Update(t.Context(), invalid); !apierrors.IsInvalid(err) {
+			t.Fatal("确认版本不得回退或移除", err)
+		}
+	}
+	object.Status.CredentialVersion = 2
+	if err := api.Status().Update(t.Context(), object); err != nil {
+		t.Fatal("确认版本应允许前进", err)
+	}
 }

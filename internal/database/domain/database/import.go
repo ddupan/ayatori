@@ -11,7 +11,7 @@ const Available = "Available"
 
 // 导入是管理员对尚无记录的已有对象的显式登记。Released 资源已具备导入成功的全部确认，重新开放
 // 只需管理员清除 spec.tenantRef（对照 PV 清除 claimRef），按确认身份重新验证后回到 Available。
-// 两者都只读验证，不改密码、owner 或权限，不装扩展。
+// 两者都不改密码、owner 或权限，不装扩展；凭据中的连接信息随 Instance 改写。
 type registration struct {
 	roleOID, databaseOID uint32
 	version              int64
@@ -66,8 +66,8 @@ func (d *Database) ObserveImport(value credential.ApplicationCredential, version
 	case credentialErr != nil:
 		d.reportResources(ResourceUnavailable, "无法读取导入凭据，或位置不在部署配置的范围内")
 		return Wait
-	case d.dependencies.Instance == nil || !value.MatchesTarget(d.LoginRole(), d.Name(), d.dependencies.Instance.Endpoint):
-		d.reportResources(ResourceConflict, "导入凭据与 Instance/database/loginRole 不一致；未修改凭据")
+	case d.dependencies.Instance == nil || !value.MatchesIdentity(d.LoginRole(), d.Name()):
+		d.reportResources(ResourceConflict, "导入凭据的 database/loginRole 与本资源不一致；未修改凭据")
 		return Wait
 	case factsErr != nil:
 		d.reportResources(ResourceUnavailable, "无法验证导入目标的 PostgreSQL 资源")
@@ -91,6 +91,12 @@ func (d *Database) ObserveImport(value credential.ApplicationCredential, version
 	}
 	if state.DatabaseOID == 0 {
 		d.pending = &registration{roleOID: facts.RoleOID, databaseOID: facts.DatabaseOID, version: version}
+	}
+	// 管理员显式声明凭据位置即交由本资源管理：登记后连接信息与 Instance 不一致时改写。
+	// 首次登记仍只读，以本轮观察到的版本登记，下一轮再改写。
+	if state.DatabaseOID != 0 && !value.MatchesTarget(d.LoginRole(), d.Name(), d.dependencies.Instance.Endpoint) {
+		d.planRewrite(value)
+		return Wait
 	}
 	return InspectExtensions
 }

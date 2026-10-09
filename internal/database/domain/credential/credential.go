@@ -91,11 +91,21 @@ func (c ApplicationCredential) Validate() error {
 	return err
 }
 
-// MatchesTarget 只比较连接目标，不向用例暴露密码；管理库名不是应用连接目标的一部分。
+// MatchesIdentity 比较凭据所属的登录角色与数据库，即被创建对象本身；连接信息不属于身份。
+func (c ApplicationCredential) MatchesIdentity(username, database string) bool {
+	return c.username == username && c.database == database
+}
+
+// MatchesTarget 比较身份与连接信息，不向用例暴露密码；管理库名不是应用连接目标的一部分。
 func (c ApplicationCredential) MatchesTarget(username, database string, endpoint instance.Endpoint) bool {
 	actual, wanted := c.endpoint.Values(), endpoint.Values()
-	return c.username == username && c.database == database && actual.Host == wanted.Host &&
+	return c.MatchesIdentity(username, database) && actual.Host == wanted.Host &&
 		actual.HostAddr == wanted.HostAddr && actual.Port == wanted.Port && actual.TLSMode == wanted.TLSMode
+}
+
+// WithEndpoint 保留登录身份与密码，只替换为 Instance 当前的连接信息。
+func (c ApplicationCredential) WithEndpoint(endpoint instance.Endpoint) (ApplicationCredential, error) {
+	return NewApplicationCredential(c.username, c.password, c.database, endpoint)
 }
 
 // ParseApplicationCredential 拒绝缺键、非字符串或非法连接参数，不回显后端内容。

@@ -287,10 +287,10 @@ spec:
         - message: recorded credentialRef cannot change or be removed
           rule: '!(has(oldSelf.status) && has(oldSelf.status.credentialRef)) || (has(self.status)
             && has(self.status.credentialRef) && self.status.credentialRef == oldSelf.status.credentialRef)'
-        - message: confirmed credentialVersion cannot change or be removed
+        - message: confirmed credentialVersion cannot decrease or be removed
           rule: '!(has(oldSelf.status) && has(oldSelf.status.credentialVersion)) ||
             (has(self.status) && has(self.status.credentialVersion) && self.status.credentialVersion
-            == oldSelf.status.credentialVersion)'
+            >= oldSelf.status.credentialVersion)'
         - message: managed database target cannot change after observation or binding
             starts
           rule: '!(has(oldSelf.spec.tenantRef) || (has(oldSelf.status) && (has(oldSelf.status.instanceUID)

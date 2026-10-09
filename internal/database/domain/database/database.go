@@ -68,6 +68,7 @@ type Database struct {
 	dependencies Dependencies
 	missing      []string
 	pending      *registration
+	rewrite      *credential.ApplicationCredential
 }
 
 func Reconstitute(snapshot Snapshot, dependencies Dependencies) *Database {
@@ -159,12 +160,52 @@ func (d *Database) VerifyCredential(value credential.ApplicationCredential, err 
 	case err != nil:
 		d.reportCredential(CredentialUnavailable, "已确认凭据暂时无法读取；保留确认版本，等待依赖恢复")
 		return false
+	case !value.MatchesIdentity(d.LoginRole(), d.Name()):
+		d.reportCredential(CredentialConflict, "已确认凭据的 database/loginRole 与本资源不一致；请人工核实，未修改凭据")
+		return false
 	case !value.MatchesTarget(d.LoginRole(), d.Name(), d.dependencies.Instance.Endpoint):
-		d.reportCredential(CredentialConflict, "已确认凭据与当前 Instance/database/loginRole 不一致；请人工核实，未修改凭据")
+		d.planRewrite(value)
 		return false
 	}
 	d.snapshot.Credential.Phase, d.snapshot.Credential.Message = CredentialPrepared, "已确认凭据可读取；尚未验证 PostgreSQL 资源或完成 Tenant 交付"
 	return true
+}
+
+// planRewrite 处理只有连接信息不一致的已确认凭据。连接信息是 Instance 的可变属性，不是资源身份；
+// 凭据（含管理员显式交给本资源的导入凭据）由本资源管理，以同一密码改写为 Instance 当前连接信息。
+func (d *Database) planRewrite(value credential.ApplicationCredential) {
+	rewritten, err := value.WithEndpoint(d.dependencies.Instance.Endpoint)
+	if err != nil {
+		d.reportCredential(CredentialInvalidTarget, "Instance 连接信息无效，未改写凭据")
+		return
+	}
+	d.rewrite = &rewritten
+	d.reportCredential(CredentialPending, "Instance 连接信息已变化，以同一密码改写凭据中的连接信息")
+}
+
+// CredentialRewrite 是本轮判定需要写入的新版本凭据（连接信息已更新）。
+func (d *Database) CredentialRewrite() (credential.ApplicationCredential, bool) {
+	if d.rewrite == nil {
+		return credential.ApplicationCredential{}, false
+	}
+	return *d.rewrite, true
+}
+
+// CredentialRewritten 记录以确认版本为 CAS 前提的改写结果。改写只能产生确认版本的下一版本；
+// 结果不确定时下一轮读取确认版本会发现版本已变化而转为冲突，与创建相同不自动认领。
+func (d *Database) CredentialRewritten(version int64, err error) {
+	previous := d.snapshot.Credential.Version
+	switch {
+	case errors.Is(err, ErrConflict) || (err == nil && version != previous+1):
+		d.reportCredential(CredentialConflict, "改写连接信息时确认版本之后已有其他写入；请人工核实，未覆盖")
+	case err != nil:
+		d.reportCredential(CredentialUnavailable, "改写连接信息未确认成功，下一轮按确认版本的实际状态继续")
+	default:
+		d.snapshot.Credential.Version = version
+		d.snapshot.Credential.Phase = CredentialPrepared
+		d.snapshot.Credential.Message = fmt.Sprintf("已按 Instance 当前连接信息改写凭据（版本 %d）；消费方需改用新版本", version)
+	}
+	d.rewrite = nil
 }
 
 // PlanResources 在本轮凭据判定之后调用；只有凭据已确认可用时才允许观察 PostgreSQL。
