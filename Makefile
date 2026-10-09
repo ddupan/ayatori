@@ -250,13 +250,17 @@ generate-dataplaneapi: oapi-codegen ## 从固定版本的 Data Plane API spec �
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-	@test -f .custom-gcl.yml && { \
-		echo "Building custom golangci-lint with plugins..." && \
-		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
-		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
-	} || true
+# 使用上游发布的二进制并按发布的 checksums 校验，不从源码编译；结构化日志检查用内置 loggercheck。
+$(GOLANGCI_LINT): | $(LOCALBIN)
+	@set -e; v=$(GOLANGCI_LINT_VERSION); v=$${v#v}; \
+	asset=golangci-lint-$$v-$$(go env GOOS)-$$(go env GOARCH).tar.gz; \
+	base=https://github.com/golangci/golangci-lint/releases/download/v$$v; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "Downloading golangci-lint v$$v"; \
+	curl -fsSL -o "$$tmp/$$asset" "$$base/$$asset"; \
+	curl -fsSL "$$base/golangci-lint-$$v-checksums.txt" | grep " $$asset$$" | (cd "$$tmp" && sha256sum -c -) >/dev/null; \
+	tar -xzf "$$tmp/$$asset" -C "$$tmp" --strip-components=1; \
+	mv "$$tmp/golangci-lint" "$(GOLANGCI_LINT)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
