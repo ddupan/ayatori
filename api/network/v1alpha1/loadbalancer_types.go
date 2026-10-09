@@ -44,6 +44,11 @@ type LoadBalancerPort struct {
 	// +kubebuilder:default="1h"
 	// +optional
 	IdleTimeout metav1.Duration `json:"idleTimeout,omitzero"`
+	// DrainTimeout 是 endpoint 被移出集合后保留已有连接的上限；超时后剩余连接由代理
+	// 旧 worker 服务至主机级 hard-stop-after。
+	// +kubebuilder:default="30s"
+	// +optional
+	DrainTimeout metav1.Duration `json:"drainTimeout,omitzero"`
 	// HealthCheck 省略时以 TCP 探测各 endpoint 自身端口。默认值写全：apiserver 校验默认值时不展开嵌套默认。
 	// +kubebuilder:default={type: "TCP", interval: "5s", timeout: "3s", healthyThreshold: 2, unhealthyThreshold: 3}
 	// +optional

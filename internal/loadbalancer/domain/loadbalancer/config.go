@@ -9,6 +9,7 @@ type Port struct {
 	Endpoints     []Endpoint
 	ProxyProtocol ProxyProtocol
 	IdleTimeout   time.Duration
+	DrainTimeout  time.Duration
 	HealthCheck   HealthCheck
 }
 

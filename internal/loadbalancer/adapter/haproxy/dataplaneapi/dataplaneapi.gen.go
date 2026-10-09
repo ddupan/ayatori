@@ -5266,6 +5266,168 @@ func (e MysqlCheckParamsClientVersion) Valid() bool {
 	}
 }
 
+// Defines values for NativeStatType.
+const (
+	NativeStatTypeBackend  NativeStatType = "backend"
+	NativeStatTypeFrontend NativeStatType = "frontend"
+	NativeStatTypeServer   NativeStatType = "server"
+)
+
+// Valid indicates whether the value is a known member of the NativeStatType enum.
+func (e NativeStatType) Valid() bool {
+	switch e {
+	case NativeStatTypeBackend:
+		return true
+	case NativeStatTypeFrontend:
+		return true
+	case NativeStatTypeServer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NativeStatStatsAgentStatus.
+const (
+	NativeStatStatsAgentStatusINI     NativeStatStatsAgentStatus = "INI"
+	NativeStatStatsAgentStatusL4CON   NativeStatStatsAgentStatus = "L4CON"
+	NativeStatStatsAgentStatusL4OK    NativeStatStatsAgentStatus = "L4OK"
+	NativeStatStatsAgentStatusL4TOUT  NativeStatStatsAgentStatus = "L4TOUT"
+	NativeStatStatsAgentStatusL7OK    NativeStatStatsAgentStatus = "L7OK"
+	NativeStatStatsAgentStatusL7STS   NativeStatStatsAgentStatus = "L7STS"
+	NativeStatStatsAgentStatusSOCKERR NativeStatStatsAgentStatus = "SOCKERR"
+	NativeStatStatsAgentStatusUNK     NativeStatStatsAgentStatus = "UNK"
+)
+
+// Valid indicates whether the value is a known member of the NativeStatStatsAgentStatus enum.
+func (e NativeStatStatsAgentStatus) Valid() bool {
+	switch e {
+	case NativeStatStatsAgentStatusINI:
+		return true
+	case NativeStatStatsAgentStatusL4CON:
+		return true
+	case NativeStatStatsAgentStatusL4OK:
+		return true
+	case NativeStatStatsAgentStatusL4TOUT:
+		return true
+	case NativeStatStatsAgentStatusL7OK:
+		return true
+	case NativeStatStatsAgentStatusL7STS:
+		return true
+	case NativeStatStatsAgentStatusSOCKERR:
+		return true
+	case NativeStatStatsAgentStatusUNK:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NativeStatStatsCheckStatus.
+const (
+	NativeStatStatsCheckStatusINI     NativeStatStatsCheckStatus = "INI"
+	NativeStatStatsCheckStatusL4CON   NativeStatStatsCheckStatus = "L4CON"
+	NativeStatStatsCheckStatusL4OK    NativeStatStatsCheckStatus = "L4OK"
+	NativeStatStatsCheckStatusL4TOUT  NativeStatStatsCheckStatus = "L4TOUT"
+	NativeStatStatsCheckStatusL6OK    NativeStatStatsCheckStatus = "L6OK"
+	NativeStatStatsCheckStatusL6RSP   NativeStatStatsCheckStatus = "L6RSP"
+	NativeStatStatsCheckStatusL6TOUT  NativeStatStatsCheckStatus = "L6TOUT"
+	NativeStatStatsCheckStatusL7OK    NativeStatStatsCheckStatus = "L7OK"
+	NativeStatStatsCheckStatusL7OKC   NativeStatStatsCheckStatus = "L7OKC"
+	NativeStatStatsCheckStatusL7RSP   NativeStatStatsCheckStatus = "L7RSP"
+	NativeStatStatsCheckStatusL7STS   NativeStatStatsCheckStatus = "L7STS"
+	NativeStatStatsCheckStatusL7TOUT  NativeStatStatsCheckStatus = "L7TOUT"
+	NativeStatStatsCheckStatusSOCKERR NativeStatStatsCheckStatus = "SOCKERR"
+	NativeStatStatsCheckStatusUNK     NativeStatStatsCheckStatus = "UNK"
+)
+
+// Valid indicates whether the value is a known member of the NativeStatStatsCheckStatus enum.
+func (e NativeStatStatsCheckStatus) Valid() bool {
+	switch e {
+	case NativeStatStatsCheckStatusINI:
+		return true
+	case NativeStatStatsCheckStatusL4CON:
+		return true
+	case NativeStatStatsCheckStatusL4OK:
+		return true
+	case NativeStatStatsCheckStatusL4TOUT:
+		return true
+	case NativeStatStatsCheckStatusL6OK:
+		return true
+	case NativeStatStatsCheckStatusL6RSP:
+		return true
+	case NativeStatStatsCheckStatusL6TOUT:
+		return true
+	case NativeStatStatsCheckStatusL7OK:
+		return true
+	case NativeStatStatsCheckStatusL7OKC:
+		return true
+	case NativeStatStatsCheckStatusL7RSP:
+		return true
+	case NativeStatStatsCheckStatusL7STS:
+		return true
+	case NativeStatStatsCheckStatusL7TOUT:
+		return true
+	case NativeStatStatsCheckStatusSOCKERR:
+		return true
+	case NativeStatStatsCheckStatusUNK:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NativeStatStatsMode.
+const (
+	NativeStatStatsModeHealth  NativeStatStatsMode = "health"
+	NativeStatStatsModeHttp    NativeStatStatsMode = "http"
+	NativeStatStatsModeTcp     NativeStatStatsMode = "tcp"
+	NativeStatStatsModeUnknown NativeStatStatsMode = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the NativeStatStatsMode enum.
+func (e NativeStatStatsMode) Valid() bool {
+	switch e {
+	case NativeStatStatsModeHealth:
+		return true
+	case NativeStatStatsModeHttp:
+		return true
+	case NativeStatStatsModeTcp:
+		return true
+	case NativeStatStatsModeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NativeStatStatsStatus.
+const (
+	DOWN    NativeStatStatsStatus = "DOWN"
+	MAINT   NativeStatStatsStatus = "MAINT"
+	NOLB    NativeStatStatsStatus = "NOLB"
+	NoCheck NativeStatStatsStatus = "no check"
+	UP      NativeStatStatsStatus = "UP"
+)
+
+// Valid indicates whether the value is a known member of the NativeStatStatsStatus enum.
+func (e NativeStatStatsStatus) Valid() bool {
+	switch e {
+	case DOWN:
+		return true
+	case MAINT:
+		return true
+	case NOLB:
+		return true
+	case NoCheck:
+		return true
+	case UP:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OriginaltoEnabled.
 const (
 	OriginaltoEnabledEnabled OriginaltoEnabled = "enabled"
@@ -9058,6 +9220,27 @@ func (e UseSmallBuffersEnabled) Valid() bool {
 	}
 }
 
+// Defines values for GetStatsParamsType.
+const (
+	GetStatsParamsTypeBackend  GetStatsParamsType = "backend"
+	GetStatsParamsTypeFrontend GetStatsParamsType = "frontend"
+	GetStatsParamsTypeServer   GetStatsParamsType = "server"
+)
+
+// Valid indicates whether the value is a known member of the GetStatsParamsType enum.
+func (e GetStatsParamsType) Valid() bool {
+	switch e {
+	case GetStatsParamsTypeBackend:
+		return true
+	case GetStatsParamsTypeFrontend:
+		return true
+	case GetStatsParamsTypeServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Acl The use of Access Control Lists (ACL) provides a flexible solution to perform
 // content switching and generally to take decisions based on content extracted
 // from the request, the response or any environmental status.
@@ -11042,6 +11225,122 @@ type MysqlCheckParams struct {
 // MysqlCheckParamsClientVersion defines model for MysqlCheckParams.ClientVersion.
 type MysqlCheckParamsClientVersion string
 
+// NativeStat Current stats for one object.
+type NativeStat struct {
+	BackendName *string `json:"backend_name,omitempty"`
+	Name        *string `json:"name,omitempty"`
+
+	// Stats Example: {"bin":4326578,"bout":889901290,"comp_byp":0,"comp_in":0,"comp_out":0,"comp_rsp":0,"conn_rate":12,"conn_rate_max":456,"conn_tot":45682,"dcon":0,"dreq":4,"dresp":1,"dses":0,"ereq":54,"hrsp_1xx":0,"hrsp_2xx":165,"hrsp_3xx":12,"hrsp_4xx":50,"hrsp_5xx":4,"hrsp_other":0,"iid":0,"intercepted":346,"last_chk":"L4OK in 0ms","mode":"http","pid":3204,"rate":64,"rate_lim":20000,"rate_max":4000,"req_rate":49,"req_rate_max":3965,"req_total":1254786,"scur":129,"slim":2000,"smax":2000,"status":"UP","stot":12902}
+	Stats *NativeStatStats `json:"stats,omitempty"`
+	Type  *NativeStatType  `json:"type,omitempty"`
+}
+
+// NativeStatType defines model for NativeStat.Type.
+type NativeStatType string
+
+// NativeStatStats Example: {"bin":4326578,"bout":889901290,"comp_byp":0,"comp_in":0,"comp_out":0,"comp_rsp":0,"conn_rate":12,"conn_rate_max":456,"conn_tot":45682,"dcon":0,"dreq":4,"dresp":1,"dses":0,"ereq":54,"hrsp_1xx":0,"hrsp_2xx":165,"hrsp_3xx":12,"hrsp_4xx":50,"hrsp_5xx":4,"hrsp_other":0,"iid":0,"intercepted":346,"last_chk":"L4OK in 0ms","mode":"http","pid":3204,"rate":64,"rate_lim":20000,"rate_max":4000,"req_rate":49,"req_rate_max":3965,"req_total":1254786,"scur":129,"slim":2000,"smax":2000,"status":"UP","stot":12902}
+type NativeStatStats struct {
+	Act           *int                        `json:"act,omitempty"`
+	Addr          *string                     `json:"addr,omitempty"`
+	AgentCode     *int                        `json:"agent_code,omitempty"`
+	AgentDesc     *string                     `json:"agent_desc,omitempty"`
+	AgentDuration *int                        `json:"agent_duration,omitempty"`
+	AgentFall     *int                        `json:"agent_fall,omitempty"`
+	AgentHealth   *int                        `json:"agent_health,omitempty"`
+	AgentRise     *int                        `json:"agent_rise,omitempty"`
+	AgentStatus   *NativeStatStatsAgentStatus `json:"agent_status,omitempty"`
+	Algo          *string                     `json:"algo,omitempty"`
+	Bck           *int                        `json:"bck,omitempty"`
+	Bin           *int                        `json:"bin,omitempty"`
+	Bout          *int                        `json:"bout,omitempty"`
+	CheckCode     *int                        `json:"check_code,omitempty"`
+	CheckDesc     *string                     `json:"check_desc,omitempty"`
+	CheckDuration *int                        `json:"check_duration,omitempty"`
+	CheckFall     *int                        `json:"check_fall,omitempty"`
+	CheckHealth   *int                        `json:"check_health,omitempty"`
+	CheckRise     *int                        `json:"check_rise,omitempty"`
+	CheckStatus   *NativeStatStatsCheckStatus `json:"check_status,omitempty"`
+	Chkdown       *int                        `json:"chkdown,omitempty"`
+	Chkfail       *int                        `json:"chkfail,omitempty"`
+	CliAbrt       *int                        `json:"cli_abrt,omitempty"`
+	CompByp       *int                        `json:"comp_byp,omitempty"`
+	CompIn        *int                        `json:"comp_in,omitempty"`
+	CompOut       *int                        `json:"comp_out,omitempty"`
+	CompRsp       *int                        `json:"comp_rsp,omitempty"`
+	ConnRate      *int                        `json:"conn_rate,omitempty"`
+	ConnRateMax   *int                        `json:"conn_rate_max,omitempty"`
+	ConnTot       *int                        `json:"conn_tot,omitempty"`
+	Cookie        *string                     `json:"cookie,omitempty"`
+	Ctime         *int                        `json:"ctime,omitempty"`
+	Dcon          *int                        `json:"dcon,omitempty"`
+	Downtime      *int                        `json:"downtime,omitempty"`
+	Dreq          *int                        `json:"dreq,omitempty"`
+	Dresp         *int                        `json:"dresp,omitempty"`
+	Dses          *int                        `json:"dses,omitempty"`
+	Econ          *int                        `json:"econ,omitempty"`
+	Ereq          *int                        `json:"ereq,omitempty"`
+	Eresp         *int                        `json:"eresp,omitempty"`
+	Hanafail      *string                     `json:"hanafail,omitempty"`
+	Hrsp1xx       *int                        `json:"hrsp_1xx,omitempty"`
+	Hrsp2xx       *int                        `json:"hrsp_2xx,omitempty"`
+	Hrsp3xx       *int                        `json:"hrsp_3xx,omitempty"`
+	Hrsp4xx       *int                        `json:"hrsp_4xx,omitempty"`
+	Hrsp5xx       *int                        `json:"hrsp_5xx,omitempty"`
+	HrspOther     *int                        `json:"hrsp_other,omitempty"`
+	Iid           *int                        `json:"iid,omitempty"`
+	Intercepted   *int                        `json:"intercepted,omitempty"`
+	LastAgt       *string                     `json:"last_agt,omitempty"`
+	LastChk       *string                     `json:"last_chk,omitempty"`
+	Lastchg       *int                        `json:"lastchg,omitempty"`
+	Lastsess      *int                        `json:"lastsess,omitempty"`
+	Lbtot         *int                        `json:"lbtot,omitempty"`
+	Mode          *NativeStatStatsMode        `json:"mode,omitempty"`
+	Pid           *int                        `json:"pid,omitempty"`
+	Qcur          *int                        `json:"qcur,omitempty"`
+	Qlimit        *int                        `json:"qlimit,omitempty"`
+	Qmax          *int                        `json:"qmax,omitempty"`
+	Qtime         *int                        `json:"qtime,omitempty"`
+	Rate          *int                        `json:"rate,omitempty"`
+	RateLim       *int                        `json:"rate_lim,omitempty"`
+	RateMax       *int                        `json:"rate_max,omitempty"`
+	ReqRate       *int                        `json:"req_rate,omitempty"`
+	ReqRateMax    *int                        `json:"req_rate_max,omitempty"`
+	ReqTot        *int                        `json:"req_tot,omitempty"`
+	Rtime         *int                        `json:"rtime,omitempty"`
+	Scur          *int                        `json:"scur,omitempty"`
+	Sid           *int                        `json:"sid,omitempty"`
+	Slim          *int                        `json:"slim,omitempty"`
+	Smax          *int                        `json:"smax,omitempty"`
+	SrvAbrt       *int                        `json:"srv_abrt,omitempty"`
+	Status        *NativeStatStatsStatus      `json:"status,omitempty"`
+	Stot          *int                        `json:"stot,omitempty"`
+	Throttle      *int                        `json:"throttle,omitempty"`
+	Tracked       *string                     `json:"tracked,omitempty"`
+	Ttime         *int                        `json:"ttime,omitempty"`
+	Weight        *int                        `json:"weight,omitempty"`
+	Wredis        *int                        `json:"wredis,omitempty"`
+	Wretr         *int                        `json:"wretr,omitempty"`
+}
+
+// NativeStatStatsAgentStatus defines model for NativeStatStats.AgentStatus.
+type NativeStatStatsAgentStatus string
+
+// NativeStatStatsCheckStatus defines model for NativeStatStats.CheckStatus.
+type NativeStatStatsCheckStatus string
+
+// NativeStatStatsMode defines model for NativeStatStats.Mode.
+type NativeStatStatsMode string
+
+// NativeStatStatsStatus defines model for NativeStatStats.Status.
+type NativeStatStatsStatus string
+
+// NativeStats HAProxy stats array
+type NativeStats struct {
+	Error      *string       `json:"error,omitempty"`
+	RuntimeAPI *string       `json:"runtimeAPI,omitempty"`
+	Stats      *[]NativeStat `json:"stats,omitempty"`
+}
+
 // Originalto defines model for originalto.
 type Originalto struct {
 	Enabled OriginaltoEnabled `json:"enabled"`
@@ -12444,6 +12743,42 @@ type ReplaceBackendParams struct {
 	FullSection *bool `form:"full_section,omitempty" json:"full_section,omitempty"`
 }
 
+// CreateServerBackendParams defines parameters for CreateServerBackend.
+type CreateServerBackendParams struct {
+	// TransactionId ID of the transaction where we want to add the operation. Cannot be used when version is specified.
+	TransactionId *string `form:"transaction_id,omitempty" json:"transaction_id,omitempty"`
+
+	// Version Version used for checking configuration version. Cannot be used when transaction is specified, transaction has its own version.
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
+
+	// ForceReload If set, do a force reload, do not wait for the configured reload-delay. Cannot be used when transaction is specified, as changes in transaction are not applied directly to configuration.
+	ForceReload *bool `form:"force_reload,omitempty" json:"force_reload,omitempty"`
+}
+
+// DeleteServerBackendParams defines parameters for DeleteServerBackend.
+type DeleteServerBackendParams struct {
+	// TransactionId ID of the transaction where we want to add the operation. Cannot be used when version is specified.
+	TransactionId *string `form:"transaction_id,omitempty" json:"transaction_id,omitempty"`
+
+	// Version Version used for checking configuration version. Cannot be used when transaction is specified, transaction has its own version.
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
+
+	// ForceReload If set, do a force reload, do not wait for the configured reload-delay. Cannot be used when transaction is specified, as changes in transaction are not applied directly to configuration.
+	ForceReload *bool `form:"force_reload,omitempty" json:"force_reload,omitempty"`
+}
+
+// ReplaceServerBackendParams defines parameters for ReplaceServerBackend.
+type ReplaceServerBackendParams struct {
+	// TransactionId ID of the transaction where we want to add the operation. Cannot be used when version is specified.
+	TransactionId *string `form:"transaction_id,omitempty" json:"transaction_id,omitempty"`
+
+	// Version Version used for checking configuration version. Cannot be used when transaction is specified, transaction has its own version.
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
+
+	// ForceReload If set, do a force reload, do not wait for the configured reload-delay. Cannot be used when transaction is specified, as changes in transaction are not applied directly to configuration.
+	ForceReload *bool `form:"force_reload,omitempty" json:"force_reload,omitempty"`
+}
+
 // GetFrontendsParams defines parameters for GetFrontends.
 type GetFrontendsParams struct {
 	// TransactionId ID of the transaction where we want to add the operation. Cannot be used when version is specified.
@@ -12501,6 +12836,21 @@ type GetConfigurationVersionParams struct {
 	TransactionId *string `form:"transaction_id,omitempty" json:"transaction_id,omitempty"`
 }
 
+// GetStatsParams defines parameters for GetStats.
+type GetStatsParams struct {
+	// Type Object type to get stats for (one of frontend, backend, server)
+	Type *GetStatsParamsType `form:"type,omitempty" json:"type,omitempty"`
+
+	// Name Object name to get stats for
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
+
+	// Parent Object parent name to get stats for, in case the object is a server
+	Parent *string `form:"parent,omitempty" json:"parent,omitempty"`
+}
+
+// GetStatsParamsType defines parameters for GetStats.
+type GetStatsParamsType string
+
 // StartTransactionParams defines parameters for StartTransaction.
 type StartTransactionParams struct {
 	// Version Configuration version on which to work on
@@ -12519,11 +12869,20 @@ type CreateBackendJSONRequestBody = Backend
 // ReplaceBackendJSONRequestBody defines body for ReplaceBackend for application/json ContentType.
 type ReplaceBackendJSONRequestBody = Backend
 
+// CreateServerBackendJSONRequestBody defines body for CreateServerBackend for application/json ContentType.
+type CreateServerBackendJSONRequestBody = Server
+
+// ReplaceServerBackendJSONRequestBody defines body for ReplaceServerBackend for application/json ContentType.
+type ReplaceServerBackendJSONRequestBody = Server
+
 // CreateFrontendJSONRequestBody defines body for CreateFrontend for application/json ContentType.
 type CreateFrontendJSONRequestBody = Frontend
 
 // ReplaceFrontendJSONRequestBody defines body for ReplaceFrontend for application/json ContentType.
 type ReplaceFrontendJSONRequestBody = Frontend
+
+// ReplaceRuntimeServerJSONRequestBody defines body for ReplaceRuntimeServer for application/json ContentType.
+type ReplaceRuntimeServerJSONRequestBody = RuntimeServer
 
 // Getter for additional properties for Error. Returns the specified
 // element and whether it was found
@@ -12728,6 +13087,49 @@ type ClientInterface interface {
 	// Corresponds with PUT /services/haproxy/configuration/backends/{name} (the `ReplaceBackend` operationId).
 	ReplaceBackend(ctx context.Context, name string, params *ReplaceBackendParams, body ReplaceBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateServerBackendWithBody Add a new server
+	//
+	// Adds a new server in the specified Backend.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+	CreateServerBackendWithBody(ctx context.Context, parentName string, params *CreateServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateServerBackend Add a new server
+	//
+	// Adds a new server in the specified Backend.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+	CreateServerBackend(ctx context.Context, parentName string, params *CreateServerBackendParams, body CreateServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteServerBackend Delete a server
+	//
+	// Deletes a server configuration by its name from the specified Backend.
+	//
+	// Corresponds with DELETE /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `DeleteServerBackend` operationId).
+	DeleteServerBackend(ctx context.Context, parentName string, name string, params *DeleteServerBackendParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceServerBackendWithBody Replace a server
+	//
+	// Replaces a server configuration by its name in the specified Backend.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+	ReplaceServerBackendWithBody(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceServerBackend Replace a server
+	//
+	// Replaces a server configuration by its name in the specified Backend.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+	ReplaceServerBackend(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, body ReplaceServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetFrontends Return an array of frontends
 	//
 	// Returns an array of all configured frontends.
@@ -12798,6 +13200,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /services/haproxy/runtime/backends/{parent_name}/servers (the `GetAllRuntimeServer` operationId).
 	GetAllRuntimeServer(ctx context.Context, parentName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceRuntimeServerWithBody Replace server transient settings
+	//
+	// Replaces a server transient settings by it's name in the specified backend.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+	ReplaceRuntimeServerWithBody(ctx context.Context, parentName string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceRuntimeServer Replace server transient settings
+	//
+	// Replaces a server transient settings by it's name in the specified backend.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+	ReplaceRuntimeServer(ctx context.Context, parentName string, name string, body ReplaceRuntimeServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetStats Gets stats
+	//
+	// Getting stats from the HAProxy.
+	//
+	// Corresponds with GET /services/haproxy/stats/native (the `GetStats` operationId).
+	GetStats(ctx context.Context, params *GetStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartTransaction Start a new transaction
 	//
@@ -12921,6 +13348,99 @@ func (c *Client) ReplaceBackendWithBody(ctx context.Context, name string, params
 // Corresponds with PUT /services/haproxy/configuration/backends/{name} (the `ReplaceBackend` operationId).
 func (c *Client) ReplaceBackend(ctx context.Context, name string, params *ReplaceBackendParams, body ReplaceBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReplaceBackendRequest(c.Server, name, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateServerBackendWithBody Add a new server
+//
+// Adds a new server in the specified Backend.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+func (c *Client) CreateServerBackendWithBody(ctx context.Context, parentName string, params *CreateServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateServerBackendRequestWithBody(c.Server, parentName, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateServerBackend Add a new server
+//
+// Adds a new server in the specified Backend.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+func (c *Client) CreateServerBackend(ctx context.Context, parentName string, params *CreateServerBackendParams, body CreateServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateServerBackendRequest(c.Server, parentName, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteServerBackend Delete a server
+//
+// Deletes a server configuration by its name from the specified Backend.
+//
+// Corresponds with DELETE /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `DeleteServerBackend` operationId).
+func (c *Client) DeleteServerBackend(ctx context.Context, parentName string, name string, params *DeleteServerBackendParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteServerBackendRequest(c.Server, parentName, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceServerBackendWithBody Replace a server
+//
+// Replaces a server configuration by its name in the specified Backend.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+func (c *Client) ReplaceServerBackendWithBody(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceServerBackendRequestWithBody(c.Server, parentName, name, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceServerBackend Replace a server
+//
+// Replaces a server configuration by its name in the specified Backend.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+func (c *Client) ReplaceServerBackend(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, body ReplaceServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceServerBackendRequest(c.Server, parentName, name, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13082,6 +13602,61 @@ func (c *Client) GetReloads(ctx context.Context, reqEditors ...RequestEditorFn) 
 // Corresponds with GET /services/haproxy/runtime/backends/{parent_name}/servers (the `GetAllRuntimeServer` operationId).
 func (c *Client) GetAllRuntimeServer(ctx context.Context, parentName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAllRuntimeServerRequest(c.Server, parentName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceRuntimeServerWithBody Replace server transient settings
+//
+// Replaces a server transient settings by it's name in the specified backend.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+func (c *Client) ReplaceRuntimeServerWithBody(ctx context.Context, parentName string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceRuntimeServerRequestWithBody(c.Server, parentName, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceRuntimeServer Replace server transient settings
+//
+// Replaces a server transient settings by it's name in the specified backend.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+func (c *Client) ReplaceRuntimeServer(ctx context.Context, parentName string, name string, body ReplaceRuntimeServerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceRuntimeServerRequest(c.Server, parentName, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetStats Gets stats
+//
+// Getting stats from the HAProxy.
+//
+// Corresponds with GET /services/haproxy/stats/native (the `GetStats` operationId).
+func (c *Client) GetStats(ctx context.Context, params *GetStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetStatsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -13482,6 +14057,301 @@ func NewReplaceBackendRequestWithBody(server string, name string, params *Replac
 		if params.FullSection != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "full_section", *params.FullSection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateServerBackendRequest calls the generic CreateServerBackend builder with application/json body
+func NewCreateServerBackendRequest(server string, parentName string, params *CreateServerBackendParams, body CreateServerBackendJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateServerBackendRequestWithBody(server, parentName, params, "application/json", bodyReader)
+}
+
+// NewCreateServerBackendRequestWithBody constructs an http.Request for the CreateServerBackend method, with any body, and a specified content type
+func NewCreateServerBackendRequestWithBody(server string, parentName string, params *CreateServerBackendParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/configuration/backends/%s/servers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TransactionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "transaction_id", *params.TransactionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Version != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "version", *params.Version, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ForceReload != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_reload", *params.ForceReload, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteServerBackendRequest constructs an http.Request for the DeleteServerBackend method
+func NewDeleteServerBackendRequest(server string, parentName string, name string, params *DeleteServerBackendParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/configuration/backends/%s/servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TransactionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "transaction_id", *params.TransactionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Version != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "version", *params.Version, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ForceReload != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_reload", *params.ForceReload, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplaceServerBackendRequest calls the generic ReplaceServerBackend builder with application/json body
+func NewReplaceServerBackendRequest(server string, parentName string, name string, params *ReplaceServerBackendParams, body ReplaceServerBackendJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceServerBackendRequestWithBody(server, parentName, name, params, "application/json", bodyReader)
+}
+
+// NewReplaceServerBackendRequestWithBody constructs an http.Request for the ReplaceServerBackend method, with any body, and a specified content type
+func NewReplaceServerBackendRequestWithBody(server string, parentName string, name string, params *ReplaceServerBackendParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/configuration/backends/%s/servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TransactionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "transaction_id", *params.TransactionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Version != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "version", *params.Version, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ForceReload != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_reload", *params.ForceReload, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -13986,6 +14856,138 @@ func NewGetAllRuntimeServerRequest(server string, parentName string) (*http.Requ
 	return req, nil
 }
 
+// NewReplaceRuntimeServerRequest calls the generic ReplaceRuntimeServer builder with application/json body
+func NewReplaceRuntimeServerRequest(server string, parentName string, name string, body ReplaceRuntimeServerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceRuntimeServerRequestWithBody(server, parentName, name, "application/json", bodyReader)
+}
+
+// NewReplaceRuntimeServerRequestWithBody constructs an http.Request for the ReplaceRuntimeServer method, with any body, and a specified content type
+func NewReplaceRuntimeServerRequestWithBody(server string, parentName string, name string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/backends/%s/servers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetStatsRequest constructs an http.Request for the GetStats method
+func NewGetStatsRequest(server string, params *GetStatsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/stats/native")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "type", *params.Type, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Name != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Parent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "parent", *params.Parent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartTransactionRequest constructs an http.Request for the StartTransaction method
 func NewStartTransactionRequest(server string, params *StartTransactionParams) (*http.Request, error) {
 	var err error
@@ -14229,6 +15231,51 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /services/haproxy/configuration/backends/{name} (the `ReplaceBackend` operationId).
 	ReplaceBackendWithResponse(ctx context.Context, name string, params *ReplaceBackendParams, body ReplaceBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceBackendResponse, error)
 
+	// CreateServerBackendWithBodyWithResponse Add a new server
+	//
+	// Adds a new server in the specified Backend.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+	CreateServerBackendWithBodyWithResponse(ctx context.Context, parentName string, params *CreateServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServerBackendResponse, error)
+
+	// CreateServerBackendWithResponse Add a new server
+	//
+	// Adds a new server in the specified Backend.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+	CreateServerBackendWithResponse(ctx context.Context, parentName string, params *CreateServerBackendParams, body CreateServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServerBackendResponse, error)
+
+	// DeleteServerBackendWithResponse Delete a server
+	//
+	// Deletes a server configuration by its name from the specified Backend.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `DeleteServerBackend` operationId).
+	DeleteServerBackendWithResponse(ctx context.Context, parentName string, name string, params *DeleteServerBackendParams, reqEditors ...RequestEditorFn) (*DeleteServerBackendResponse, error)
+
+	// ReplaceServerBackendWithBodyWithResponse Replace a server
+	//
+	// Replaces a server configuration by its name in the specified Backend.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+	ReplaceServerBackendWithBodyWithResponse(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceServerBackendResponse, error)
+
+	// ReplaceServerBackendWithResponse Replace a server
+	//
+	// Replaces a server configuration by its name in the specified Backend.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+	ReplaceServerBackendWithResponse(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, body ReplaceServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceServerBackendResponse, error)
+
 	// GetFrontendsWithResponse Return an array of frontends
 	//
 	// Returns an array of all configured frontends.
@@ -14309,6 +15356,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /services/haproxy/runtime/backends/{parent_name}/servers (the `GetAllRuntimeServer` operationId).
 	GetAllRuntimeServerWithResponse(ctx context.Context, parentName string, reqEditors ...RequestEditorFn) (*GetAllRuntimeServerResponse, error)
+
+	// ReplaceRuntimeServerWithBodyWithResponse Replace server transient settings
+	//
+	// Replaces a server transient settings by it's name in the specified backend.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+	ReplaceRuntimeServerWithBodyWithResponse(ctx context.Context, parentName string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceRuntimeServerResponse, error)
+
+	// ReplaceRuntimeServerWithResponse Replace server transient settings
+	//
+	// Replaces a server transient settings by it's name in the specified backend.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+	ReplaceRuntimeServerWithResponse(ctx context.Context, parentName string, name string, body ReplaceRuntimeServerJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceRuntimeServerResponse, error)
+
+	// GetStatsWithResponse Gets stats
+	//
+	// Getting stats from the HAProxy.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /services/haproxy/stats/native (the `GetStats` operationId).
+	GetStatsWithResponse(ctx context.Context, params *GetStatsParams, reqEditors ...RequestEditorFn) (*GetStatsResponse, error)
 
 	// StartTransactionWithResponse Start a new transaction
 	//
@@ -14657,6 +15731,269 @@ func (r ReplaceBackendResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceBackendResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateServerBackendResponse202Headers the declared response headers of an HTTP 202 response for CreateServerBackend
+type CreateServerBackendResponse202Headers struct {
+	ReloadID *string
+}
+
+// CreateServerBackendResponse400Headers the declared response headers of an HTTP 400 response for CreateServerBackend
+type CreateServerBackendResponse400Headers struct {
+	ConfigurationVersion *string
+}
+
+// CreateServerBackendResponse409Headers the declared response headers of an HTTP 409 response for CreateServerBackend
+type CreateServerBackendResponse409Headers struct {
+	ConfigurationVersion *string
+}
+
+// CreateServerBackendResponseDefaultHeaders the declared response headers of an HTTP default response for CreateServerBackend
+type CreateServerBackendResponseDefaultHeaders struct {
+	ConfigurationVersion *string
+}
+
+type CreateServerBackendResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Server
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Server
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *AlreadyExists
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *DefaultError
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *CreateServerBackendResponse202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *CreateServerBackendResponse400Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *CreateServerBackendResponse409Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *CreateServerBackendResponseDefaultHeaders
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateServerBackendResponse) GetJSON201() *Server {
+	return r.JSON201
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateServerBackendResponse) GetJSON202() *Server {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateServerBackendResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateServerBackendResponse) GetJSON409() *AlreadyExists {
+	return r.JSON409
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CreateServerBackendResponse) GetJSONDefault() *DefaultError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateServerBackendResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateServerBackendResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateServerBackendResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateServerBackendResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteServerBackendResponse202Headers the declared response headers of an HTTP 202 response for DeleteServerBackend
+type DeleteServerBackendResponse202Headers struct {
+	ReloadID *string
+}
+
+// DeleteServerBackendResponse404Headers the declared response headers of an HTTP 404 response for DeleteServerBackend
+type DeleteServerBackendResponse404Headers struct {
+	ConfigurationVersion *string
+}
+
+// DeleteServerBackendResponseDefaultHeaders the declared response headers of an HTTP default response for DeleteServerBackend
+type DeleteServerBackendResponseDefaultHeaders struct {
+	ConfigurationVersion *string
+}
+
+type DeleteServerBackendResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *DefaultError
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *DeleteServerBackendResponse202Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *DeleteServerBackendResponse404Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *DeleteServerBackendResponseDefaultHeaders
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteServerBackendResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r DeleteServerBackendResponse) GetJSONDefault() *DefaultError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteServerBackendResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteServerBackendResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteServerBackendResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteServerBackendResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReplaceServerBackendResponse202Headers the declared response headers of an HTTP 202 response for ReplaceServerBackend
+type ReplaceServerBackendResponse202Headers struct {
+	ReloadID *string
+}
+
+// ReplaceServerBackendResponse400Headers the declared response headers of an HTTP 400 response for ReplaceServerBackend
+type ReplaceServerBackendResponse400Headers struct {
+	ConfigurationVersion *string
+}
+
+// ReplaceServerBackendResponse404Headers the declared response headers of an HTTP 404 response for ReplaceServerBackend
+type ReplaceServerBackendResponse404Headers struct {
+	ConfigurationVersion *string
+}
+
+// ReplaceServerBackendResponseDefaultHeaders the declared response headers of an HTTP default response for ReplaceServerBackend
+type ReplaceServerBackendResponseDefaultHeaders struct {
+	ConfigurationVersion *string
+}
+
+type ReplaceServerBackendResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Server
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *Server
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *DefaultError
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ReplaceServerBackendResponse202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ReplaceServerBackendResponse400Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ReplaceServerBackendResponse404Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ReplaceServerBackendResponseDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceServerBackendResponse) GetJSON200() *Server {
+	return r.JSON200
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ReplaceServerBackendResponse) GetJSON202() *Server {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReplaceServerBackendResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReplaceServerBackendResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ReplaceServerBackendResponse) GetJSONDefault() *DefaultError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceServerBackendResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceServerBackendResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceServerBackendResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceServerBackendResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15174,6 +16511,151 @@ func (r GetAllRuntimeServerResponse) ContentType() string {
 	return ""
 }
 
+// ReplaceRuntimeServerResponse400Headers the declared response headers of an HTTP 400 response for ReplaceRuntimeServer
+type ReplaceRuntimeServerResponse400Headers struct {
+	ConfigurationVersion *string
+}
+
+// ReplaceRuntimeServerResponse404Headers the declared response headers of an HTTP 404 response for ReplaceRuntimeServer
+type ReplaceRuntimeServerResponse404Headers struct {
+	ConfigurationVersion *string
+}
+
+// ReplaceRuntimeServerResponseDefaultHeaders the declared response headers of an HTTP default response for ReplaceRuntimeServer
+type ReplaceRuntimeServerResponseDefaultHeaders struct {
+	ConfigurationVersion *string
+}
+
+type ReplaceRuntimeServerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RuntimeServer
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *DefaultError
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ReplaceRuntimeServerResponse400Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ReplaceRuntimeServerResponse404Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ReplaceRuntimeServerResponseDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceRuntimeServerResponse) GetJSON200() *RuntimeServer {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReplaceRuntimeServerResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReplaceRuntimeServerResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ReplaceRuntimeServerResponse) GetJSONDefault() *DefaultError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceRuntimeServerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceRuntimeServerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceRuntimeServerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceRuntimeServerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetStatsResponseDefaultHeaders the declared response headers of an HTTP default response for GetStats
+type GetStatsResponseDefaultHeaders struct {
+	ConfigurationVersion *string
+}
+
+type GetStatsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NativeStats
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *NativeStats
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *DefaultError
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *GetStatsResponseDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetStatsResponse) GetJSON200() *NativeStats {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetStatsResponse) GetJSON500() *NativeStats {
+	return r.JSON500
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetStatsResponse) GetJSONDefault() *DefaultError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetStatsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetStatsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetStatsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetStatsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartTransactionResponse201Headers the declared response headers of an HTTP 201 response for StartTransaction
 type StartTransactionResponse201Headers struct {
 	ConfigurationVersion *string
@@ -15520,6 +17002,81 @@ func (c *ClientWithResponses) ReplaceBackendWithResponse(ctx context.Context, na
 	return ParseReplaceBackendResponse(rsp)
 }
 
+// CreateServerBackendWithBodyWithResponse Add a new server
+//
+// Adds a new server in the specified Backend.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+func (c *ClientWithResponses) CreateServerBackendWithBodyWithResponse(ctx context.Context, parentName string, params *CreateServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServerBackendResponse, error) {
+	rsp, err := c.CreateServerBackendWithBody(ctx, parentName, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateServerBackendResponse(rsp)
+}
+
+// CreateServerBackendWithResponse Add a new server
+//
+// Adds a new server in the specified Backend.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /services/haproxy/configuration/backends/{parent_name}/servers (the `CreateServerBackend` operationId).
+func (c *ClientWithResponses) CreateServerBackendWithResponse(ctx context.Context, parentName string, params *CreateServerBackendParams, body CreateServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServerBackendResponse, error) {
+	rsp, err := c.CreateServerBackend(ctx, parentName, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateServerBackendResponse(rsp)
+}
+
+// DeleteServerBackendWithResponse Delete a server
+//
+// Deletes a server configuration by its name from the specified Backend.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `DeleteServerBackend` operationId).
+func (c *ClientWithResponses) DeleteServerBackendWithResponse(ctx context.Context, parentName string, name string, params *DeleteServerBackendParams, reqEditors ...RequestEditorFn) (*DeleteServerBackendResponse, error) {
+	rsp, err := c.DeleteServerBackend(ctx, parentName, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteServerBackendResponse(rsp)
+}
+
+// ReplaceServerBackendWithBodyWithResponse Replace a server
+//
+// Replaces a server configuration by its name in the specified Backend.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+func (c *ClientWithResponses) ReplaceServerBackendWithBodyWithResponse(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceServerBackendResponse, error) {
+	rsp, err := c.ReplaceServerBackendWithBody(ctx, parentName, name, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceServerBackendResponse(rsp)
+}
+
+// ReplaceServerBackendWithResponse Replace a server
+//
+// Replaces a server configuration by its name in the specified Backend.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /services/haproxy/configuration/backends/{parent_name}/servers/{name} (the `ReplaceServerBackend` operationId).
+func (c *ClientWithResponses) ReplaceServerBackendWithResponse(ctx context.Context, parentName string, name string, params *ReplaceServerBackendParams, body ReplaceServerBackendJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceServerBackendResponse, error) {
+	rsp, err := c.ReplaceServerBackend(ctx, parentName, name, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceServerBackendResponse(rsp)
+}
+
 // GetFrontendsWithResponse Return an array of frontends
 //
 // Returns an array of all configured frontends.
@@ -15653,6 +17210,51 @@ func (c *ClientWithResponses) GetAllRuntimeServerWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseGetAllRuntimeServerResponse(rsp)
+}
+
+// ReplaceRuntimeServerWithBodyWithResponse Replace server transient settings
+//
+// Replaces a server transient settings by it's name in the specified backend.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+func (c *ClientWithResponses) ReplaceRuntimeServerWithBodyWithResponse(ctx context.Context, parentName string, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceRuntimeServerResponse, error) {
+	rsp, err := c.ReplaceRuntimeServerWithBody(ctx, parentName, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceRuntimeServerResponse(rsp)
+}
+
+// ReplaceRuntimeServerWithResponse Replace server transient settings
+//
+// Replaces a server transient settings by it's name in the specified backend.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /services/haproxy/runtime/backends/{parent_name}/servers/{name} (the `ReplaceRuntimeServer` operationId).
+func (c *ClientWithResponses) ReplaceRuntimeServerWithResponse(ctx context.Context, parentName string, name string, body ReplaceRuntimeServerJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceRuntimeServerResponse, error) {
+	rsp, err := c.ReplaceRuntimeServer(ctx, parentName, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceRuntimeServerResponse(rsp)
+}
+
+// GetStatsWithResponse Gets stats
+//
+// Getting stats from the HAProxy.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /services/haproxy/stats/native (the `GetStats` operationId).
+func (c *ClientWithResponses) GetStatsWithResponse(ctx context.Context, params *GetStatsParams, reqEditors ...RequestEditorFn) (*GetStatsResponse, error) {
+	rsp, err := c.GetStats(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetStatsResponse(rsp)
 }
 
 // StartTransactionWithResponse Start a new transaction
@@ -16009,6 +17611,272 @@ func ParseReplaceBackendResponse(rsp *http.Response) (*ReplaceBackendResponse, e
 		response.Headers404 = &headers
 	case true:
 		var headers ReplaceBackendResponseDefaultHeaders
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateServerBackendResponse parses an HTTP response from a CreateServerBackendWithResponse call
+func ParseCreateServerBackendResponse(rsp *http.Response) (*CreateServerBackendResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateServerBackendResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Server
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Server
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest AlreadyExists
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest DefaultError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers CreateServerBackendResponse202Headers
+		if values := rsp.Header.Values("Reload-ID"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Reload-ID", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ReloadID = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers CreateServerBackendResponse400Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 409:
+		var headers CreateServerBackendResponse409Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers409 = &headers
+	case true:
+		var headers CreateServerBackendResponseDefaultHeaders
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteServerBackendResponse parses an HTTP response from a DeleteServerBackendWithResponse call
+func ParseDeleteServerBackendResponse(rsp *http.Response) (*DeleteServerBackendResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteServerBackendResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		break // No content-type
+
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest DefaultError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers DeleteServerBackendResponse202Headers
+		if values := rsp.Header.Values("Reload-ID"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Reload-ID", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ReloadID = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 404:
+		var headers DeleteServerBackendResponse404Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers404 = &headers
+	case true:
+		var headers DeleteServerBackendResponseDefaultHeaders
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReplaceServerBackendResponse parses an HTTP response from a ReplaceServerBackendWithResponse call
+func ParseReplaceServerBackendResponse(rsp *http.Response) (*ReplaceServerBackendResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceServerBackendResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Server
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Server
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest DefaultError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ReplaceServerBackendResponse202Headers
+		if values := rsp.Header.Values("Reload-ID"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Reload-ID", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ReloadID = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ReplaceServerBackendResponse400Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 404:
+		var headers ReplaceServerBackendResponse404Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers404 = &headers
+	case true:
+		var headers ReplaceServerBackendResponseDefaultHeaders
 		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -16496,6 +18364,139 @@ func ParseGetAllRuntimeServerResponse(rsp *http.Response) (*GetAllRuntimeServerR
 	switch {
 	case true:
 		var headers GetAllRuntimeServerResponseDefaultHeaders
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReplaceRuntimeServerResponse parses an HTTP response from a ReplaceRuntimeServerWithResponse call
+func ParseReplaceRuntimeServerResponse(rsp *http.Response) (*ReplaceRuntimeServerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceRuntimeServerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RuntimeServer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest DefaultError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 400:
+		var headers ReplaceRuntimeServerResponse400Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 404:
+		var headers ReplaceRuntimeServerResponse404Headers
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.Headers404 = &headers
+	case true:
+		var headers ReplaceRuntimeServerResponseDefaultHeaders
+		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ConfigurationVersion = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetStatsResponse parses an HTTP response from a GetStatsWithResponse call
+func ParseGetStatsResponse(rsp *http.Response) (*GetStatsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetStatsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NativeStats
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest NativeStats
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest DefaultError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case true:
+		var headers GetStatsResponseDefaultHeaders
 		if values := rsp.Header.Values("Configuration-Version"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Configuration-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

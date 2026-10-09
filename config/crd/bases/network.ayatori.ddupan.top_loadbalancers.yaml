@@ -67,6 +67,12 @@ spec:
                   description: LoadBalancerPort 是 VIP 上的一个 TCP 端口及其后端集合，类似 Octavia
                     listener + pool。
                   properties:
+                    drainTimeout:
+                      default: 30s
+                      description: |-
+                        DrainTimeout 是 endpoint 被移出集合后保留已有连接的上限；超时后剩余连接由代理
+                        旧 worker 服务至主机级 hard-stop-after。
+                      type: string
                     endpoints:
                       description: Endpoints 由消费方整组替换；为空时该端口拒绝连接。
                       items:

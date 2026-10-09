@@ -20,3 +20,8 @@ output-options:
     - deleteFrontend
     - getReloads
     - getAllRuntimeServer
+    - createServerBackend
+    - replaceServerBackend
+    - deleteServerBackend
+    - replaceRuntimeServer
+    - getStats

@@ -35,6 +35,17 @@ type Hosts struct {
 	ConnectTimeout time.Duration
 	// Resolvers 是 DNS endpoint 使用的 resolvers section 名称；为空时只在启动时解析。
 	Resolvers string
+	// Now 只供测试替换。
+	Now func() time.Time
+
+	drains drains
+}
+
+func (h *Hosts) now() time.Time {
+	if h.Now == nil {
+		return time.Now()
+	}
+	return h.Now()
 }
 
 // Observe 读取该 LoadBalancer 在 Host 上的配置，并与期望比较。
@@ -48,14 +59,26 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 	if err != nil {
 		return loadbalancer.ProxyFacts{}, err
 	}
-	wantFrontends, wantBackends := h.translate(uid, vip, ports)
+	wantFrontends, wantBackends, _ := h.translate(uid, vip, ports)
 	gotFrontends, gotBackends := owned(frontends, uid), owned(backends, uid)
 	facts := loadbalancer.ProxyFacts{
 		Present: len(gotFrontends)+len(gotBackends) > 0,
 		Matches: reflect.DeepEqual(gotFrontends, wantFrontends) && reflect.DeepEqual(gotBackends, wantBackends),
 	}
-	facts.Reload, facts.Message, err = lastReload(ctx, api)
-	return facts, err
+	if facts.Reload, facts.Message, err = lastReload(ctx, api); err != nil {
+		return loadbalancer.ProxyFacts{}, err
+	}
+	if facts.Matches && facts.Reload == loadbalancer.ReloadSucceeded {
+		var loaded bool
+		if facts.Matches, loaded, err = runtimeReady(ctx, api, wantBackends); err != nil {
+			return loadbalancer.ProxyFacts{}, err
+		}
+		if !loaded {
+			// 配置已写入但运行中的进程尚未加载：reload 已排期未执行。
+			facts.Matches, facts.Reload = true, loadbalancer.ReloadPending
+		}
+	}
+	return facts, nil
 }
 
 // Apply 在一个事务中写入该 LoadBalancer 的全部 section 并删除多余端口，提交后由代理 reload。
@@ -80,7 +103,15 @@ func (h *Hosts) apply(ctx context.Context, host loadbalancer.Host, uid, vip stri
 	if err != nil {
 		return err
 	}
-	wantFrontends, wantBackends := h.translate(uid, vip, ports)
+	wantFrontends, wantBackends, drainTimeouts := h.translate(uid, vip, ports)
+	frontends, backends, err := sections(ctx, api, nil)
+	if err != nil {
+		return err
+	}
+	if gotBackends := owned(backends, uid); sameStructure(owned(frontends, uid), wantFrontends, gotBackends, wantBackends) {
+		return h.reconcileServers(ctx, api, host.Name, gotBackends, wantBackends, drainTimeouts)
+	}
+	// 新建、端口增减或检查、超时等 section 级变化需要 reload：整段替换。
 	return transact(ctx, api, func(tx *string, frontends map[string]dataplaneapi.Frontend, backends map[string]dataplaneapi.Backend) error {
 		full := new(true)
 		for name, b := range wantBackends {
@@ -131,9 +162,10 @@ func (h *Hosts) client(host loadbalancer.Host) (*dataplaneapi.ClientWithResponse
 
 // translate 把期望配置翻译为 section。没有健康 endpoint 时 HAProxy 拒绝连接（fail-closed）；
 // server 以 fully-down 起始，必须连续通过检查才接收流量，被判失败时断开其已有连接。
-func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[string]dataplaneapi.Frontend, map[string]dataplaneapi.Backend) {
+func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[string]dataplaneapi.Frontend, map[string]dataplaneapi.Backend, map[string]time.Duration) {
 	frontends := map[string]dataplaneapi.Frontend{}
 	backends := map[string]dataplaneapi.Backend{}
+	drainTimeouts := map[string]time.Duration{}
 	for _, port := range ports {
 		// HAProxy 3.3 起 frontend 与 backend 不能同名。
 		name := sectionPrefix(uid) + strconv.Itoa(int(port.Port))
@@ -163,6 +195,7 @@ func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[strin
 			backend.Servers = &servers
 		}
 		backends[backendName] = backend
+		drainTimeouts[backendName] = port.DrainTimeout
 		frontends[name] = dataplaneapi.Frontend{
 			Name:           name,
 			Mode:           new(dataplaneapi.FrontendModeTcp),
@@ -171,7 +204,7 @@ func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[strin
 			Binds:          &map[string]dataplaneapi.Bind{"vip": {Name: "vip", Address: new(vip), Port: new(int(port.Port))}},
 		}
 	}
-	return frontends, backends
+	return frontends, backends, drainTimeouts
 }
 
 func (h *Hosts) server(endpoint loadbalancer.Endpoint, check loadbalancer.HealthCheck, proxy loadbalancer.ProxyProtocol) dataplaneapi.Server {
