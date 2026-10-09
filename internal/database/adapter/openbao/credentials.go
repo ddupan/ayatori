@@ -133,41 +133,56 @@ func (c *Credentials) read(ctx context.Context, path string) (*bao.KVSecret, err
 // Create 只创建从未存在过的路径，并验证回读七键与提交值完全一致。
 // 任何不确定写入都不返回凭据；上层必须停止供应并持久化冲突，不能重新生成密码。
 func (c *Credentials) Create(ctx context.Context, path string, credential credentialdomain.ApplicationCredential) error {
+	_, err := c.write(ctx, path, credential, 0)
+	return err
+}
+
+// Update 以已确认版本为 CAS 前提写入下一版本，并回读核对；返回新版本号。
+// 只用于改写连接信息等受管字段，确认版本之后已有其他写入时返回冲突，不覆盖。
+func (c *Credentials) Update(ctx context.Context, path string, confirmed int64, credential credentialdomain.ApplicationCredential) (int64, error) {
+	if confirmed < 1 {
+		return 0, ErrConflict
+	}
+	return c.write(ctx, path, credential, int(confirmed))
+}
+
+func (c *Credentials) write(ctx context.Context, path string, credential credentialdomain.ApplicationCredential, cas int) (int64, error) {
 	if !c.accepts(path) {
-		return ErrInvalidLocation
+		return 0, ErrInvalidLocation
 	}
 	if err := credential.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	if ctx.Err() != nil {
-		return ErrUnavailable
+		return 0, ErrUnavailable
 	}
 	data := credential.SecretData()
-	created, err := c.kv.Put(ctx, path, data, bao.WithCheckAndSet(0))
+	expected := cas + 1
+	written, err := c.kv.Put(ctx, path, data, bao.WithCheckAndSet(cas))
 	if err != nil {
 		// 明确的认证/权限拒绝没有发生写入，可以等待依赖恢复。
 		// SDK 的原始错误可能携带路径及响应体，不向外传播。
 		if response, ok := errors.AsType[*bao.ResponseError](err); ok {
 			switch response.StatusCode {
 			case http.StatusUnauthorized, http.StatusForbidden:
-				return ErrUnavailable
+				return 0, ErrUnavailable
 			case http.StatusBadRequest:
 				if slices.Contains(response.Errors, "check-and-set parameter did not match the current version") {
-					return ErrConflict
+					return 0, ErrConflict
 				}
 			}
 		}
-		return ErrUncertain
+		return 0, ErrUncertain
 	}
-	if created == nil || created.VersionMetadata == nil || created.VersionMetadata.Version != 1 {
-		return ErrUncertain
+	if written == nil || written.VersionMetadata == nil || written.VersionMetadata.Version != expected {
+		return 0, ErrUncertain
 	}
 	observed, err := c.kv.Get(ctx, path)
-	if err != nil || observed == nil || observed.VersionMetadata == nil || observed.VersionMetadata.Version != 1 {
-		return ErrUncertain
+	if err != nil || observed == nil || observed.VersionMetadata == nil || observed.VersionMetadata.Version != expected {
+		return 0, ErrUncertain
 	}
 	if !maps.Equal(data, observed.Data) {
-		return ErrUncertain
+		return 0, ErrUncertain
 	}
-	return nil
+	return int64(expected), nil
 }

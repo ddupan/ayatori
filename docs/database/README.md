@@ -157,8 +157,10 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 
 认证会话和凭据准备用例已接入 manager，但默认不启用外部写入。
 Database 已有 `status.credentialRef` 和 `status.credentialVersion` 的字段与 CEL 校验：
-固定位置、只在创建并回读成功后确认版本，二者写入后不可清空或修改。
+固定位置、只在创建并回读成功后确认版本；位置写入后不可清空或修改，版本不可清空或回退，只随
+连接信息改写前进。
 `ReadConfirmed` 按已确认版本检查最新 KV 值，删除或版本漂移报 Conflict，不读取旧版本掩盖变化。
+已确认凭据只有连接信息与 Instance 不一致时，`Update` 以确认版本为 CAS 写入下一版本并回读核对。
 测试 token 只用于临时 fixture，不是生产静态 token 配置接口。
 
 ### 凭据准备闭环
@@ -280,10 +282,10 @@ Released 资源已具备导入成功的全部确认（OID、凭据位置与版�
 来源不变：动态供应的资源重新开放后仍可使用 Delete 回收。旧使用者已持有的密码不会因此失效；
 如需改密，由管理员在清除 `tenantRef` 前人工处理（Bao 版本变化会被视为漂移并报 Conflict）。
 
-导入与重新开放都由 `DatabaseReconciler`（需启用凭据准备与资源供应）只读验证，不再创建对象。
+导入与重新开放都由 `DatabaseReconciler`（需启用凭据准备与资源供应）验证，不再创建对象。
 导入在全部通过后首次登记：
 
-1. 读取 `spec.credentialRef` 最新版本，内容须与 database、loginRole 与 Instance endpoint 一致；
+1. 读取 `spec.credentialRef` 最新版本，内容须与 database、loginRole 一致；
 2. 数据库与角色存在，owner 就是 loginRole，管理账号对该库有 CONNECT；
 3. Tenant 申请的扩展已安装（导入不安装扩展）；
 4. 用该凭据实际登录目标库。
@@ -291,6 +293,8 @@ Released 资源已具备导入成功的全部确认（OID、凭据位置与版�
 登记把本轮观察到的 OID、凭据版本与 Instance UID 写入 status，`status.phase=Available`、
 `Ready=True`；导入本身就是管理员对该名称的显式授权。之后每轮按确认身份重新验证：对象重建、
 owner 变化或凭据版本漂移报 Conflict。导入不改密码、owner 或权限，不装扩展；回收只支持 Retain。
+管理员显式声明凭据位置即把该凭据交由本资源管理：登记后连接信息与 Instance 不一致时，与动态
+供应相同以同一密码改写连接信息（首次登记仍只读，下一轮改写）。
 Tenant 以 `databaseRef` 申请 Available 的导入资源，绑定后同样公布凭据位置。
 
 ## OpenBao Kubernetes 认证会话

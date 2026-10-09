@@ -35,6 +35,7 @@ type CredentialBackend interface {
 	ProvisionLocation(databaseUID string) (credential.Location, error)
 	ReadCredential(ctx context.Context, location credential.Location, version int64) (credential.ApplicationCredential, error)
 	CreateCredential(ctx context.Context, location credential.Location, value credential.ApplicationCredential) (int64, error)
+	UpdateCredential(ctx context.Context, location credential.Location, confirmed int64, value credential.ApplicationCredential) (int64, error)
 	// ReadLatestCredential 只用于导入登记前读取管理员声明位置的最新版本。
 	ReadLatestCredential(ctx context.Context, location credential.Location) (credential.ApplicationCredential, int64, error)
 	// DestroyCredential 只在 Delete 回收时永久删除固定位置的全部版本。
@@ -128,6 +129,9 @@ func (r *DatabaseReconciler) reconcile(ctx context.Context, state *databaseState
 	case database.VerifyCredential:
 		value, err = r.Credentials.ReadCredential(ctx, db.CredentialLocation(), db.CredentialVersion())
 		db.VerifyCredential(value, err)
+		if r.rewriteCredential(ctx, db) {
+			return r.save(ctx, state, db, false)
+		}
 	}
 	if r.PostgreSQL == nil || db.PlanResources() == database.Wait {
 		return r.save(ctx, state, db, false)
@@ -180,7 +184,11 @@ func (r *DatabaseReconciler) importDatabase(ctx context.Context, state *database
 	if err == nil {
 		facts, err = r.PostgreSQL.InspectResources(ctx, target, management, db)
 	}
-	if db.ObserveImport(value, version, credentialErr, facts, err) == database.InspectExtensions {
+	action := db.ObserveImport(value, version, credentialErr, facts, err)
+	if r.rewriteCredential(ctx, db) {
+		return r.save(ctx, state, db, true)
+	}
+	if action == database.InspectExtensions {
 		extensions, err := r.PostgreSQL.InspectExtensions(ctx, target, management, db)
 		if db.ObserveExtensions(extensions, err) == database.VerifyLogin {
 			db.LoginVerified(r.PostgreSQL.VerifyLogin(ctx, target, db, value))
@@ -435,4 +443,14 @@ func (r *DatabaseReconciler) databaseRequestsForInstance(ctx context.Context, ob
 		}
 	}
 	return requests
+}
+
+// rewriteCredential 执行本轮判定的连接信息改写；返回 true 表示本轮已做外部写入，应直接保存结果。
+func (r *DatabaseReconciler) rewriteCredential(ctx context.Context, db *database.Database) bool {
+	value, ok := db.CredentialRewrite()
+	if !ok {
+		return false
+	}
+	db.CredentialRewritten(r.Credentials.UpdateCredential(ctx, db.CredentialLocation(), db.CredentialVersion(), value))
+	return true
 }

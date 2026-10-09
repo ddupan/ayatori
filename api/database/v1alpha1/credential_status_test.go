@@ -41,11 +41,12 @@ func testCredentialStatus(t *testing.T, client ctrlclient.Client) {
 		t.Fatalf("旧 resourceVersion 不得覆盖确认结果: %v", err)
 	}
 	testCredentialStatusRemoval(t, client, database)
-	for _, version := range []int64{0, -1, 2} {
+	// 确认版本只能前进（改写连接信息产生下一版本），前进的情形见 resource_status_test。
+	for _, version := range []int64{0, -1} {
 		changed := database.DeepCopy()
 		changed.Status.CredentialVersion = version
 		if err := client.Status().Update(t.Context(), changed); !apierrors.IsInvalid(err) {
-			t.Fatalf("不可移除或更改确认版本 %d: %v", version, err)
+			t.Fatalf("不可移除或回退确认版本 %d: %v", version, err)
 		}
 	}
 	database.Status.Conditions = []metav1.Condition{{

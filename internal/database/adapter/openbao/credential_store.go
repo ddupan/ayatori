@@ -36,6 +36,14 @@ func (c *Credentials) CreateCredential(ctx context.Context, location credentiald
 	return 1, nil
 }
 
+// UpdateCredential 以确认版本为前提写入下一版本（改写连接信息），返回新版本号。
+func (c *Credentials) UpdateCredential(ctx context.Context, location credentialdomain.Location, confirmed int64, credential credentialdomain.ApplicationCredential) (int64, error) {
+	if location.Mount != c.mount {
+		return 0, ErrInvalidLocation
+	}
+	return c.Update(ctx, location.Path, confirmed, credential)
+}
+
 // DestroyCredential 永久删除固定位置的全部版本与 metadata，并回读确认已不存在。
 // 只在 Delete 回收时调用；位置必须是本适配器配置的 mount 与前缀。
 func (c *Credentials) DestroyCredential(ctx context.Context, location credentialdomain.Location) error {

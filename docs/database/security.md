@@ -77,5 +77,6 @@ Kubernetes RBAC 应把 Instance 管理、Database 导入、Released 重新开放
 - 日志、Event、Condition、metrics、CR 导出和测试 artifact 不含 canary password/token。
 - 伪造 COMMENT、同名 database/role 或错误 UID metadata 均不能绕过 Conflict。
 - Delete 只销毁 Database 已确认管理范围内且获得删除授权的资源。
-- 导入检查不改密码/owner，Released 不自动授权新使用者；旧访问处理后才能重新交付。
+- 导入检查不改密码/owner（只随 Instance 改写凭据中的连接信息），Released 不自动授权新使用者；
+  旧访问处理后才能重新交付。
 - 导入默认 Retain；角色/凭据的管理与删除范围未明确时不得扩大操作范围。
