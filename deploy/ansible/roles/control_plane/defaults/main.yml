@@ -21,6 +21,10 @@ management_credential_path: infra/postgresql/ayatori/{{ ayatori_environment }}
 k0s_version: v1.36.4+k0s.1
 k0s_sha256: 18c304d53cdd70095e99c6b859b269b4fef0bb84579d7e7185271a9135694a31
 # 只保留 apiserver、etcd、只开 namespace 控制器的 kube-controller-manager 与 k0s 自身 RBAC。
+# k0s 默认 etcd=info 且输出自身 gRPC 客户端 info 日志，约占控制面日志量九成，持续写 journald。
+k0s_controller_flags:
+  - --logging=etcd=warn
+  - --verbose=false
 k0s_disabled_components:
   - autopilot
   - control-api

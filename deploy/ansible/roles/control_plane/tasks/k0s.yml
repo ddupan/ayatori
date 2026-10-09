@@ -23,13 +23,30 @@
     mode: "0600"
   notify: 重启 k0s
 
-# ponytail: disable-components 写入 install 生成的 unit；修改组件列表需先 k0s reset 再重装。
+# 启动参数写在 install 生成的 unit 中，且 k0s 会改写其格式（如展开 --logging）。以记录的
+# 安装参数判断是否需要 --force 重新生成 unit，参数变化时重启。
+# ponytail: 修改 k0s_disabled_components 仍需先 k0s reset 再重装，--force 只更新 unit。
+- name: 记录 k0s 安装参数
+  ansible.builtin.copy:
+    content: |
+      --config /etc/k0s/k0s.yaml --disable-components {{ k0s_disabled_components | join(',') }} {{ k0s_controller_flags | join(' ') }}
+    dest: "{{ deploy_state_dir }}/k0s-install-args"
+    mode: "0600"
+  register: k0s_install_args
+
+- name: 检查 k0s controller unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k0scontroller.service
+  register: k0s_unit
+
 - name: 安装 k0s controller 服务
-  ansible.builtin.command: >-
-    k0s install controller --config /etc/k0s/k0s.yaml
-    --disable-components {{ k0s_disabled_components | join(',') }}
-  args:
-    creates: /etc/systemd/system/k0scontroller.service
+  ansible.builtin.command: k0s install controller --force {{ k0s_install_args_line }}
+  vars:
+    k0s_install_args_line: >-
+      --config /etc/k0s/k0s.yaml --disable-components {{ k0s_disabled_components | join(',') }} {{ k0s_controller_flags | join(' ') }}
+  when: k0s_install_args is changed or not k0s_unit.stat.exists
+  changed_when: true
+  notify: 重启 k0s
 
 - name: 启动 k0s controller
   ansible.builtin.systemd_service:
