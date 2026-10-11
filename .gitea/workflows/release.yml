@@ -12,8 +12,7 @@ jobs:
     runs-on: [self-hosted, pod]
     timeout-minutes: 30
     env:
-      # zot 推送入口的 token realm/service 仍是 ad 名，迁到 lab 后再切换。
-      PUSH_REGISTRY: zot-push.ad.ddupan.top
+      PUSH_REGISTRY: zot-push.lab.ddupan.top
       PULL_REGISTRY: zot.lab.ddupan.top
       IMAGE_REPOSITORY: panxiao81/ayatori-manager
       SPIRE_AGENT_SOCKET: /run/spire/agent-sockets/spire-agent.sock

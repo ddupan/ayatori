@@ -23,7 +23,7 @@ deploy/
    直接部署验证。
 2. 在该提交上打 **annotated** tag 并推送，tag 说明写本版变更（用户可见的行为、部署注意事项），
    它就是 Gitea Release 的发布说明。Release 工作流校验两处版本与 tag 一致，用 buildx 构建 manager
-   镜像，以同名 tag 推送 `zot-push.ad.ddupan.top/panxiao81/ayatori-manager`（部署从 `zot.lab.ddupan.top` 拉取），再以 tag 说明加镜像 digest
+   镜像，以同名 tag 推送 `zot-push.lab.ddupan.top/panxiao81/ayatori-manager`（部署从 `zot.lab.ddupan.top` 拉取），再以 tag 说明加镜像 digest
    创建（重发时更新）Gitea Release。
 
 完全不可用的 release 不升版本：修复合并后删除并在修复提交上重打同名 tag，Release 覆盖同名
