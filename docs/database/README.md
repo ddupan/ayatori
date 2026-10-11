@@ -244,8 +244,9 @@ Ayatori 的凭据交付止于 OpenBao（[ADR-0010](../decisions/0010-credential-
 以及设置 `--database-credential-url-base` 时不含认证信息的 `credentialURL`。
 
 Tenant 依次报告 `CredentialsPending`（凭据未确认）、`DatabaseNotReady`（已公布位置，等待资源、
-扩展与应用登录验证），最后 `Ready=True/CredentialsAvailable`。消费方集群按公布的位置与版本自行
-投射（例如固定该版本的 ExternalSecret）；其读取 policy 在接入时单独授予。
+扩展与应用登录验证），最后 `Ready=True/CredentialsAvailable`。消费方集群按公布的位置自行
+投射（例如读取最新版本的 ExternalSecret，不固定版本，见[部署参数](deployment.md)）；其读取 policy
+在接入时单独授予。
 
 ## 释放与回收
 

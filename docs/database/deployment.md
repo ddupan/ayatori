@@ -147,9 +147,11 @@ path "secret/metadata/applications/*" {
 
 管理凭据由管理员维护并放入 controller namespace 的 Secret；controller 只读，不创建或修改。
 应用凭据固定七键：`username`、`password`、`database`、`host`、`hostaddr`、`port`、`sslmode`。
-Ayatori 不投射应用凭据：消费方集群按 Tenant status 的 `credentialRef`/`credentialVersion`
-自行读取（例如其 GitOps 中的 ExternalSecret 固定该版本），读取所需的 Bao policy 在接入时
-单独授予，不使用能读取整个 tenant base path 的共享身份。
+Ayatori 不投射应用凭据：消费方集群按 Tenant status 的 `credentialRef` 自行读取最新版本
+（例如其 GitOps 中的 ExternalSecret 不写 `version`）。该路径只由 Ayatori 写入，每个版本都可用；
+Instance endpoint 变化时以相同密码改写为新版本，固定版本会让消费方停在旧 endpoint，且 KV v2
+只保留有限版本。`credentialVersion` 用于观察。读取所需的 Bao policy 在接入时单独授予，不使用
+能读取整个 tenant base path 的共享身份。
 
 ## Kubernetes RBAC
 
