@@ -6,7 +6,7 @@
 # Release 工作流校验它与 galaxy.yml、git tag 一致。
 ayatori_version: v0.2.0
 # 完全不可用的 release 不升版本而是重发同名 tag，部署时重新拉取并按镜像 ID 变化重启。
-ayatori_image: zot.ad.ddupan.top/panxiao81/ayatori-manager:{{ ayatori_version }}
+ayatori_image: zot.lab.ddupan.top/panxiao81/ayatori-manager:{{ ayatori_version }}
 
 ayatori_api_address: "{{ ansible_default_ipv4.address }}"
 ayatori_api_sans: ["{{ ansible_host | default(inventory_hostname) }}"]
@@ -61,7 +61,7 @@ node_exporter_sha256: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f
 node_exporter_textfile_dir: /var/lib/node-exporter/textfile
 
 ayatori_repository: https://git.ddupan.top/panxiao81/ayatori.git
-openbao_address: https://bao.ad.ddupan.top:8200
+openbao_address: https://bao.lab.ddupan.top:8200
 control_namespace: ayatori-system
 deploy_state_dir: /var/lib/ayatori-deploy
 # 部署方须把独立卷挂载到此处（homelab-infra 为 Incus custom volume）。
