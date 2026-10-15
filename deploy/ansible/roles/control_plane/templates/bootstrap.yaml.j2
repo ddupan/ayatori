@@ -133,6 +133,7 @@ spec:
   prune: true
   postBuild:
     substitute:
+      OPENBAO_ADDRESS: {{ openbao_address | to_json }}
       OPENBAO_KUBERNETES_MOUNT: {{ openbao_kubernetes_mount | to_json }}
       OPENBAO_EXTERNAL_SECRETS_ROLE: {{ openbao_external_secrets_role | to_json }}
       MANAGEMENT_CREDENTIAL_PATH: {{ management_credential_path | to_json }}
