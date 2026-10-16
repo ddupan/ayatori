@@ -14,7 +14,7 @@
 | Pool | 当前环境可分配的 VIP 范围，首版来自 controller 配置 |
 | Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 LB agent，首版来自 controller 配置 |
 | Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、是否满足宣告规则 |
-| 宣告规则 | Host 宣告某 VIP /32，当且仅当本机 HAProxy 应答且绑定该 VIP 的 frontend 全部处于 OPEN |
+| 宣告规则 | Host 宣告某 VIP /32，当且仅当本机 HAProxy 应答、绑定该 VIP 的 frontend 全部处于 OPEN，且内核把该 VIP 当作本机地址 |
 | LB agent | 每台 Host 上内嵌 GoBGP 的进程，按宣告规则自行宣告与撤回，不经 controller |
 | Hostname | Ayatori 为 LoadBalancer 生成并维护的域名，A 记录指向其 VIP |
 
@@ -181,6 +181,12 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
   `option socket-stats` 后每个 bind 单独成行并带地址；bind 行与其 frontend 行都为 `OPEN` 才算
   OPEN——`disable frontend` 后 frontend 行为 `PAUSED`，bind 行仍是 `OPEN`（HAProxy 3.x 实测）。
 - 以宣告规则计算应宣告集合，与本地 RIB 中本机添加的路径比较，只增删差异。HAProxy 不应答时撤回全部。
+- VIP 由 agent 加到它独占的 dummy 接口（缺省 `ayatori-vip`）上的 /32。`ip_nonlocal_bind` 只允许
+  HAProxy 在地址存在前 bind，并不会让内核接收发往 VIP 的包；没有这个地址时路由器送来的流量被
+  丢弃（主机不转发）。接口上的地址恰为有 bind 的 VIP（不论 frontend 是否 OPEN：禁用期间已有
+  连接继续服务），其余删除；HAProxy 不应答时不改动地址。是否本机地址以内核路由查询（类型
+  `local`）为准。顺序：撤回在删地址之前，地址在宣告之前——新 VIP 本轮加地址，下一轮宣告。
+  agent 退出时地址保留：会话已断，路由器不再送来流量。
 - 全局 import/export 策略只接受 VIP 段内的 /32、默认拒绝。GoBGP 的全局 import 策略也作用于本机
   添加的路径，所以 import 不能是单纯的 reject；非 route-server 模式下邻居级策略被忽略。
 - 只主动建立会话（不监听 179），路由器侧为 passive。
@@ -198,6 +204,7 @@ neighbors:
     asn: 65002
 vipPool: 10.62.0.0/24
 haproxySocket: /run/haproxy/admin.sock
+vipInterface: ayatori-vip
 interval: 2s
 metricsAddress: 10.60.0.30:9641
 ```
@@ -248,7 +255,8 @@ LB 主机部署（homelab-infra）须保证：
 
 - `haproxy.cfg` 中 `lb_` 前缀 section 只由 Ayatori 写入；
 - `net.ipv4.ip_nonlocal_bind=1`，frontend 可在宣告前绑定 VIP；
-- LB agent 以 `BindsTo=haproxy.service` 运行，可读写 HAProxy 的 admin stats socket；
+- LB agent 以 `BindsTo=haproxy.service` 运行，可读写 HAProxy 的 admin stats socket，并有
+  `CAP_NET_ADMIN`（管理 VIP dummy 接口）；
 - reload 前以 `server-state-file` 保存 server 状态，否则每次 reload 所有 server 回到
   `fully-down`，主机上全部 LB 中断约 rise × interval；
 - `hard-stop-after` 限定旧 worker 排空时长；
@@ -289,7 +297,9 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 - envtest：Address 并发认领冲突、同名重建、finalizer、controller 重启后从 status 与 Address 恢复。
 - adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、PowerDNS。
 - agent 集成测试：容器中的真实 HAProxy 与进程内作为对端的 GoBGP：后端全部失败仍宣告；frontend
-  禁用后撤回、恢复后重新宣告；agent 停止后对端撤回、重启后首轮补回；HAProxy 停止后撤回全部。
+  禁用后撤回、恢复后重新宣告；VIP 不是本机地址时不宣告；agent 停止后对端撤回、重启后首轮补回；
+  HAProxy 停止后撤回全部。dummy 接口在一次性容器的网络 namespace 中以 `CAP_NET_ADMIN` 验证
+  （`make test-lb-agent-netlink`）。
 
 ## 实现进度
 

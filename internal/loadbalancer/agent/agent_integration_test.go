@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,14 +195,48 @@ func receives(t *testing.T, router *server.BgpServer, want ...netip.Addr) func()
 	}
 }
 
-func startAgent(t *testing.T, port int) context.CancelFunc {
+// fakeVIPs 代替 dummy 接口（需要 CAP_NET_ADMIN，由 TestDummyInterface 在容器中验证）。
+// refused 中的地址无法成为本机地址。
+type fakeVIPs struct {
+	mu      sync.Mutex
+	held    map[netip.Addr]bool
+	refused map[netip.Addr]bool
+}
+
+func newFakeVIPs() *fakeVIPs {
+	return &fakeVIPs{held: map[netip.Addr]bool{}, refused: map[netip.Addr]bool{}}
+}
+
+func (f *fakeVIPs) Sync(want []netip.Addr) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held = map[netip.Addr]bool{}
+	for _, vip := range want {
+		f.held[vip] = !f.refused[vip]
+	}
+	return nil
+}
+
+func (f *fakeVIPs) Local(vip netip.Addr) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.held[vip]
+}
+
+func (f *fakeVIPs) refuse(vip netip.Addr, refused bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refused[vip] = refused
+}
+
+func startAgent(t *testing.T, port int, vips agent.VIPs) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	a, err := agent.New(ctx, agent.Config{
 		ASN: 65100, RouterID: "10.60.0.30", VIPPool: "10.62.0.0/24", HAProxySocket: socket,
 		Neighbors: []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
 		Interval:  metav1.Duration{Duration: 200 * time.Millisecond},
-	}, prometheus.NewRegistry(), slog.New(slog.DiscardHandler))
+	}, vips, prometheus.NewRegistry(), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +251,8 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 	stopHAProxy := startHAProxy(t)
 	port := freePort(t)
 	router := startRouter(t, port)
-	stopAgent := startAgent(t, port)
+	vips := newFakeVIPs()
+	stopAgent := startAgent(t, port, vips)
 
 	waitFor(t, "后端全部失败时仍宣告 VIP 段内的全部 VIP", receives(t, router, vip, another))
 
@@ -231,10 +267,17 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 		waitFor(t, "恢复后重新宣告", receives(t, router, vip, another))
 	})
 
+	t.Run("VIP 不是本机地址时不宣告", func(t *testing.T) {
+		vips.refuse(another, true)
+		waitFor(t, "无法接收流量的 VIP 撤回", receives(t, router, vip))
+		vips.refuse(another, false)
+		waitFor(t, "恢复后重新宣告", receives(t, router, vip, another))
+	})
+
 	t.Run("agent 重启后首轮即补回", func(t *testing.T) {
 		stopAgent()
 		waitFor(t, "agent 停止后对端撤回全部路径", receives(t, router))
-		stopAgent = startAgent(t, port)
+		stopAgent = startAgent(t, port, vips)
 		waitFor(t, "重启后补回", receives(t, router, vip, another))
 	})
 

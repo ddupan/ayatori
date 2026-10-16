@@ -81,6 +81,17 @@ lint-database-integration: golangci-lint ## 检查集成测试构建标签下的
 test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API 容器验证 LoadBalancer。
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
 		go test -tags=integration -race -count=1 ./internal/loadbalancer/...
+	$(MAKE) test-lb-agent-netlink
+
+# 与 manager 镜像同一 base；测试二进制是静态链接的，root 只在容器自己的网络 namespace 内。
+LB_AGENT_NETLINK_IMAGE ?= gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+
+.PHONY: test-lb-agent-netlink
+test-lb-agent-netlink: ## 在一次性容器的网络 namespace 中以 CAP_NET_ADMIN 验证 LB agent 的 dummy 接口。
+	CGO_ENABLED=0 go test -c -tags=integration -o "$(LOCALBIN)/lb-agent.test" ./internal/loadbalancer/agent
+	docker run --rm --user 0 --cap-add NET_ADMIN -e AYATORI_NETLINK_TEST=1 \
+		-v "$(LOCALBIN)/lb-agent.test:/lb-agent.test:ro" --entrypoint /lb-agent.test \
+		$(LB_AGENT_NETLINK_IMAGE) -test.run '^TestDummyInterface$$' -test.v
 
 .PHONY: lint-loadbalancer-integration
 lint-loadbalancer-integration: golangci-lint ## 检查集成测试构建标签下的 LoadBalancer 代码。

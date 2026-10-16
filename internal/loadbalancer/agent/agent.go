@@ -27,6 +27,8 @@ type Config struct {
 	// VIPPool 是本环境的 VIP 段；只有 bind 地址在段内的 frontend 参与宣告。
 	VIPPool       string `json:"vipPool"`
 	HAProxySocket string `json:"haproxySocket"`
+	// VIPInterface 是 agent 独占、承载 VIP /32 的 dummy 接口，缺省 ayatori-vip。
+	VIPInterface string `json:"vipInterface"`
 	// Interval 是收敛间隔，也是 frontend 消失到撤回的最长延迟。
 	Interval       metav1.Duration `json:"interval"`
 	MetricsAddress string          `json:"metricsAddress"`
@@ -52,6 +54,9 @@ func LoadConfig(path string) (Config, error) {
 	if config.Interval.Duration == 0 {
 		config.Interval.Duration = 2 * time.Second
 	}
+	if config.VIPInterface == "" {
+		config.VIPInterface = "ayatori-vip"
+	}
 	return config, config.validate()
 }
 
@@ -76,6 +81,9 @@ func (c Config) validate() error {
 	}
 	if c.HAProxySocket == "" {
 		errs = append(errs, errors.New("haproxySocket is required"))
+	}
+	if len(c.VIPInterface) > 15 {
+		errs = append(errs, errors.New("vipInterface must be at most 15 characters"))
 	}
 	if c.Interval.Duration < 0 {
 		errs = append(errs, errors.New("interval must be positive"))
@@ -118,11 +126,13 @@ type Agent struct {
 	config  Config
 	pool    address.Pool
 	speaker *Speaker
+	vips    VIPs
 	metrics *metrics
 	logger  *slog.Logger
 }
 
-func New(ctx context.Context, config Config, registry prometheus.Registerer, logger *slog.Logger) (*Agent, error) {
+// New 启动 speaker；vips 在生产中为 DummyInterface{Name: config.VIPInterface}。
+func New(ctx context.Context, config Config, vips VIPs, registry prometheus.Registerer, logger *slog.Logger) (*Agent, error) {
 	pool, err := config.pool()
 	if err != nil {
 		return nil, err
@@ -131,7 +141,7 @@ func New(ctx context.Context, config Config, registry prometheus.Registerer, log
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{config: config, pool: pool, speaker: speaker, metrics: newMetrics(registry), logger: logger}, nil
+	return &Agent{config: config, pool: pool, speaker: speaker, vips: vips, metrics: newMetrics(registry), logger: logger}, nil
 }
 
 func (a *Agent) Run(ctx context.Context) {
@@ -157,10 +167,20 @@ func (a *Agent) reconcile(ctx context.Context) {
 		a.logger.Warn("HAProxy 不应答，撤回全部 VIP", "error", err)
 	}
 	a.metrics.haproxyUp.Set(boolGauge(err == nil))
-	want := loadbalancer.Announcements(a.pool, frontends)
-	if err := a.speaker.Sync(want); err != nil {
-		a.logger.Error("收敛宣告失败", "error", err)
-	} else {
+	want := loadbalancer.Announcements(a.pool, frontends, a.vips.Local)
+	synced := a.speaker.Sync(want)
+	if synced != nil {
+		a.logger.Error("收敛宣告失败", "error", synced)
+	}
+	// 地址在撤回之后才删除，在宣告之前就已存在：新 VIP 本轮成为本机地址，下一轮才宣告。
+	// HAProxy 不应答时不知道哪些 VIP 仍有 bind，地址保持不变。
+	if err == nil {
+		if err := a.vips.Sync(loadbalancer.Bound(a.pool, frontends)); err != nil {
+			a.logger.Error("收敛 VIP 地址失败", "error", err)
+			synced = err
+		}
+	}
+	if synced == nil {
 		a.metrics.lastSuccess.SetToCurrentTime()
 	}
 	a.observe(ctx)
