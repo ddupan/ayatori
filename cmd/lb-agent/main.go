@@ -36,7 +36,7 @@ func run(path string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	registry := prometheus.NewRegistry()
-	a, err := agent.New(ctx, config, agent.DummyInterface{Name: config.VIPInterface}, registry, logger)
+	a, err := agent.New(ctx, config, agent.Loopback{}, registry, logger)
 	if err != nil {
 		return err
 	}

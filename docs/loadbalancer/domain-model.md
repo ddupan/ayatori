@@ -181,11 +181,13 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
   `option socket-stats` 后每个 bind 单独成行并带地址；bind 行与其 frontend 行都为 `OPEN` 才算
   OPEN——`disable frontend` 后 frontend 行为 `PAUSED`，bind 行仍是 `OPEN`（HAProxy 3.x 实测）。
 - 以宣告规则计算应宣告集合，与本地 RIB 中本机添加的路径比较，只增删差异。HAProxy 不应答时撤回全部。
-- VIP 由 agent 加到它独占的 dummy 接口（缺省 `ayatori-vip`）上的 /32。`ip_nonlocal_bind` 只允许
-  HAProxy 在地址存在前 bind，并不会让内核接收发往 VIP 的包；没有这个地址时路由器送来的流量被
-  丢弃（主机不转发）。接口上的地址恰为有 bind 的 VIP（不论 frontend 是否 OPEN：禁用期间已有
-  连接继续服务），其余删除；HAProxy 不应答时不改动地址。是否本机地址以内核路由查询（类型
-  `local`）为准。顺序：撤回在删地址之前，地址在宣告之前——新 VIP 本轮加地址，下一轮宣告。
+- VIP 由 agent 以 /32 加到 lo 上。`ip_nonlocal_bind` 只允许 HAProxy 在地址存在前 bind，并不会
+  让内核接收发往 VIP 的包；没有这个地址时路由器送来的流量被丢弃（主机不转发）。不用 dummy 接口：
+  LB 主机是 unprivileged LXC，不能加载 dummy 模块（PVE 内核为 `CONFIG_DUMMY=m`，默认未加载）。
+  lo 上除 `127.0.0.1/8` 外的 IPv4 地址都归 agent：恰为有 bind 的 VIP（不论 frontend 是否 OPEN：
+  禁用期间已有连接继续服务），其余删除；IPv6 不动；HAProxy 不应答时不改动地址。是否本机地址以
+  内核路由查询（类型 `local`）为准。顺序：撤回在删地址之前，地址在宣告之前——新 VIP 本轮加地址，
+  下一轮宣告。
   agent 退出时地址保留：会话已断，路由器不再送来流量。
 - 全局 import/export 策略只接受 VIP 段内的 /32、默认拒绝。GoBGP 的全局 import 策略也作用于本机
   添加的路径，所以 import 不能是单纯的 reject；非 route-server 模式下邻居级策略被忽略。
@@ -204,7 +206,6 @@ neighbors:
     asn: 65002
 vipPool: 10.62.0.0/24
 haproxySocket: /run/haproxy/admin.sock
-vipInterface: ayatori-vip
 interval: 2s
 metricsAddress: 10.60.0.30:9641
 ```
@@ -256,7 +257,7 @@ LB 主机部署（homelab-infra）须保证：
 - `haproxy.cfg` 中 `lb_` 前缀 section 只由 Ayatori 写入；
 - `net.ipv4.ip_nonlocal_bind=1`，frontend 可在宣告前绑定 VIP；
 - LB agent 以 `BindsTo=haproxy.service` 运行，可读写 HAProxy 的 admin stats socket，并有
-  `CAP_NET_ADMIN`（管理 VIP dummy 接口）；
+  `CAP_NET_ADMIN`（管理 lo 上的 VIP）；lo 上除 `127.0.0.1/8` 外的 IPv4 地址不得由其他组件写入；
 - reload 前以 `server-state-file` 保存 server 状态，否则每次 reload 所有 server 回到
   `fully-down`，主机上全部 LB 中断约 rise × interval；
 - `hard-stop-after` 限定旧 worker 排空时长；
@@ -298,7 +299,7 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 - adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、PowerDNS。
 - agent 集成测试：容器中的真实 HAProxy 与进程内作为对端的 GoBGP：后端全部失败仍宣告；frontend
   禁用后撤回、恢复后重新宣告；VIP 不是本机地址时不宣告；agent 停止后对端撤回、重启后首轮补回；
-  HAProxy 停止后撤回全部。dummy 接口在一次性容器的网络 namespace 中以 `CAP_NET_ADMIN` 验证
+  HAProxy 停止后撤回全部。lo 上的 VIP 管理在一次性容器的网络 namespace 中以 `CAP_NET_ADMIN` 验证
   （`make test-lb-agent-netlink`）。
 
 ## 实现进度

@@ -18,22 +18,25 @@ type VIPs interface {
 	Local(netip.Addr) bool
 }
 
-// DummyInterface 是 agent 独占的 dummy 接口：其上的 /32 使内核把路由器送来的 VIP 流量交给
-// HAProxy（ip_nonlocal_bind 只允许 bind，不会让内核接收这些包）。接口上的地址全部由 agent 管理，
-// 不属于期望集合的地址会被删除。agent 退出时地址保留：会话断开后路由器不再送来流量，下次启动
-// 首轮即按 HAProxy 现状收敛。
-type DummyInterface struct {
-	Name string
-}
+// loopbackDefault 是 lo 上唯一不归 agent 管理的 IPv4 地址。
+var loopbackDefault = netip.MustParsePrefix("127.0.0.1/8")
 
-func (d DummyInterface) Sync(want []netip.Addr) error {
-	link, err := d.link()
+// Loopback 把 VIP 以 /32 加到 lo 上，使内核把路由器送来的 VIP 流量交给 HAProxy
+// （ip_nonlocal_bind 只允许 bind，不会让内核接收这些包）。用 lo 而不是 dummy 接口：LB 主机是
+// unprivileged LXC，不能加载 dummy 模块。
+//
+// 部署契约：lo 上除 127.0.0.1/8 外的 IPv4 地址都归 agent，不属于期望集合的会被删除；IPv6 不动。
+// agent 退出时地址保留：会话断开后路由器不再送来流量，下次启动首轮即按 HAProxy 现状收敛。
+type Loopback struct{}
+
+func (Loopback) Sync(want []netip.Addr) error {
+	link, err := netlink.LinkByName("lo")
 	if err != nil {
-		return err
+		return fmt.Errorf("find lo: %w", err)
 	}
 	have, err := netlink.AddrList(link, netlink.FAMILY_V4)
 	if err != nil {
-		return fmt.Errorf("list addresses on %s: %w", d.Name, err)
+		return fmt.Errorf("list addresses on lo: %w", err)
 	}
 	wanted := map[netip.Addr]bool{}
 	for _, vip := range want {
@@ -42,13 +45,16 @@ func (d DummyInterface) Sync(want []netip.Addr) error {
 	present := map[netip.Addr]bool{}
 	var errs []error
 	for _, a := range have {
-		addr, _ := netip.AddrFromSlice(a.IP.To4())
-		if wanted[addr] {
-			present[addr] = true
+		prefix, ok := netipx(a.IPNet)
+		switch {
+		case !ok || prefix == loopbackDefault:
 			continue
-		}
-		if err := netlink.AddrDel(link, &a); err != nil {
-			errs = append(errs, fmt.Errorf("remove %s: %w", addr, err))
+		case prefix.Bits() == 32 && wanted[prefix.Addr()]:
+			present[prefix.Addr()] = true
+		default:
+			if err := netlink.AddrDel(link, &a); err != nil {
+				errs = append(errs, fmt.Errorf("remove %s: %w", prefix, err))
+			}
 		}
 	}
 	for _, vip := range want {
@@ -62,28 +68,17 @@ func (d DummyInterface) Sync(want []netip.Addr) error {
 	return errors.Join(errs...)
 }
 
-// link 返回已启用的接口，不存在时创建。
-func (d DummyInterface) link() (netlink.Link, error) {
-	link, err := netlink.LinkByName(d.Name)
-	if _, missing := errors.AsType[netlink.LinkNotFoundError](err); missing {
-		if err := netlink.LinkAdd(&netlink.Dummy{Name: d.Name}); err != nil {
-			return nil, fmt.Errorf("create %s: %w", d.Name, err)
-		}
-		link, err = netlink.LinkByName(d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("find %s: %w", d.Name, err)
-	}
-	if link.Attrs().Flags&net.FlagUp == 0 {
-		if err := netlink.LinkSetUp(link); err != nil {
-			return nil, fmt.Errorf("bring up %s: %w", d.Name, err)
-		}
-	}
-	return link, nil
-}
-
 // Local 查询内核路由而不是回读接口地址：这才是路由器送来的包会不会交给本机的事实。
-func (d DummyInterface) Local(vip netip.Addr) bool {
+func (Loopback) Local(vip netip.Addr) bool {
 	routes, err := netlink.RouteGet(vip.AsSlice())
 	return err == nil && len(routes) > 0 && routes[0].Type == unix.RTN_LOCAL
+}
+
+func netipx(n *net.IPNet) (netip.Prefix, bool) {
+	addr, ok := netip.AddrFromSlice(n.IP.To4())
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	bits, _ := n.Mask.Size()
+	return netip.PrefixFrom(addr, bits), true
 }

@@ -27,8 +27,6 @@ type Config struct {
 	// VIPPool 是本环境的 VIP 段；只有 bind 地址在段内的 frontend 参与宣告。
 	VIPPool       string `json:"vipPool"`
 	HAProxySocket string `json:"haproxySocket"`
-	// VIPInterface 是 agent 独占、承载 VIP /32 的 dummy 接口，缺省 ayatori-vip。
-	VIPInterface string `json:"vipInterface"`
 	// Interval 是收敛间隔，也是 frontend 消失到撤回的最长延迟。
 	Interval       metav1.Duration `json:"interval"`
 	MetricsAddress string          `json:"metricsAddress"`
@@ -54,9 +52,6 @@ func LoadConfig(path string) (Config, error) {
 	if config.Interval.Duration == 0 {
 		config.Interval.Duration = 2 * time.Second
 	}
-	if config.VIPInterface == "" {
-		config.VIPInterface = "ayatori-vip"
-	}
 	return config, config.validate()
 }
 
@@ -81,9 +76,6 @@ func (c Config) validate() error {
 	}
 	if c.HAProxySocket == "" {
 		errs = append(errs, errors.New("haproxySocket is required"))
-	}
-	if len(c.VIPInterface) > 15 {
-		errs = append(errs, errors.New("vipInterface must be at most 15 characters"))
 	}
 	if c.Interval.Duration < 0 {
 		errs = append(errs, errors.New("interval must be positive"))
@@ -131,7 +123,7 @@ type Agent struct {
 	logger  *slog.Logger
 }
 
-// New 启动 speaker；vips 在生产中为 DummyInterface{Name: config.VIPInterface}。
+// New 启动 speaker；vips 在生产中为 Loopback。
 func New(ctx context.Context, config Config, vips VIPs, registry prometheus.Registerer, logger *slog.Logger) (*Agent, error) {
 	pool, err := config.pool()
 	if err != nil {

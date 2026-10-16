@@ -195,7 +195,7 @@ func receives(t *testing.T, router *server.BgpServer, want ...netip.Addr) func()
 	}
 }
 
-// fakeVIPs 代替 dummy 接口（需要 CAP_NET_ADMIN，由 TestDummyInterface 在容器中验证）。
+// fakeVIPs 代替 lo（修改它需要 CAP_NET_ADMIN，由 TestLoopback 在容器中验证）。
 // refused 中的地址无法成为本机地址。
 type fakeVIPs struct {
 	mu      sync.Mutex
