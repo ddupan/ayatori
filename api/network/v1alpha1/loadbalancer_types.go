@@ -137,7 +137,7 @@ type LoadBalancerStatus struct {
 type HostStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=Pending;Configured;Announced;Withdrawn;Unavailable
+	// +kubebuilder:validation:Enum=Pending;Configured;Ready;Removed;Unavailable
 	Phase string `json:"phase"`
 	// +kubebuilder:validation:MaxLength=1024
 	// +optional

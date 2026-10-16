@@ -12,12 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/gobgp"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/powerdns"
 	lbcontroller "git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
@@ -38,56 +36,51 @@ type loadBalancerOptions struct {
 func (o *loadBalancerOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.addressPool, "loadbalancer-address-pool", "",
 		"LoadBalancer VIP 池（IPv4 CIDR），不得与本 API server 的 Service CIDR 重叠；为空时不启用 LoadBalancer")
-	flags.Func("loadbalancer-host", "LB 主机，格式 <名称>,<Data Plane API URL>,<gobgpd gRPC 地址>；可重复；为空时只分配 VIP",
+	flags.Func("loadbalancer-host", "LB 主机，格式 <名称>,<Data Plane API URL>；可重复；为空时只分配 VIP",
 		func(value string) error {
-			parts := strings.Split(value, ",")
-			if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-				return fmt.Errorf("want <name>,<data plane API URL>,<gobgpd address>")
+			name, url, ok := strings.Cut(value, ",")
+			if !ok || name == "" || url == "" || strings.Contains(url, ",") {
+				return fmt.Errorf("want <name>,<data plane API URL>")
 			}
-			o.hosts = append(o.hosts, loadbalancer.Host{Name: parts[0], ProxyURL: parts[1], SpeakerAddress: parts[2]})
+			o.hosts = append(o.hosts, loadbalancer.Host{Name: name, ProxyURL: url})
 			return nil
 		})
 	flags.StringVar(&o.credentials, "loadbalancer-credentials", "",
-		"LB 凭据 Secret（<namespace>/<name>）：username、password 为 Data Plane API Basic 凭据，tls.crt、tls.key、ca.crt 为两个 API 的 mTLS，powerdns-api-key 为 PowerDNS API key")
+		"LB 凭据 Secret（<namespace>/<name>）：username、password 为 Data Plane API Basic 凭据，tls.crt、tls.key、ca.crt 为 Data Plane API 的 mTLS，powerdns-api-key 为 PowerDNS API key")
 	flags.DurationVar(&o.connectTimeout, "loadbalancer-connect-timeout", 5*time.Second, "代理连接后端的超时")
 	flags.StringVar(&o.resolvers, "loadbalancer-resolvers", "", "DNS endpoint 使用的 HAProxy resolvers section 名称")
 	flags.StringVar(&o.dnsURL, "loadbalancer-dns-url", "", "PowerDNS API 地址；与 --loadbalancer-dns-zone 同时设置时维护 Hostname")
 	flags.StringVar(&o.dnsZone, "loadbalancer-dns-zone", "", "Ayatori 独占的 LoadBalancer zone，如 lb.lab.ddupan.top")
 }
 
-// registerLoadBalancerControllers 返回在 manager 停止后释放 gRPC 连接的清理函数。
-func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, options loadBalancerOptions) (func(), error) {
-	noop := func() {}
+func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, options loadBalancerOptions) error {
 	if options.addressPool == "" {
-		return noop, nil
+		return nil
 	}
 	prefix, err := netip.ParsePrefix(options.addressPool)
 	if err != nil || !prefix.Addr().Is4() {
-		return nil, fmt.Errorf("loadbalancer address pool %q must be an IPv4 CIDR", options.addressPool)
+		return fmt.Errorf("loadbalancer address pool %q must be an IPv4 CIDR", options.addressPool)
 	}
 	reconciler := &lbcontroller.LoadBalancerReconciler{Client: manager.GetClient(), Pool: address.Pool{Prefix: prefix.Masked()}, Hosts: options.hosts}
 	if (options.dnsURL == "") != (options.dnsZone == "") {
-		return nil, errors.New("--loadbalancer-dns-url and --loadbalancer-dns-zone must be set together")
+		return errors.New("--loadbalancer-dns-url and --loadbalancer-dns-zone must be set together")
 	}
-	cleanup := noop
 	if len(options.hosts) > 0 || options.dnsZone != "" {
 		secret, err := loadBalancerCredentials(ctx, manager, options.credentials)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(options.hosts) > 0 {
 			certificate, err := newClientCertificate(secret, manager.GetAPIReader())
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if err := manager.Add(certificate); err != nil {
-				return nil, fmt.Errorf("set up LoadBalancer client certificate refresh: %w", err)
+				return fmt.Errorf("set up LoadBalancer client certificate refresh: %w", err)
 			}
-			proxy, routes, err := loadBalancerBackends(secret, certificate, options)
-			if err != nil {
-				return nil, err
+			if reconciler.Proxy, err = loadBalancerProxy(secret, certificate, options); err != nil {
+				return err
 			}
-			reconciler.Proxy, reconciler.Routes, cleanup = proxy, routes, routes.Close
 		}
 		if options.dnsZone != "" {
 			reconciler.DNS = powerdns.New(options.dnsURL, string(secret.Data["powerdns-api-key"]), options.dnsZone, &http.Client{Timeout: 30 * time.Second})
@@ -95,14 +88,12 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 		}
 	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("set up LoadBalancer controller: %w", err)
+		return fmt.Errorf("set up LoadBalancer controller: %w", err)
 	}
 	if err := (&lbcontroller.AddressReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("set up LoadBalancer address controller: %w", err)
+		return fmt.Errorf("set up LoadBalancer address controller: %w", err)
 	}
-	return cleanup, nil
+	return nil
 }
 
 // loadBalancerCredentials 在启动时读取凭据 Secret；客户端证书此后由 clientCertificate 刷新。
@@ -119,13 +110,13 @@ func loadBalancerCredentials(ctx context.Context, manager ctrl.Manager, referenc
 	return secret, nil
 }
 
-// loadBalancerBackends 中客户端证书每次握手取最新值。
+// loadBalancerProxy 中客户端证书每次握手取最新值。
 // ponytail: 服务端 CA（ca.crt）、Basic 凭据只在启动时读取——CA 是寿命 10 年的内部根，轮换
 // 是罕见的有意操作，届时重启 manager；热更新 CA 需要自行实现证书链校验，不值得。
-func loadBalancerBackends(secret *corev1.Secret, certificate *clientCertificate, options loadBalancerOptions) (*haproxy.Hosts, *gobgp.Speakers, error) {
+func loadBalancerProxy(secret *corev1.Secret, certificate *clientCertificate, options loadBalancerOptions) (*haproxy.Hosts, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(secret.Data["ca.crt"]) {
-		return nil, nil, errors.New("LoadBalancer credentials need a PEM ca.crt")
+		return nil, errors.New("LoadBalancer credentials need a PEM ca.crt")
 	}
 	config := &tls.Config{GetClientCertificate: certificate.get, RootCAs: roots, MinVersion: tls.VersionTLS13}
 	proxy := &haproxy.Hosts{
@@ -135,5 +126,5 @@ func loadBalancerBackends(secret *corev1.Secret, certificate *clientCertificate,
 		ConnectTimeout: options.connectTimeout,
 		Resolvers:      options.resolvers,
 	}
-	return proxy, &gobgp.Speakers{Credentials: credentials.NewTLS(config)}, nil
+	return proxy, nil
 }

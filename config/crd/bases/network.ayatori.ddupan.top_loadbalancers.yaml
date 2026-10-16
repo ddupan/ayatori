@@ -289,8 +289,8 @@ spec:
                       enum:
                       - Pending
                       - Configured
-                      - Announced
-                      - Withdrawn
+                      - Ready
+                      - Removed
                       - Unavailable
                       type: string
                   required:

@@ -35,7 +35,7 @@ const (
 	// pendingRetry 让池耗尽或冲突的对象在他人释放地址后重新尝试；释放没有指向它们的事件。
 	pendingRetry = 30 * time.Second
 	claimRetry   = time.Second
-	// hostRetry 跟进 reload 与宣告等主机侧进度。
+	// hostRetry 跟进 reload 与 frontend 状态等主机侧进度。
 	hostRetry       = 5 * time.Second
 	observeInterval = 30 * time.Second
 	hostTimeout     = 10 * time.Second
@@ -48,13 +48,6 @@ type ProxyBackend interface {
 	Remove(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) error
 }
 
-// RouteBackend 在 LB 主机上宣告与撤回 VIP。
-type RouteBackend interface {
-	Announced(context.Context, loadbalancer.Host, netip.Addr) (bool, error)
-	Announce(context.Context, loadbalancer.Host, netip.Addr) error
-	Withdraw(context.Context, loadbalancer.Host, netip.Addr) error
-}
-
 // DNSBackend 维护 Ayatori 独占 zone 中的 A 记录。
 type DNSBackend interface {
 	Record(context.Context, string) ([]netip.Addr, error)
@@ -62,14 +55,14 @@ type DNSBackend interface {
 	Remove(context.Context, string) error
 }
 
-// LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置与路由宣告，并写 LoadBalancer status。
+// LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置，并写 LoadBalancer status。
+// 路由由各主机的 LB agent 按同一宣告规则自行宣告（ADR-0014）。
 // Hosts 为空时只分配 VIP；DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
 	Client  client.Client
 	Pool    address.Pool
 	Hosts   []loadbalancer.Host
 	Proxy   ProxyBackend
-	Routes  RouteBackend
 	DNS     DNSBackend
 	DNSZone string
 }
@@ -94,7 +87,7 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		if !controllerutil.ContainsFinalizer(object, LoadBalancerFinalizer) {
 			return ctrl.Result{}, nil
 		}
-		// 先在全部主机撤回宣告并删除配置，再删除 DNS 记录，最后释放 VIP。
+		// 先在全部主机删除配置（agent 随后撤回），再删除 DNS 记录，最后释放 VIP。
 		r.converge(ctx, lb, true)
 		if !lb.HostsReleased() {
 			return ctrl.Result{RequeueAfter: hostRetry}, r.save(ctx, object, lb)
@@ -148,7 +141,7 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	case len(lb.Degraded()) > 0:
 		return ctrl.Result{RequeueAfter: hostRetry}, nil
 	default:
-		// 主机侧没有 watch；周期观察以发现 gobgpd 重启后丢失的宣告与配置漂移。
+		// 主机侧没有 watch；周期观察以发现配置漂移与 frontend 状态变化。
 		return ctrl.Result{RequeueAfter: observeInterval}, nil
 	}
 }
@@ -158,20 +151,15 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 	if r.Proxy == nil {
 		return
 	}
-	vip := lb.Snapshot().Address
 	for _, host := range r.Hosts {
 		hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
-		facts, err := r.observe(hostCtx, host, lb)
+		facts, err := r.Proxy.Observe(hostCtx, host, lb)
 		var write error
 		switch lb.PlanHost(host.Name, facts, err, deleting) {
 		case loadbalancer.ApplyConfig:
 			write = r.Proxy.Apply(hostCtx, host, lb)
 		case loadbalancer.RemoveConfig:
 			write = r.Proxy.Remove(hostCtx, host, lb)
-		case loadbalancer.Announce:
-			write = r.Routes.Announce(hostCtx, host, vip)
-		case loadbalancer.Withdraw:
-			write = r.Routes.Withdraw(hostCtx, host, vip)
 		}
 		cancel()
 		if write != nil {
@@ -196,19 +184,6 @@ func (r *LoadBalancerReconciler) record(ctx context.Context, lb *loadbalancer.Lo
 		// 删除结果由下一轮回读确认后才放行 VIP 释放。
 		_ = r.DNS.Remove(ctx, name)
 	}
-}
-
-func (r *LoadBalancerReconciler) observe(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) (loadbalancer.HostFacts, error) {
-	proxy, err := r.Proxy.Observe(ctx, host, lb)
-	if err != nil {
-		return loadbalancer.HostFacts{}, err
-	}
-	facts := loadbalancer.HostFacts{Proxy: proxy}
-	// 宣告只会在 VIP 确认后发生；VIP 未记录时不存在需要撤回的宣告。
-	if vip := lb.Snapshot().Address; vip.IsValid() {
-		facts.Announced, err = r.Routes.Announced(ctx, host, vip)
-	}
-	return facts, err
 }
 
 // addresses 返回全部已占用地址。非本 controller 管理的对象（如 ClusterIP）视为他人占用，
@@ -256,7 +231,7 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	degraded := lb.Degraded()
 	if len(degraded) > 0 {
 		meta.SetStatusCondition(&status.Conditions, condition(degradedType, true, loadbalancer.ReasonHostsDegraded,
-			"未完成配置或宣告的主机："+strings.Join(degraded, ", "), object.Generation))
+			"未就绪的主机："+strings.Join(degraded, ", "), object.Generation))
 	} else {
 		meta.SetStatusCondition(&status.Conditions, condition(degradedType, false, loadbalancer.ReasonAllHostsReady, "", object.Generation))
 	}

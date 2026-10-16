@@ -1,11 +1,12 @@
 name: LoadBalancer Integration
 
 on:
-  # 只在 LoadBalancer 相关代码或本工作流变化时，以真实 HAProxy + Data Plane API 与进程内 GoBGP 验证。
+  # 只在 LoadBalancer 相关代码或本工作流变化时，以真实 HAProxy + Data Plane API 与进程内 GoBGP（LB agent 与对端）验证。
   pull_request:
     paths:
       - 'api/network/**'
       - 'internal/loadbalancer/**'
+      - 'cmd/lb-agent/**'
       - '.gitea/workflows/loadbalancer-integration.yml'
   workflow_dispatch:
 

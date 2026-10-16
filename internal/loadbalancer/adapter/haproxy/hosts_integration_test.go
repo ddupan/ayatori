@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -207,12 +208,18 @@ func TestHostsContract(t *testing.T) {
 	if err := hosts.Apply(t.Context(), f.host, aggregate(uid, ports)); err != nil {
 		t.Fatal(err)
 	}
-	if facts := converged(t, hosts, f, uid, ports); !facts.Present || !facts.Matches || facts.Reload != loadbalancer.ReloadSucceeded {
+	facts := converged(t, hosts, f, uid, ports)
+	if !facts.Present || !facts.Matches || facts.Reload != loadbalancer.ReloadSucceeded {
 		t.Fatalf("写入后回读应与期望一致: %+v", facts)
+	}
+	// closedPort 没有健康后端，其 frontend 仍是 OPEN：后端健康不影响宣告。
+	if len(facts.Frontends) != len(ports) || !slices.ContainsFunc(facts.Frontends, func(f loadbalancer.Frontend) bool { return f.Open }) ||
+		slices.ContainsFunc(facts.Frontends, func(f loadbalancer.Frontend) bool { return !f.Open || f.Address != netip.MustParseAddr(fixtureVIP) }) {
+		t.Fatalf("每个端口的 frontend 都应以 VIP 报告 OPEN: %+v", facts.Frontends)
 	}
 	config := f.config(t)
 	for _, directive := range []string{
-		"option httpchk GET /v3/health", "http-check expect rstatus ^(401)$", "balance leastconn",
+		"option socket-stats", "option httpchk GET /v3/health", "http-check expect rstatus ^(401)$", "balance leastconn",
 		"on-marked-down shutdown-sessions", "init-state fully-down", "send-proxy-v2", "check-send-proxy", "init-addr none",
 	} {
 		if !strings.Contains(config, directive) {
