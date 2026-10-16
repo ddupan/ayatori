@@ -13,8 +13,8 @@ mTLS gRPC `AddPath`。部署后看清了三个后果：
 
 - **数据面恢复依赖控制面。** gobgpd 不持久化路径，重启后要等 controller 观察到缺失再补宣告；
   controller 不在线时该主机一直不承接流量。
-- **controller 看不到主机本地的故障。** 它只知道配置已生效。某台主机 frontend 未能绑定、或
-  这台主机到后端不通时，VIP 仍从它宣告，ECMP 继续把一部分流量送进去。
+- **controller 看不到主机本地的故障。** 它只知道配置已生效。某台主机的 frontend 未能绑定
+  （如 bind 失败、被禁用）时，VIP 仍从它宣告，ECMP 继续把一部分流量送进去。
 - **gobgpd 的写接口必须对网络开放。** 为此要给 gobgpd 签服务端证书、给 controller 签客户端证书
   并经 OpenBao 分发，只为了 controller 能远程改一台主机的路由。
 
@@ -27,20 +27,15 @@ LB 是否健康、后端是否可达，应由承接流量的那台主机在本�
 
 ### 宣告规则
 
-agent 只读本机 HAProxy 的 runtime API（stats socket），按 VIP 独立判断。VIP 是 bind 地址落在
-本环境 VIP 段内的 frontend：
+宣告只反映 **LB 本身** 是否能承接流量，不反映后端。agent 只读本机 HAProxy 的 runtime API（stats
+socket），按 VIP 独立判断。VIP 是 bind 地址落在本环境 VIP 段内的 frontend：
 
-- 宣告该 VIP /32，当且仅当本机 HAProxy 应答，承载该 VIP 的 frontend 处于 `OPEN`，且该 VIP 下
-  **至少一个 listener 的 backend 有健康 server**。
+- 宣告该 VIP /32，当且仅当本机 HAProxy 应答，且承载该 VIP 的 frontend 处于 `OPEN`。
 - 否则撤回。HAProxy 不应答时撤回本机全部 VIP。
 
-健康以 HAProxy 自身的检查结果为准（含 `healthyThreshold`/`unhealthyThreshold`），agent 不另做
-探测，也不叠加额外的抖动抑制。
-
-「至少一个 listener」而不是「全部 listener」：一个端口的后端整体故障时，撤回 VIP 会连带打断
-同一 VIP 上仍健康的其他端口；而主机本地的故障（到后端不通、HAProxy 异常）通常同时影响所有
-端口，规则仍能把它切走。单个端口在所有主机上都没有健康后端时，由 HAProxy 拒绝连接
-（fail-closed，ADR-0012 不变）。
+后端健康不影响路由。某个 VIP 的后端全部不健康时，LB 本身仍是好的，流量照常打到 LB，由
+HAProxy 拒绝连接（fail-closed，ADR-0012 不变）：撤回并不能让请求成功，只会把立即拒绝变成
+落到路由器的兜底路由。后端健康仍以 HAProxy 自身的检查为准，agent 不另做探测。
 
 规则以 Ayatori 领域包中的纯函数实现，agent 与 controller 共用：controller 据 Data Plane API
 观察到的同一组事实计算每台主机「应宣告」，写入 status，不必读取路由。
@@ -71,7 +66,7 @@ agent 只读本机 HAProxy 的 runtime API（stats socket），按 VIP 独立判
 ### 路由器侧
 
 被撤回的 VIP 落到路由器上覆盖 VIP 段的汇总路由。该汇总以 **reject** 兜底（客户端立即收到 ICMP
-unreachable），不是 blackhole，否则所有主机都撤回时客户端只能等超时。由 homelab-infra 的 VyOS
+unreachable），不是 blackhole，否则所有 LB 主机都不可用时客户端只能等超时。由 homelab-infra 的 VyOS
 配置负责。ADR-0012「部署与凭据边界」中的「向 OSPF 的再分发」随 OSPF 退役不再适用：VyOS
 只向上游宣告覆盖 VIP 段的汇总，VIP /32 明细留在 VyOS 上。
 
@@ -79,8 +74,8 @@ unreachable），不是 blackhole，否则所有主机都撤回时客户端只�
 
 - 删除 LoadBalancer 时，从 reload 完成到 agent 下一轮撤回之间（至多一个收敛间隔），到该 VIP 的
   新连接被拒绝。VIP 正在删除，可接受。
-- 撤回与恢复的时延是「HAProxy 判定时间 + 一个收敛间隔 + BGP 更新」，比 HAProxy 直接拒绝连接
-  慢；换来的是本地故障可被切走。
+- 某台 LB 主机单独到后端不通（其余主机正常）时不会被切走，该主机承接的那部分连接被拒绝。
+  在本环境中 LB 与后端同处 labnet/LAN，此类局部故障罕见；出现需求时按「后续」中的降级处理。
 - BGP speaker 的版本与 Ayatori 绑定，不能单独升级 GoBGP；agent 的缺陷会直接表现为会话中断
   （对路由器而言等同主机故障，fail-closed）。
 - 宣告规则在 controller 与 agent 两处求值，若两边观察到的事实不同（例如 Data Plane API 与
@@ -95,10 +90,17 @@ unreachable），不是 blackhole，否则所有主机都撤回时客户端只�
 - **继续由 controller 宣告、只加本地探测**：探测结果仍要回到 controller 才能生效，恢复依旧依赖
   控制面。
 
+## 后续（不在本次）
+
+- **按后端健康在 BGP 中降级而不撤回**：本机某 VIP 无健康后端时以 AS-path prepend 宣告，路由器
+  只在 ECMP 中保留未降级的主机；所有主机都降级时路径重新等长，流量仍到 LB 由 HAProxy 拒绝，
+  不出现路由消失。用于处理单台 LB 到后端的局部故障，出现实际需求时再加。
+
 ## 测试合同
 
-- 宣告规则（frontend 状态 × 各 listener 健康组合、HAProxy 不应答）：单元测试。
+- 宣告规则（frontend 各状态、HAProxy 不应答；后端健康变化不改变结果）：单元测试。
 - agent 对真实 HAProxy 与作为对端的 gobgp 的集成测试（沿用 LB 集成测试的容器环境）：后端全部
-  失败后撤回、恢复后重新宣告；agent 重启后首轮即补回；agent 或 HAProxy 停止后对端撤回全部路径。
+  失败后仍宣告；frontend 禁用后撤回、恢复后重新宣告；agent 重启后首轮即补回；agent 或 HAProxy
+  停止后对端撤回全部路径。
 - controller 不再依赖 gobgpd：envtest 与 adapter 测试中移除 gobgpd。
 - 主机级故障切换与 reject 兜底：Dev 环境端到端测试。
