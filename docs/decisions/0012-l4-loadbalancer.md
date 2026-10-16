@@ -1,6 +1,7 @@
 # ADR-0012：以独立 L4 LoadBalancer 统一 VIP 与入口
 
-- 状态：Accepted
+- 状态：Accepted；VIP 宣告由谁决定（南向第 2、3、5 步、故障撤回、gobgpd 进程与 API 边界）已被
+  [ADR-0014](0014-lb-host-local-announcement.md) 取代
 - 日期：2026-10-04
 - 依据：维护者讨论、homelab-infra/wiki 现状盘点与成熟方案调研；落实
   [ADR-0006](0006-demand-driven-resource-scope.md) 中的 `LoadBalancer` 方向。
