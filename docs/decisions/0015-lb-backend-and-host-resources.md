@@ -89,10 +89,28 @@ status:
 - LoadBalancer 的 `status.hosts[]` 保留：它是该 LoadBalancer 在各主机上的落地进度，与主机自身
   健康是两件事。主机不可达时各 LoadBalancer 的 Attachment 仍为 `Unavailable`。
 
+### agent 自检：是否在正常收发流量
+
+数据面先于控制面：是否宣告只由 agent 在本机判断，controller 只观察。ADR-0014 的规则只看
+HAProxy 自己的视角，不足以说明本机能收发流量——部署后实测 LB 主机的内核并不接收发往 VIP 的包
+（`ip_nonlocal_bind` 只允许 bind；主机不转发），而 frontend OPEN、会话 Established，照样宣告。
+agent 对每个 VIP 按三层自检，任一层不满足即不宣告：
+
+| 层 | 事实 | 来源 |
+| --- | --- | --- |
+| 收 | 内核把该 VIP 当作本机地址 | agent 把 VIP /32 加到独占的 dummy 接口，再以路由查询（类型 `local`）确认 |
+| 处理 | HAProxy 应答，绑定该 VIP 的 frontend 与 bind 都为 OPEN | stats socket |
+| 宣告 | 至少一个会话已建立，且该路径出现在对邻居的 adj-rib-out 中 | 内嵌 GoBGP |
+
+「宣告」一层是结果而不是输入：它不决定是否宣告，只在 `/status` 中报告路径确实发给了路由器。
+回程（以 VIP 为源经默认路由回到路由器）与会话同一链路，不单独检查。不主动连接 VIP 探测：连接会被
+转发给后端，对 PostgreSQL 等后端是噪音；HAProxy 卡死已由 stats socket 不应答覆盖。
+
 ### agent 状态接口
 
 agent 在指标端口上增加只读的 `GET /status`，返回本机事实：HAProxy 是否应答、各邻居会话是否
-建立、本地 RIB 中已宣告的 VIP、最近一次成功收敛的时间。
+建立、最近一次成功收敛的时间，以及每个 VIP 是否宣告与未宣告的原因（`not-local`、
+`frontend-not-open`、`not-advertised` 等，对应上表三层）。
 
 - 只读，无任何写操作，不含凭据；明文 HTTP，与 `/metrics` 同一监听。伪造的应答只会让 status
   失真，不会改变路由，因此不为它签发证书。
@@ -133,4 +151,5 @@ agent 在指标端口上增加只读的 `GET /status`，返回本机事实：HAP
   宣告集合决定（已宣告、未宣告、agent 不应答）。
 - envtest：Backend 变化触发引用方收敛；删除 Backend 后引用方 fail-closed；LoadBalancerHost 增删
   无需重启；删除 LoadBalancerHost 时先清理配置，不可达时等待。
-- agent 集成测试：`/status` 与本地 RIB、HAProxy 状态一致（沿用现有容器环境）。
+- agent 集成测试：`/status` 与本地 RIB、HAProxy 状态一致，三层各自不满足时报告对应原因（沿用
+  现有容器环境）。
