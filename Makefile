@@ -207,7 +207,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
-GOLANGCI_LINT_VERSION ?= v2.13.1
+GOLANGCI_LINT_VERSION ?= v2.14.0
 OAPI_CODEGEN_VERSION ?= v2.8.0
 # 与 LB 主机部署的 dataplaneapi 版本一致；升级时同时更新校验和并重新生成。
 DATAPLANEAPI_VERSION ?= v3.4.3
