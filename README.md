@@ -36,6 +36,7 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 - [ADR-0008：将 PostgreSQL Tenant Operator 合并为 Ayatori Database 模块](docs/decisions/0008-merge-postgresql-tenant-operator.md)
 - [ADR-0009：分离 Database 资源与 Tenant 申请](docs/decisions/0009-database-resource-and-claim.md)
 - [ADR-0013：Dev/Prod 以 LXC 上的 API-only 控制面运行](docs/decisions/0013-api-only-control-plane-on-lxc.md)
+- [ADR-0014：VIP 宣告由 LB 主机本地决定](docs/decisions/0014-lb-host-local-announcement.md)
 - [部署与发布](deploy/README.md)
 
 ## 当前状态
