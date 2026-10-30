@@ -71,7 +71,9 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 | `LXCContainer` | `spec.config` 原生 lxc config 文本，`rootfs` 引用 volume，`networks` 引用 network | 候选节点 |
 
 - domain 中直接写原生引用：`<source pool='ceph-ssd' volume='win98'/>`、
-  `<source network='vlan20'/>`。Agent 不做任何替换，由 libvirt 自己解析。
+  `<source network='vlan20'/>`。network 引用由 libvirt 自己解析；**卷引用由 Agent 在 `DefineXML`
+  之前用 `virsh vol-path` 解析成 `file`/`block` 路径**，因为 AppArmor（`virt-aa-helper`）不会把
+  `type='volume'` 的源加入每个 VM 的 profile，QEMU 会被拒绝访问（PoC 02）。
 - **候选节点由 controller 计算**：domain 引用的 pool 和 network 都已下发到的节点；若引用本地
   pool 上的卷，则只有该卷所在节点。
 - **domain/LXC 共有的 Ayatori 自有字段：** `nodeName` 或候选节点、`ha`（`Restart`/`None`）、
@@ -189,12 +191,19 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - QEMU 进程或容器 init 死亡：promoter 启动的单元是一个**监管进程**，跟踪实例的生命周期（VM 订阅
     libvirt lifecycle 事件，LXC 循环执行 `lxc-start -F`），在本机重启并按滑动窗口计数。不得使用
     oneshot 单元，否则实例死亡后节点仍持有 Primary，既不重启也不切换。
+  - 监管进程启动实例前必须确认本节点是该实例 DRBD 资源的 Primary，否则不启动。`virsh start`
+    失败属于配置或宿主机问题，不得升级为换节点，否则会在节点之间来回 evict（PoC 02）。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
     `drbd-reactorctl evict <实例>`，交给其他节点。
   - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
     失败就会触发 `OnFailure=`。promoter 的依赖保持默认 `Requires`，`BindsTo` 会让结果取决于 job
     排队顺序。
   - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。
+- **固件状态必须跟随实例**（PoC 02）：UEFI NVRAM 和 vTPM 状态默认在节点本地
+  （`/var/lib/libvirt/qemu/nvram/`、`/var/lib/libvirt/swtpm/<uuid>/`），冷切换后启动项丢失、
+  BitLocker 要求恢复密钥。NVRAM 用 `<nvram type='block'>` 放在实例 DRBD 资源的一个 volume 上；
+  vTPM 状态目录由 promoter 在启动前把实例 DRBD 资源上的文件系统挂载到该路径（libvirt 10.0 不支持
+  TPM backend 的 `<source>`）。
 - **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
   PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
@@ -242,6 +251,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    节点仍能正常解析；LXC 能通过 Agent 解析同一份 pool/network。
 4. Windows 和至少一个 retro 系统（例如 Win9x/DOS，i440fx + IDE + SB16）能否通过 domain XML 透传
    运行。
+   **部分完成（2026-10-30）**：设备模型通过，见 [PoC 02](../compute/poc-02-retro-and-windows.md)；
+   NVRAM/vTPM 跟随冷切换待验证。
 5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
