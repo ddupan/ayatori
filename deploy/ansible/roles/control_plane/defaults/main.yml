@@ -2,6 +2,7 @@
 #   ayatori_environment: dev | prod
 #   ayatori_postgresql_instance: {name, host, hostaddr, port}
 #   ayatori_gitops（可选）: {url, path, branch=main}，Flux 同步其中的 namespace、Tenant 与 Database
+#   ayatori_loadbalancer（可选）: {address_pool, hosts: ["<名称>,<Data Plane API URL>"]}，启用 LoadBalancer
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，
 # Release 工作流校验它与 galaxy.yml、git tag 一致。
 ayatori_version: v0.1.2

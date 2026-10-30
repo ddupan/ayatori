@@ -114,6 +114,30 @@ spec:
       POSTGRESQL_HOST: {{ ayatori_postgresql_instance.host | to_json }}
       POSTGRESQL_HOSTADDR: {{ ayatori_postgresql_instance.hostaddr | to_json }}
       POSTGRESQL_PORT: "{{ ayatori_postgresql_instance.port }}"
+{% if ayatori_loadbalancer is defined %}
+---
+# LB 凭据 Secret；manager 启动时读取，同步前 manager 启动失败并由 quadlet 重试。
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ayatori-loadbalancer
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+  - name: ayatori-control-plane
+  sourceRef:
+    kind: GitRepository
+    name: ayatori
+  path: ./deploy/flux/loadbalancer
+  prune: true
+  postBuild:
+    substitute:
+      AYATORI_ENVIRONMENT: {{ ayatori_environment | to_json }}
+      OPENBAO_ADDRESS: {{ openbao_address | to_json }}
+      OPENBAO_KUBERNETES_MOUNT: {{ openbao_kubernetes_mount | to_json }}
+      OPENBAO_EXTERNAL_SECRETS_ROLE: {{ openbao_external_secrets_role | to_json }}
+{% endif %}
 {% if ayatori_gitops is defined %}
 ---
 # 部署方 Git 仓库中的期望状态（Tenant 等）。以受限 SA 模拟应用，仓库写入者不能借
