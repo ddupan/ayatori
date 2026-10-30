@@ -17,18 +17,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// dataPlane 在内存中模拟各主机的代理配置与路由宣告，并记录写入顺序。
-// 真实代理与 gobgpd 的语义由 adapter 的 contract test 验证。
+// dataPlane 在内存中模拟各主机的代理配置与 frontend 状态，并记录写入顺序。
+// 真实代理的语义由 adapter 的 contract test 验证；宣告由 LB agent 负责，不经 controller。
 type dataPlane struct {
 	configs     map[string]loadbalancer.Snapshot // host/uid → 已写入的期望
-	routes      map[string]bool                  // host/vip
+	stopped     map[string]bool                  // host：frontend 未处于 OPEN
 	unreachable map[string]bool
 	records     map[string]netip.Addr // hostname
 	events      []string
 }
 
 func newDataPlane() *dataPlane {
-	return &dataPlane{configs: map[string]loadbalancer.Snapshot{}, routes: map[string]bool{}, unreachable: map[string]bool{}, records: map[string]netip.Addr{}}
+	return &dataPlane{configs: map[string]loadbalancer.Snapshot{}, stopped: map[string]bool{}, unreachable: map[string]bool{}, records: map[string]netip.Addr{}}
 }
 
 var errUnreachable = errors.New("host unreachable")
@@ -39,7 +39,11 @@ func (d *dataPlane) Observe(_ context.Context, host loadbalancer.Host, lb *loadb
 	}
 	got, present := d.configs[host.Name+"/"+lb.Snapshot().Owner.UID]
 	want := lb.Snapshot()
-	return loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports)}, nil
+	facts := loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports)}
+	if facts.Matches {
+		facts.Frontends = []loadbalancer.Frontend{{Address: got.Address, Open: !d.stopped[host.Name]}}
+	}
+	return facts, nil
 }
 
 func (d *dataPlane) Apply(_ context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
@@ -51,22 +55,6 @@ func (d *dataPlane) Apply(_ context.Context, host loadbalancer.Host, lb *loadbal
 func (d *dataPlane) Remove(_ context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
 	delete(d.configs, host.Name+"/"+lb.Snapshot().Owner.UID)
 	d.events = append(d.events, "remove "+host.Name)
-	return nil
-}
-
-func (d *dataPlane) Announced(_ context.Context, host loadbalancer.Host, vip netip.Addr) (bool, error) {
-	return d.routes[host.Name+"/"+vip.String()], nil
-}
-
-func (d *dataPlane) Announce(_ context.Context, host loadbalancer.Host, vip netip.Addr) error {
-	d.routes[host.Name+"/"+vip.String()] = true
-	d.events = append(d.events, "announce "+host.Name)
-	return nil
-}
-
-func (d *dataPlane) Withdraw(_ context.Context, host loadbalancer.Host, vip netip.Addr) error {
-	delete(d.routes, host.Name+"/"+vip.String())
-	d.events = append(d.events, "withdraw "+host.Name)
 	return nil
 }
 
@@ -115,19 +103,19 @@ func conditionStatus(t *testing.T, c client.Client, lb *networkv1alpha1.LoadBala
 func TestLoadBalancerDataPlane(t *testing.T) {
 	c := environment(t)
 	plane := newDataPlane()
-	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Hosts: testHosts, Proxy: plane, Routes: plane}
+	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Hosts: testHosts, Proxy: plane}
 	lb := newLoadBalancer("pg", "")
 	create(t, c, lb)
 	converge(t, r, lb)
 
-	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "apply lb2", "announce lb1", "announce lb2"}) {
-		t.Fatalf("每台主机必须先配置后宣告，got %v", events)
+	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "apply lb2"}) {
+		t.Fatalf("got %v", events)
 	}
 	if conditionStatus(t, c, lb, programmedType) != string(metav1.ConditionTrue) || conditionStatus(t, c, lb, degradedType) != string(metav1.ConditionFalse) {
-		t.Fatalf("全部主机宣告后应 Programmed 且不 Degraded: %+v", lb.Status)
+		t.Fatalf("全部主机就绪后应 Programmed 且不 Degraded: %+v", lb.Status)
 	}
 
-	t.Run("配置变化时重写且不撤回", func(t *testing.T) {
+	t.Run("配置变化时重写", func(t *testing.T) {
 		lb.Spec.Ports[0].Endpoints = []networkv1alpha1.Endpoint{{Address: "192.168.10.127", Port: 6443}}
 		if err := c.Update(t.Context(), lb); err != nil {
 			t.Fatal(err)
@@ -138,12 +126,19 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 		}
 	})
 
-	t.Run("宣告丢失后补宣告", func(t *testing.T) {
-		delete(plane.routes, "lb2/"+lb.Status.Address)
+	t.Run("frontend 未 OPEN 的主机只降级自身", func(t *testing.T) {
+		plane.stopped["lb2"] = true
 		converge(t, r, lb)
-		if events := plane.take(); !slices.Equal(events, []string{"announce lb2"}) {
-			t.Fatalf("got %v", events)
+		if events := plane.take(); len(events) != 0 {
+			t.Fatalf("frontend 状态不由 controller 修复，got %v", events)
 		}
+		if conditionStatus(t, c, lb, programmedType) != string(metav1.ConditionTrue) || conditionStatus(t, c, lb, degradedType) != string(metav1.ConditionTrue) {
+			t.Fatalf("got %+v", lb.Status.Conditions)
+		}
+		if lb.Status.Hosts[1].Phase != string(loadbalancer.AttachmentConfigured) {
+			t.Fatalf("got %+v", lb.Status.Hosts)
+		}
+		delete(plane.stopped, "lb2")
 	})
 
 	t.Run("一台主机不可达只影响自身", func(t *testing.T) {
@@ -164,22 +159,22 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 		converge(t, r, lb)
 		reload(t, c, lb)
 		ipAddressOf(t, c, lb.Status.Address)
-		if events := plane.take(); !slices.Equal(events, []string{"withdraw lb1", "remove lb1"}) {
-			t.Fatalf("可达主机应先撤回再删配置，got %v", events)
+		if events := plane.take(); !slices.Equal(events, []string{"remove lb1"}) {
+			t.Fatalf("可达主机直接删配置，got %v", events)
 		}
 	})
 
 	t.Run("全部主机清理后释放 VIP", func(t *testing.T) {
 		delete(plane.unreachable, "lb2")
 		converge(t, r, lb)
-		if events := plane.take(); !slices.Equal(events, []string{"withdraw lb2", "remove lb2"}) {
+		if events := plane.take(); !slices.Equal(events, []string{"remove lb2"}) {
 			t.Fatalf("got %v", events)
 		}
 		if err := c.Get(t.Context(), client.ObjectKeyFromObject(lb), lb); !apierrors.IsNotFound(err) {
 			t.Fatalf("释放后应放行删除: %v", err)
 		}
-		if len(plane.configs) != 0 || len(plane.routes) != 0 {
-			t.Fatalf("数据面应已清空: %v %v", plane.configs, plane.routes)
+		if len(plane.configs) != 0 {
+			t.Fatalf("数据面应已清空: %v", plane.configs)
 		}
 	})
 }
@@ -187,14 +182,14 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 func TestLoadBalancerHostname(t *testing.T) {
 	c := environment(t)
 	plane := newDataPlane()
-	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Hosts: testHosts[:1], Proxy: plane, Routes: plane,
+	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Hosts: testHosts[:1], Proxy: plane,
 		DNS: zone{plane}, DNSZone: "lb.lab.ddupan.top"}
 	lb := newLoadBalancer("api", "")
 	create(t, c, lb)
 	converge(t, r, lb)
 	const hostname = "api." + testNamespace + ".lb.lab.ddupan.top"
-	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "publish " + hostname, "announce lb1"}) {
-		t.Fatalf("VIP 确认后即发布记录，早于宣告完成，got %v", events)
+	if events := plane.take(); !slices.Equal(events, []string{applyFirst, "publish " + hostname}) {
+		t.Fatalf("VIP 确认后即发布记录，got %v", events)
 	}
 	if conditionStatus(t, c, lb, hostnameType) != string(metav1.ConditionTrue) || lb.Status.Hostname != hostname {
 		t.Fatalf("got %q %+v", lb.Status.Hostname, lb.Status.Conditions)
@@ -214,7 +209,7 @@ func TestLoadBalancerHostname(t *testing.T) {
 			t.Fatal(err)
 		}
 		converge(t, r, lb)
-		if events := plane.take(); !slices.Equal(events, []string{"withdraw lb1", "remove lb1", "unpublish " + hostname}) {
+		if events := plane.take(); !slices.Equal(events, []string{"remove lb1", "unpublish " + hostname}) {
 			t.Fatalf("got %v", events)
 		}
 		if err := c.Get(t.Context(), client.ObjectKey{Name: vip}, &networkingv1.IPAddress{}); !apierrors.IsNotFound(err) {

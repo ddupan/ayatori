@@ -149,15 +149,15 @@ func TestComponentFlagsAndNamespaceScope(t *testing.T) {
 }
 
 func TestLoadBalancerHostFlags(t *testing.T) {
-	parsed := parseTestOptions(t, "--loadbalancer-host=lb1,https://lb1:5555,lb1:50051", "--loadbalancer-host=lb2,https://lb2:5555,lb2:50051")
-	if len(parsed.lb.hosts) != 2 || parsed.lb.hosts[1].Name != "lb2" || parsed.lb.hosts[1].SpeakerAddress != "lb2:50051" {
+	parsed := parseTestOptions(t, "--loadbalancer-host=lb1,https://lb1:5555", "--loadbalancer-host=lb2,https://lb2:5555")
+	if len(parsed.lb.hosts) != 2 || parsed.lb.hosts[1].Name != "lb2" || parsed.lb.hosts[1].ProxyURL != "https://lb2:5555" {
 		t.Fatalf("hosts = %+v", parsed.lb.hosts)
 	}
 	flags := flag.NewFlagSet("bootstrap-test", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var invalid options
 	invalid.bindFlags(flags)
-	if err := flags.Parse([]string{"--loadbalancer-host=lb1,https://lb1:5555"}); err == nil {
-		t.Fatal("缺少 gobgpd 地址时应拒绝")
+	if err := flags.Parse([]string{"--loadbalancer-host=lb1"}); err == nil {
+		t.Fatal("缺少 Data Plane API URL 时应拒绝")
 	}
 }

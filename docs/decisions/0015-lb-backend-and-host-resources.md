@@ -98,7 +98,7 @@ agent 对每个 VIP 按三层自检，任一层不满足即不宣告：
 
 | 层 | 事实 | 来源 |
 | --- | --- | --- |
-| 收 | 内核把该 VIP 当作本机地址 | agent 把 VIP /32 加到独占的 dummy 接口，再以路由查询（类型 `local`）确认 |
+| 收 | 内核把该 VIP 当作本机地址 | agent 把 VIP /32 加到 lo（除 `127.0.0.1/8` 外的 IPv4 地址都归 agent；LB 主机是 unprivileged LXC，不能加载 dummy 模块），再以路由查询（类型 `local`）确认 |
 | 处理 | HAProxy 应答，绑定该 VIP 的 frontend 与 bind 都为 OPEN | stats socket |
 | 宣告 | 至少一个会话已建立，且该路径出现在对邻居的 adj-rib-out 中 | 内嵌 GoBGP |
 

@@ -51,3 +51,54 @@ jobs:
           image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"
           echo "ayatori_image: $image"
           printf '## Published image\n\n- `%s`\n- tag `%s`, source `%s`\n' "$image" "$TAG" "$GITHUB_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+  # LB agent 跑在 LB 主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
+  # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
+  publish-lb-agent:
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build tarball and checksums
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          dist="$(mktemp -d)"
+          mkdir "$dist/pkg"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$dist/pkg/lb-agent" ./cmd/lb-agent
+          tar -C "$dist/pkg" -czf "$dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
+          (cd "$dist" && sha256sum "ayatori-lb-agent_${version}_linux_amd64.tar.gz" > "ayatori_${version}_checksums.txt")
+          echo "DIST=$dist" >> "$GITHUB_ENV"
+
+      # tag 推送不会自动创建 release；已有同名 release 时附加到它上面。
+      - name: Attach to release
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          api="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}"
+          auth="Authorization: token ${TOKEN}"
+          if ! id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" | jq -er .id)"; then
+            id="$(jq -n --arg tag "$TAG" '{tag_name: $tag, name: $tag}' |
+              curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' -d @- "$api/releases" | jq -er .id)"
+          fi
+          for file in "$DIST"/*.tar.gz "$DIST"/*_checksums.txt; do
+            curl -fsS -X POST -H "$auth" -F "attachment=@${file}" "$api/releases/${id}/assets?name=$(basename "$file")" >/dev/null
+          done
+          printf '## LB agent\n\n- `%s/releases/download/%s/`\n' "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" "$TAG" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

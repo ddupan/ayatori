@@ -1,6 +1,7 @@
 # LoadBalancer 领域模型
 
-状态：已评审，API 字段随切片 1 落地。日期：2026-10-05。决策依据见
+状态：已评审，API 字段随切片 1 落地。日期：2026-10-05；宣告部分按
+[ADR-0014](../decisions/0014-lb-host-local-announcement.md) 修订于 2026-10-16。决策依据见
 [ADR-0012](../decisions/0012-l4-loadbalancer.md)。分层与命名沿用
 [Database 领域模型](../database/domain-model.md#分层)。
 
@@ -11,9 +12,10 @@
 | LoadBalancer | 消费方声明的 L4 入口：VIP、listener、backend endpoint 与健康检查 |
 | Address | 已分配给某个 LoadBalancer 的 VIP；以“名字即 IP”的 API 对象记录占用 |
 | Pool | 当前环境可分配的 VIP 范围，首版来自 controller 配置 |
-| Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 gobgpd，首版来自 controller 配置 |
-| Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、VIP 是否宣告 |
-| Announcement | 某台 Host 上的 gobgpd 对某个 VIP /32 的宣告 |
+| Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 LB agent，首版来自 controller 配置 |
+| Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、是否满足宣告规则 |
+| 宣告规则 | Host 宣告某 VIP /32，当且仅当本机 HAProxy 应答、绑定该 VIP 的 frontend 全部处于 OPEN，且内核把该 VIP 当作本机地址 |
+| LB agent | 每台 Host 上内嵌 GoBGP 的进程，按宣告规则自行宣告与撤回，不经 controller |
 | Hostname | Ayatori 为 LoadBalancer 生成并维护的域名，A 记录指向其 VIP |
 
 LoadBalancer 一对一 Address、一对一 Hostname；首版每个 LoadBalancer 落地到全部 Host，每台 Host 一个 Attachment。
@@ -28,10 +30,11 @@ Host 不是 API 资源，也不持有 LoadBalancer 集合；Attachment 只作为
 
 - **VIP 固定**：Address 一经确认写入 status 即不再改变；spec 请求的 VIP 由 CEL 设为不可变。
   需要换地址就新建 LoadBalancer。
-- **先配置后宣告**：某 Host 只有在本轮观察到配置与期望一致且 reload 已成功后，才允许宣告。
-- **先撤回后删除**：删除或从 Host 摘除时，先撤回宣告，确认撤回后才删除配置。
 - **先删记录后释放**：Hostname 的记录删除确认后才释放 Address，避免名字指向已分给他人的 VIP。
-- **删除完成条件**：所有 Host 均已撤回并删除配置、记录已删除后才释放 Address、移除 finalizer。
+- **删除完成条件**：所有 Host 均已删除配置、记录已删除后才释放 Address、移除 finalizer。
+
+宣告不由聚合驱动（ADR-0014）。「先配置后宣告」由宣告规则自然保证：frontend 只有在配置
+生效后才存在；删除时 frontend 消失，agent 在下一轮撤回，不再有跨组件的「先撤回后删除」。
 
 listener、endpoint 与健康检查是 LoadBalancer 的核心语义，以领域包中的普通结构体表达期望
 配置（见下节），也是 controller 与 adapter 的契约。字段合法性由 CRD schema/CEL 保证，聚合
@@ -44,13 +47,20 @@ func Reconstitute(snapshot Snapshot, deps Dependencies) *LoadBalancer
 
 func (lb *LoadBalancer) PlanAddress(pool Pool) Action           // Allocate / Save / Wait
 func (lb *LoadBalancer) AddressClaimed(ip netip.Addr, err error) // 结果分类见下
-func (lb *LoadBalancer) PlanHost(host string, facts HostFacts) Action
-// Apply / AwaitReload / Announce / Withdraw / Remove / Wait
+func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts) Action
+// ApplyConfig / RemoveConfig / Wait
 func (lb *LoadBalancer) Programmed() bool
+
+// 宣告规则：纯函数，LB agent 与聚合共用。
+func Announcements(pool Pool, frontends []Frontend) []netip.Addr
 ```
 
-`HostFacts` 是 adapter 返回的原始事实：配置是否存在、是否与期望一致、最近一次 reload 的状态
-（无 / 进行中 / 成功 / 失败）、VIP 是否已宣告。聚合据此给出该 Host 的下一步，并记录 Attachment。
+`ProxyFacts` 是 adapter 返回的原始事实：配置是否存在、是否与期望一致、最近一次 reload 的状态
+（无 / 进行中 / 成功 / 失败），以及配置生效后各 frontend 在运行中进程里是否 OPEN。聚合据此给出
+该 Host 的下一步，并以宣告规则判断该 Host 是否就绪，记录 Attachment。
+
+宣告规则只反映 LB 本身，不反映后端：某 port 后端全部不健康时仍宣告，由 HAProxy 拒绝连接
+（fail-closed）。同一 VIP 的多个端口中任一 frontend 不 OPEN 即不宣告，把流量让给其他 Host。
 
 ### 期望配置
 
@@ -151,17 +161,54 @@ annotation 记录 LoadBalancer UID。VIP 池不得与 Ayatori API server 的 Ser
 
 后端接口在 controller 中声明，只列使用方需要的方法：
 
-- `ProxyBackend`（实现：`haproxy.Hosts`）：`Observe(host, lb)` 返回 `HostFacts` 的配置部分；
-  `Apply(host, lb)`、`Remove(host, lb)` 执行变更。adapter 自行决定走 runtime server 接口
-  （仅 endpoint 变化，无需 reload）还是配置变更 + reload，并处理 version/409 重试。
-- `RouteBackend`（实现：`gobgp.Speakers`）：`Announced(host, vip)`、`Announce`、`Withdraw`。
+- `ProxyBackend`（实现：`haproxy.Hosts`）：`Observe(host, lb)` 返回 `ProxyFacts`（含 frontend
+  状态，读自 Data Plane API 的 stats）；`Apply(host, lb)`、`Remove(host, lb)` 执行变更。adapter
+  自行决定走 runtime server 接口（仅 endpoint 变化，无需 reload）还是配置变更 + reload，并处理
+  version/409 重试。
 - `DNSBackend`（实现：`powerdns.Zone`）：`Record(name)`、`Publish(name, vip)`、`Remove(name)`。
 
-两者独立：代理与路由宣告都可能被替换，且故障相互独立。Kubernetes 侧不加接口。
+controller 不连接 BGP speaker。Kubernetes 侧不加接口。
 
 每轮对每台 Host 至多执行一次外部写入；Host 之间相互独立，一台 Host 不可达只影响它自己的
 Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固定周期重新观察，以发现
-gobgpd 重启后丢失的宣告与配置漂移。
+配置漂移与 frontend 状态变化。
+
+### LB agent（`agent`，`cmd/lb-agent`）
+
+每台 Host 一个进程，内嵌 GoBGP（`github.com/osrg/gobgp/v4/pkg/server`），不开放 gRPC：
+
+- 每个间隔（默认 2s）经 stats socket 执行 `show stat`，取每个 bind 的地址与状态。frontend 开启
+  `option socket-stats` 后每个 bind 单独成行并带地址；bind 行与其 frontend 行都为 `OPEN` 才算
+  OPEN——`disable frontend` 后 frontend 行为 `PAUSED`，bind 行仍是 `OPEN`（HAProxy 3.x 实测）。
+- 以宣告规则计算应宣告集合，与本地 RIB 中本机添加的路径比较，只增删差异。HAProxy 不应答时撤回全部。
+- VIP 由 agent 以 /32 加到 lo 上。`ip_nonlocal_bind` 只允许 HAProxy 在地址存在前 bind，并不会
+  让内核接收发往 VIP 的包；没有这个地址时路由器送来的流量被丢弃（主机不转发）。不用 dummy 接口：
+  LB 主机是 unprivileged LXC，不能加载 dummy 模块（PVE 内核为 `CONFIG_DUMMY=m`，默认未加载）。
+  lo 上除 `127.0.0.1/8` 外的 IPv4 地址都归 agent：恰为有 bind 的 VIP（不论 frontend 是否 OPEN：
+  禁用期间已有连接继续服务），其余删除；IPv6 不动；HAProxy 不应答时不改动地址。是否本机地址以
+  内核路由查询（类型 `local`）为准。顺序：撤回在删地址之前，地址在宣告之前——新 VIP 本轮加地址，
+  下一轮宣告。
+  agent 退出时地址保留：会话已断，路由器不再送来流量。
+- 全局 import/export 策略只接受 VIP 段内的 /32、默认拒绝。GoBGP 的全局 import 策略也作用于本机
+  添加的路径，所以 import 不能是单纯的 reject；非 route-server 模式下邻居级策略被忽略。
+- 只主动建立会话（不监听 179），路由器侧为 passive。
+- 指标：`ayatori_lb_agent_haproxy_up`、`ayatori_lb_agent_vip_announced{vip}`、
+  `ayatori_lb_agent_bgp_session_established{neighbor}`、
+  `ayatori_lb_agent_last_sync_success_timestamp_seconds`。
+
+本地配置（`/etc/ayatori/lb-agent.yaml`，由 homelab-cookbooks 写入）：
+
+```yaml
+asn: 65100
+routerID: 10.60.0.30
+neighbors:
+  - address: 10.60.0.1
+    asn: 65002
+vipPool: 10.62.0.0/24
+haproxySocket: /run/haproxy/admin.sock
+interval: 2s
+metricsAddress: 10.60.0.30:9641
+```
 
 ## 状态
 
@@ -169,26 +216,28 @@ LoadBalancer status：
 
 - `address`：已确认的 VIP。
 - `hostname`：已发布的域名。
-- `hosts[]`：每台 Host 的 Attachment（`Pending`、`Configured`、`Announced`、`Withdrawn`、
-  `Unavailable`）与说明。
+- `hosts[]`：每台 Host 的 Attachment 与说明：`Pending`（配置未生效）、`Configured`（配置已生效
+  但不满足宣告规则）、`Ready`（满足宣告规则，agent 会宣告）、`Removed`（删除时配置已清除）、
+  `Unavailable`（无法观察或 reload 失败）。controller 不读路由，实际宣告以 agent 指标为准。
 - `ports[].endpoints[]`：各 endpoint 在该 port 健康检查下的观察，只做呈现，不参与状态迁移——
   健康摘除由 HAProxy 在数据面完成。
 
 conditions 参照 Octavia 将控制面下发（provisioning_status）与数据面健康（operating_status）
 分开，命名沿用 Gateway API：
 
-- `Programmed`：Address 已确认，且至少一台 Host 配置一致并已宣告。
-- `Degraded`：存在未完成配置或宣告的 Host。
+- `Programmed`：Address 已确认，且至少一台 Host 为 `Ready`。
+- `Degraded`：存在不是 `Ready` 的 Host。
 - `Available`：每个 port 至少有一个健康 endpoint。PostgreSQL 无 primary 时为 False，但
   `Programmed` 不受影响。
 
-Host 从配置中移除时，其 Attachment 不再参与 Programmed 判定；残留的宣告随该主机下线而失效。
+Host 从配置中移除时，其 Attachment 不再参与 Programmed 判定；该主机上残留的配置与宣告不再受管，
+由管理员清理（或随该主机下线而失效）。
 
 ## 删除
 
 ```text
 任意阶段 → Deleting
-Deleting：逐 Host Withdraw → 确认撤回 → Remove → 确认配置已删除且 reload 成功
+Deleting：逐 Host Remove → 确认配置已删除且 reload 成功（agent 随后撤回）
 全部 Host 完成 → 删除 Hostname 记录并确认 → 删除 Address → 移除 finalizer
 ```
 
@@ -207,6 +256,8 @@ LB 主机部署（homelab-infra）须保证：
 
 - `haproxy.cfg` 中 `lb_` 前缀 section 只由 Ayatori 写入；
 - `net.ipv4.ip_nonlocal_bind=1`，frontend 可在宣告前绑定 VIP；
+- LB agent 以 `BindsTo=haproxy.service` 运行，可读写 HAProxy 的 admin stats socket，并有
+  `CAP_NET_ADMIN`（管理 lo 上的 VIP）；lo 上除 `127.0.0.1/8` 外的 IPv4 地址不得由其他组件写入；
 - reload 前以 `server-state-file` 保存 server 状态，否则每次 reload 所有 server 回到
   `fully-down`，主机上全部 LB 中断约 rise × interval；
 - `hard-stop-after` 限定旧 worker 排空时长；
@@ -217,8 +268,8 @@ LB 主机部署（homelab-infra）须保证：
 | 参数 | 含义 |
 | --- | --- |
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
-| `--loadbalancer-host=<名称>,<Data Plane API URL>,<gobgpd 地址>` | LB 主机，可重复；为空时只分配 VIP |
-| `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（两个 API 的 mTLS） |
+| `--loadbalancer-host=<名称>,<Data Plane API URL>` | LB 主机，可重复；为空时只分配 VIP |
+| `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
@@ -232,7 +283,7 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 ## 待评审
 
 1. **HAProxy 对象归属**：以 LoadBalancer UID 命名 frontend/backend（见上节），使 Observe 无需额外索引。
-   Ayatori 是 `haproxy.cfg` 的唯一写入方，因此可以按主机清扫无主对象与无主宣告；首版只依赖
+   Ayatori 是 `haproxy.cfg` 的唯一写入方，因此可以按主机清扫无主对象（宣告随之撤回）；首版只依赖
    finalizer 正常删除，清扫留作后续，是否接受？
 2. **指定 VIP 的授权**：首版任何有权创建 LoadBalancer 的 namespace 都可请求 Pool 内的空闲 VIP；
    按 namespace 限定可请求范围留作后续。
@@ -241,10 +292,15 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 
 ## 测试分层
 
-- 领域单测：VIP 候选与认领判定、孤儿判定、`PlanHost` 在各 `HostFacts` 组合下的下一步（含
-  reload 失败、宣告先于配置的拒绝、删除顺序）、Programmed/Degraded/Available 判定。
+- 领域单测：VIP 候选与认领判定、孤儿判定、`PlanHost` 在各 `ProxyFacts` 组合下的下一步（含
+  reload 失败、frontend 未 OPEN、删除）、宣告规则（frontend 各状态、HAProxy 不应答、VIP 段外）、
+  Programmed/Degraded/Available 判定。
 - envtest：Address 并发认领冲突、同名重建、finalizer、controller 重启后从 status 与 Address 恢复。
-- adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、gobgpd + 对端 gobgp、PowerDNS。
+- adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、PowerDNS。
+- agent 集成测试：容器中的真实 HAProxy 与进程内作为对端的 GoBGP：后端全部失败仍宣告；frontend
+  禁用后撤回、恢复后重新宣告；VIP 不是本机地址时不宣告；agent 停止后对端撤回、重启后首轮补回；
+  HAProxy 停止后撤回全部。lo 上的 VIP 管理在一次性容器的网络 namespace 中以 `CAP_NET_ADMIN` 验证
+  （`make test-lb-agent-netlink`）。
 
 ## 实现进度
 
@@ -271,3 +327,7 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 - Hostname：`powerdns.Zone`（`github.com/joeig/go-powerdns/v3`）维护 A 记录，以 PowerDNS
   Authoritative 5.0.7 容器做 contract test；Reconciler 在 VIP 确认后发布、删除时主机清理后
   先删记录再释放 VIP。
+- 切片 5（ADR-0014，本机宣告）：新增 `cmd/lb-agent`（内嵌 GoBGP，读 stats socket，宣告规则
+  `Announcements` 与聚合共用）；删除 `gobgp.Speakers` 与 controller 的 `RouteBackend`，删除不再
+  先撤回；Attachment 改为 `Ready`/`Removed`；frontend 开启 `option socket-stats`；
+  `--loadbalancer-host` 去掉 gobgpd 地址。切片 3a/3b 中的宣告部分随之作废。

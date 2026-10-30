@@ -1,4 +1,5 @@
 // Package haproxy 经 HAProxy Data Plane API v3 管理 LB 主机上的 frontend/backend，只返回事实。
+// VIP 的宣告由 LB 主机上的 agent 读取同一 HAProxy 的 stats socket 决定（ADR-0014）。
 //
 // 部署契约（由 homelab-infra 保证，adapter 不检查）：
 //   - Ayatori 是 haproxy.cfg 中 lb_ 前缀 section 的唯一写入方；
@@ -59,7 +60,7 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 	if err != nil {
 		return loadbalancer.ProxyFacts{}, err
 	}
-	wantFrontends, wantBackends, _ := h.translate(uid, vip, ports)
+	wantFrontends, wantBackends, _ := h.translate(uid, vip.String(), ports)
 	gotFrontends, gotBackends := owned(frontends, uid), owned(backends, uid)
 	facts := loadbalancer.ProxyFacts{
 		Present: len(gotFrontends)+len(gotBackends) > 0,
@@ -76,16 +77,39 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 		if !loaded {
 			// 配置已写入但运行中的进程尚未加载：reload 已排期未执行。
 			facts.Matches, facts.Reload = true, loadbalancer.ReloadPending
+		} else if facts.Frontends, err = frontendStates(ctx, api, vip, wantFrontends); err != nil {
+			return loadbalancer.ProxyFacts{}, err
 		}
 	}
 	return facts, nil
+}
+
+// frontendStates 读取运行中进程里各 frontend 的状态，供 controller 按宣告规则判断。
+// LB agent 从 stats socket 读取同一事实（ADR-0014）。
+func frontendStates(ctx context.Context, api *dataplaneapi.ClientWithResponses, vip netip.Addr,
+	frontends map[string]dataplaneapi.Frontend) ([]loadbalancer.Frontend, error) {
+	response, err := api.GetStatsWithResponse(ctx, &dataplaneapi.GetStatsParams{Type: new(dataplaneapi.GetStatsParamsTypeFrontend)})
+	if err := check(response, err); err != nil {
+		return nil, err
+	}
+	open := map[string]bool{}
+	for _, stat := range value(value(response.JSON200).Stats) {
+		if stat.Stats != nil {
+			open[value(stat.Name)] = string(value(stat.Stats.Status)) == "OPEN"
+		}
+	}
+	states := make([]loadbalancer.Frontend, 0, len(frontends))
+	for name := range frontends {
+		states = append(states, loadbalancer.Frontend{Address: vip, Open: open[name]})
+	}
+	return states, nil
 }
 
 // Apply 在一个事务中写入该 LoadBalancer 的全部 section 并删除多余端口，提交后由代理 reload。
 // 他人在提交前写入时提交返回 409，由下一轮重新观察。删除时 Remove 以空期望走同一路径。
 func (h *Hosts) Apply(ctx context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
 	uid, vip, ports := desired(lb)
-	return h.apply(ctx, host, uid, vip, ports)
+	return h.apply(ctx, host, uid, vip.String(), ports)
 }
 
 // Remove 在一个事务中删除该 LoadBalancer 在 Host 上的全部 section。
@@ -93,9 +117,9 @@ func (h *Hosts) Remove(ctx context.Context, host loadbalancer.Host, lb *loadbala
 	return h.apply(ctx, host, lb.Snapshot().Owner.UID, "", nil)
 }
 
-func desired(lb *loadbalancer.LoadBalancer) (uid, vip string, ports []loadbalancer.Port) {
+func desired(lb *loadbalancer.LoadBalancer) (uid string, vip netip.Addr, ports []loadbalancer.Port) {
 	snapshot := lb.Snapshot()
-	return snapshot.Owner.UID, snapshot.Address.String(), snapshot.Ports
+	return snapshot.Owner.UID, snapshot.Address, snapshot.Ports
 }
 
 func (h *Hosts) apply(ctx context.Context, host loadbalancer.Host, uid, vip string, ports []loadbalancer.Port) error {
@@ -201,7 +225,9 @@ func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[strin
 			Mode:           new(dataplaneapi.FrontendModeTcp),
 			ClientTimeout:  millis(port.IdleTimeout),
 			DefaultBackend: new(backendName),
-			Binds:          &map[string]dataplaneapi.Bind{"vip": {Name: "vip", Address: new(vip), Port: new(int(port.Port))}},
+			// 每个 bind 在 stats 中单独成行并带地址，LB agent 据此把 frontend 对应到 VIP。
+			SocketStats: new(dataplaneapi.FrontendSocketStatsEnabled),
+			Binds:       &map[string]dataplaneapi.Bind{"vip": {Name: "vip", Address: new(vip), Port: new(int(port.Port))}},
 		}
 	}
 	return frontends, backends, drainTimeouts

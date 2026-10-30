@@ -64,24 +64,24 @@ func Reconstitute(snapshot Snapshot) *LoadBalancer {
 
 func (lb *LoadBalancer) Snapshot() Snapshot { return lb.snapshot }
 
-// Programmed 表示 VIP 已确认且至少一台 Host 已宣告。须在本轮 PlanHost 之后调用。
+// Programmed 表示 VIP 已确认且至少一台 Host 满足宣告规则。须在本轮 PlanHost 之后调用。
 func (lb *LoadBalancer) Programmed() (programmed bool, reason, message string) {
 	if lb.reason != ReasonDataPlanePending {
 		return false, lb.reason, lb.message
 	}
 	for _, attachment := range lb.attachments {
-		if attachment.Phase == AttachmentAnnounced {
-			return true, ReasonProgrammed, "VIP 已在至少一台主机宣告"
+		if attachment.Phase == AttachmentReady {
+			return true, ReasonProgrammed, "至少一台主机满足宣告条件"
 		}
 	}
-	return false, ReasonDataPlanePending, "VIP 已分配，尚无主机完成宣告"
+	return false, ReasonDataPlanePending, "VIP 已分配，尚无主机满足宣告条件"
 }
 
-// Degraded 表示存在未完成配置或宣告的 Host，返回这些 Host 的名称。
+// Degraded 表示存在未就绪（配置未生效或不满足宣告规则）的 Host，返回这些 Host 的名称。
 func (lb *LoadBalancer) Degraded() []string {
 	var hosts []string
 	for _, attachment := range lb.attachments {
-		if attachment.Phase != AttachmentAnnounced {
+		if attachment.Phase != AttachmentReady {
 			hosts = append(hosts, attachment.Host)
 		}
 	}

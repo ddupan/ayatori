@@ -104,7 +104,7 @@ func TestClientCertificateRotatesWithoutRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, _, err := loadBalancerBackends(secret, certificate, loadBalancerOptions{})
+	proxy, err := loadBalancerProxy(secret, certificate, loadBalancerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
