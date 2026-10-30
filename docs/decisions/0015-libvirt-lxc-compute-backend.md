@@ -238,9 +238,12 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - CPU 用 `reservedSystemCPUs`，配合 libvirt 的 `<vcpupin>`/`<emulatorpin>`。
 - **cgroup：** libvirt 在 `machine.slice`，LXC 在自己的 payload cgroup，kubelet 在
   `kubepods.slice`，统一使用 systemd 驱动。
-- **网络：** k8s 要求打开 `net.bridge.bridge-nf-call-iptables=1`，打开后 VM/LXC 走 bridge 的流量
-  也会经过宿主机的 iptables/nftables，可能被 CNI 或 kube-proxy 的规则误伤。必须先验证，再在
-  macvtap 和 nft 排除规则之间做选择。
+- **网络：** k8s 要求打开 `net.bridge.bridge-nf-call-iptables=1`，这是全局开关，打开后**所有**
+  Linux bridge 上的 VM/LXC 流量都会经过宿主机 iptables FORWARD。PoC 03 实测：FORWARD 策略被设为
+  DROP（Docker、部分严格 CNI）时实例 bridge 流量 100% 丢包。放行规则必须位于 FORWARD 链内部，另起
+  一个更高优先级的 nftables chain 无效。因此运行 kubelet 的节点上，实例网络倾向使用 **OVS**
+  （不是 Linux bridge，`br_netfilter` 不作用于它，还能在 network XML 中直接写 VLAN tag）；在
+  不运行 kubelet 的节点上，Linux bridge 仍然可用。
 
 ### 自举与 break-glass
 
@@ -268,6 +271,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    NVRAM/vTPM 跟随冷切换待验证。
 5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
+   **部分完成（2026-10-30）**：网络机制已确认（PoC 03），真实 kubelet 的 cgroup 与资源切分待验证。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
 8. 控制面完全丢失后的手工恢复演练。
 9. 用 `OnFailure=` 自动触发 `drbd-reactorctl evict`，完成"原地重启 → 换节点"的升级；验证
@@ -278,6 +282,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
 11. 实例状态卷：NVRAM、vTPM 状态和电源意图随冷切换迁移；有意关机的实例在原节点故障后不会被
     其他节点开机。
+    **已完成（2026-10-30）**：通过，见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)。
 
 ## 结果
 
