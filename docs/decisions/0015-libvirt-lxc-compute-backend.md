@@ -246,3 +246,31 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
   校验上。
 - 新增的控制组件只有一个 controller 和一个节点 Agent；drbd-reactor 是 LINBIT 维护的现成组件。
 - PVE 继续作为 brownfield 后端，直到本后端可靠覆盖现有 VM 为止。
+
+## 参考设计
+
+本 ADR 的分层基本对应 vSphere。vSphere 的价值在于边界干净：配置在中央，故障判定和重启在节点，
+防止双开靠存储锁，三者互不依赖。后续扩展时优先参照它的做法。
+
+| vSphere | 本后端 |
+|---|---|
+| vCenter：配置、放置、admission control | compute controller |
+| hostd + FDM，本地缓存受保护列表 | Compute Agent 与本地状态 |
+| VMFS 文件锁 | DRBD 单 Primary + quorum |
+| primary 主机重启故障 VM | drbd-reactor promoter |
+| 端口组 / dvSwitch | `LibvirtNetwork` + Chef 管理的 bridge |
+| datastore | `LibvirtStoragePool` |
+
+以下能力目前没有真实需求，出现需求时参照对应的 vSphere 设计：
+
+- **DRS 亲和/反亲和规则**：例如 etcd 成员不得落在同一宿主机。作为候选节点的过滤条件实现，
+  不做 DRS 式的自动负载均衡迁移。
+- **维护模式**：Node 设为 unschedulable，并按实例的存储类型冷迁或停机，对应 vSphere 进入维护
+  模式时的 evacuation。
+- **VMCP（APD/PDL）**：存储路径失效但主机存活时如何处理实例。对应 DRBD 失去 quorum 后
+  `io-error` 与 `suspend-io` 的取舍，PoC 时一并观察。
+- **按故障切换容量的 admission control**：目前只在创建时检查容量。需要保证"任一宿主机故障后
+  剩余容量仍够用"时，参照 vSphere 的槽位或百分比策略。
+- **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。
+
+明确不参照的部分：vMotion 式热迁移和 Fault Tolerance 不是本后端的目标（ADR-0007）。
