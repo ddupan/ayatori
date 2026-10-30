@@ -182,6 +182,8 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
     互斥。
   - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地
     拉起。
+- **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
+  PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
   "纠正"回去。
 - **按存储类型的能力：**
@@ -220,6 +222,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 
 1. 两台以上节点上，用 drbd-reactor promoter 分别跑一个 libvirt VM 和一个 LXC 容器。各测一次
    拔网线和断电，确认不会两边同时运行，记录冷启动所需时间。
+   **已完成（2026-10-30）**：通过，见 [PoC 01](../compute/poc-01-drbd-reactor-failover.md)。
 2. 确认 DRBD 参数（`auto-promote no`、quorum 等）能否和 PVE 现有的 LINSTOR resource group
    共存，或者是否需要单独的 resource group。
 3. 各节点下发同名 `rbd`、`logical` pool 和 bridge 型 network 后，domain 使用原生引用，冷启动换
