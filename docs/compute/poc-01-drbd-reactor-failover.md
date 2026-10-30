@@ -89,46 +89,51 @@ Ubuntu 的 `resource-agents-base` 不包含 `ocf:heartbeat:Filesystem`，所以�
 
 ## 实例崩溃
 
-promoter 文档明确写着它"完全不做服务监控"，重启由 systemd 的 `Restart=` 负责。崩溃分三类：
+promoter 文档明确写着它"完全不做服务监控"。崩溃分三类，最终验证结果如下：
 
-| 崩溃类型 | libvirt / LXC 的行为 | 处理方式 |
+| 崩溃类型 | 谁处理 | 实测 |
 |---|---|---|
-| 客户机内核 panic | 配了 pvpanic 设备后按 `<on_crash>` 处理 | domain XML 写 `<on_crash>restart</on_crash>`（本次未测） |
-| 客户机卡死但不 panic | libvirt 看不出来 | domain XML 加 `<watchdog model='i6300esb' action='reset'/>`（本次未测） |
-| QEMU 进程或容器 init 死亡 | libvirt 标记 `shut off (crashed)` 并发出事件，但不重启 | 见下面的测试 |
+| 客户机内核 panic | libvirt：`<on_crash>restart</on_crash>` + `<panic model='isa'/>` | 发出 `Crashed Panicked` 事件后约 30 ms 原地复位，QEMU 进程不变；客户机 22 秒后恢复 |
+| 客户机卡死但不 panic | QEMU：`<watchdog model='i6300esb' action='reset'/>` | 启用 watchdog 后不再喂狗，31 秒（超时 30 秒）后发出 `watchdog: reset` 事件并原地复位；41 秒后恢复 |
+| QEMU 进程或容器 init 死亡 | 节点上的监管进程原地重启，次数耗尽后 `OnFailure=` 执行 evict | 前两次崩溃分别在 3 秒、6 秒内原地重启；第三次在 13 秒内换到另一节点 |
 
-**第一轮：最初的单元配置。**
+客户机 panic 和卡死在 QEMU 内部完成复位，监管进程和 DRBD 都不会察觉。domain 的状态会显示
+`running (crashed)`，status 回写时不应把它当成故障。
 
-- `kill -9` vm1 的 QEMU 进程后，`poc-vm@vm1.service`（oneshot）和 target 仍然是 `active`，DRBD
-  保持 Primary（`open:no`）。既没有原地重启，也没有切换，实例**无声地停着**。
-- 杀掉 ct1 的 init 后，`lxc@ct1.service`（`lxc-start -F`，`Type=simple`）变成 `failed`，但 target
-  和挂载仍是 `active`，DRBD 保持 Primary（`open:yes`），同样没有恢复。
+### 过程中排除的方案
 
-**第二轮：单元跟踪实例的生命周期，并加上重启。**
+1. **oneshot 单元**（`Type=oneshot` + `RemainAfterExit`）：`kill -9` QEMU 后，单元和 target 仍是
+   `active`，DRBD 保持 Primary，实例**无声地停着**。`lxc@ct1`（`lxc-start -F`）虽然能变成
+   `failed`，但 target 和挂载不受影响，同样没有恢复。
+2. **`dependencies-as`/`target-as = "BindsTo"`**：同一种崩溃，有时原地重启，有时直接换节点，
+   取决于 systemd job 的排队顺序。有一次 target 停止后连带停止了 `drbd-promote@`，stop job 取消
+   了自动重启；另一次 `drbd-promote@` 没有停止，重启耗尽后 DRBD 卡在 Primary，无法切换。
+   **结果不确定，不能采用**。保留默认的 `Requires`。
+3. **在同一个单元上同时设置 `Restart=` 和 `OnFailure=`**（systemd 255）：第一次失败就触发
+   `OnFailure=`，不会进行原地重启。VM 和 LXC 都复现了这一点（容器单次崩溃 3 秒后就被 evict）。
+   因此重启计数不能交给 systemd。
 
-- `poc-vm@.service` 改为 `Type=simple`，主进程在 domain 停止时以非零值退出。`lxc@ct1` 加
-  drop-in。两者都设置 `Restart=on-failure`、`RestartSec=2`、`StartLimitBurst=3`、
-  `StartLimitIntervalSec=120`。
-- promoter 设置 `dependencies-as = "BindsTo"`、`target-as = "BindsTo"`。
+### 采用的方案
 
-结果：
+- promoter 启动的单元是一个**监管进程**（`Type=simple`，不设置 `Restart=`）：
+  - 启动实例后一直跟踪它；实例死亡后在本机重启，并按滑动窗口计数（PoC 中为 120 秒内 3 次）；
+  - 次数耗尽后以非零值退出，单元进入 `failed`，`OnFailure=` 在节点本地执行
+    `drbd-reactorctl evict <实例>`，并对单元执行 `reset-failed`，方便以后再次落回这个节点。
+- 整条链路只用到节点本地的组件，不依赖 Agent 和控制面。
+- 正式实现中监管进程订阅 libvirt lifecycle 事件，不轮询；LXC 由监管进程循环执行
+  `lxc-start -F`（PoC 只验证了 VM 版，LXC 只验证了反例 3）。
+- `evict` 按配置文件名查找，Agent 为**每个实例生成一个 promoter 配置文件**。
 
-- 单次崩溃：**原地重启**，VM 5 秒，容器约 1 秒，DRBD 角色不变。
-- 达到重启上限后：单元 `failed`，target 停止，**但 `drbd-promote@` 仍是 active，DRBD 不 demote**，
-  其他节点无法接管，实例卡死。原因是 `drbd-promote@` 对 target 的关系是 `PartOf`，而 `PartOf`
-  只传播显式的 stop，不传播由依赖失败引起的 stop。drbd-reactor 1.12 不会自动从"本地重启失败"
-  升级为"换节点"。
-- 在卡死的节点上执行 `drbd-reactorctl evict vm1` 后，资源干净地 demote，poc-1 接管并启动 vm1。
-- `evict` 按配置文件名查找（`vm1.toml`），本次最初把两个资源写在同一个 `poc.toml` 里，导致
-  无法单独 evict，拆分后才成功。
+### 其他发现
 
-结论：
-
-- 原地重启交给 systemd 的 `Restart=`。单元必须**跟踪实例的生命周期**：VM 跟踪 domain（正式
-  实现订阅 libvirt lifecycle 事件，不轮询），LXC 用前台运行的 `lxc-start -F`。
-- 重启次数耗尽后，**升级到换节点必须显式执行 `drbd-reactorctl evict`**。建议用单元的
-  `OnFailure=` 在节点本地触发，不依赖 Agent 和控制面（尚未验证）。
-- Agent 为**每个实例生成一个 promoter 配置文件**。
+- **domain XML 必须启用 ACPI**（`<features><acpi/><apic/></features>`）。PoC 最初没写，客户机
+  没有 ACPI，ISA pvpanic 设备无法被发现，panic 后宿主机收不到通知，客户机直到 `kernel.panic`
+  计时（120 秒）后才自己重启。这属于 XML 的错误，不是 libvirt 的缺口。
+- 客户机内需要在启动时加载 `pvpanic-mmio` 和 `i6300esb`，并有程序喂狗。
+- 不写 `<uuid>` 时，各节点 define 出的 UUID 不同，再次 define 会报"domain 已存在"。UUID 必须
+  由 Ayatori 统一填写（ADR-0015 已有此规则）。
+- PoC 的客户机从 CirrOS 换成了 Alpine NoCloud 镜像：CirrOS 在没有元数据服务的环境里启动约需
+  10 分钟，期间 SSH 不可用。
 
 ## 未覆盖
 
@@ -137,6 +142,5 @@ ADR-0015 的其余待验证项，以及：
 - 带磁盘的 tiebreaker 和 3 副本；
 - 通过 LINSTOR 管理的资源；
 - `suspend-io` + freeze；
-- 内核挂死（宿主机没有掉电但不响应）；
-- 客户机内核 panic（`<on_crash>restart`）和卡死（watchdog 设备）；
-- 用 `OnFailure=` 自动触发 evict。
+- 宿主机内核挂死（没有掉电但不响应）；
+- LXC 版监管进程。
