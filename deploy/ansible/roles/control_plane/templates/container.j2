@@ -19,7 +19,7 @@ Environment={{ k }}={{ v }}
 {% for v in item.volumes | default([]) %}
 Volume={{ v }}
 {% endfor %}
-Exec={{ item.args | join(' ') }}
+Exec={{ (item.args + item.extra_args | default([])) | join(' ') }}
 
 [Service]
 Restart=on-failure

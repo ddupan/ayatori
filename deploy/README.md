@@ -65,6 +65,19 @@ ayatori_gitops:
 apiserver 拒绝；`prune: true`，从目录移除 Tenant 即释放（默认 Retain，不删数据）。
 Promotion 即把 Prod 安装的 release 改为 Dev 已验收的 tag。
 
+可选的 `ayatori_loadbalancer` 启用 LoadBalancer controller：
+
+```yaml
+ayatori_loadbalancer:
+  address_pool: 10.62.1.0/24
+  hosts:  # 与 --loadbalancer-host 同格式：<名称>,<Data Plane API URL>
+    - lb-dev-1,https://lb-dev-1.lab.ddupan.top:5555
+```
+
+此时 Flux 另同步 `deploy/flux/loadbalancer`：ESO 把 Data Plane API 客户端证书（`pki-loadbalancer-<env>`
+每天签发）、服务端 CA（`pki/cert/ca`）与 Basic 凭据（`kv/infra/loadbalancer/<env>`）写入
+`ayatori-system/loadbalancer-credentials`。首次部署时 Secret 同步前 manager 启动失败并重试。
+
 首次部署后，OpenBao 的 Kubernetes auth mount 需要本环境 API 的公开 CA
 （`/var/lib/k0s/pki/ca.crt`），由 homelab-infra 的 OpenBao Terraform 管理；合并前 ESO 与
 manager 会持续报告 OpenBao 登录失败并重试。

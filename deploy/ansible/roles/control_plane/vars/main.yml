@@ -60,4 +60,13 @@ containers:
       - --database-credential-prefix={{ database_credential_prefix }}
       - --database-provision-resources
       - --database-credential-url-base={{ openbao_address }}
+    extra_args: "{{ loadbalancer_args }}"
     memory: 256M
+
+# 部署方声明 ayatori_loadbalancer 时启用 LoadBalancer controller；凭据 Secret 由
+# deploy/flux/loadbalancer 同步。
+loadbalancer_args: >-
+  {{ [] if ayatori_loadbalancer is not defined else
+     ['--loadbalancer-address-pool=' ~ ayatori_loadbalancer.address_pool,
+      '--loadbalancer-credentials=' ~ control_namespace ~ '/loadbalancer-credentials']
+     + (ayatori_loadbalancer.hosts | map('regex_replace', '^', '--loadbalancer-host=') | list) }}
