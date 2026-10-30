@@ -102,10 +102,22 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
   - inactive 配置与运行中配置不一致时，设置 `RestartRequired`。
 - **LXC：** Agent 使用 `go-lxc` 绑定 liblxc，不 fork `lxc-*` 命令。配置文件以文件 hash 判断是否
   漂移。
-- **libvirt autostart 必须关闭。** 实例启动只由 Agent 或 drbd-reactor 决定。
+- **libvirt autostart 必须关闭。** 实例启动只由 Agent（依据本地状态）或 drbd-reactor 决定。
 
 ### Agent 与控制面的通信
 
+- **Agent 维护本地状态，watch 只负责更新它。** 参照 vSphere FDM 在每台主机本地缓存受保护
+  VM 列表：
+  - 链路为 informer → 本地状态 → 本地 reconcile → libvirt/liblxc/drbd-reactor。本地
+    reconcile 只读本地状态，从不直接读 API。
+  - 本地状态按对象保存 spec、generation 和 resourceVersion，每个对象一个文件，写临时文件后
+    fsync 再 rename，保证原子。只接受 resourceVersion 更新的版本。
+  - Agent 启动时先加载本地状态并完成一轮 reconcile，再去连接 API。控制面不可用时，节点重启后
+    仍能按本地状态拉起实例。
+  - **删除只在 API 可达时发生**：watch 收到删除事件，或者重新 list 后对象已不存在，才从本地
+    状态移除并清理实例。API 不可达期间绝不清理。
+  - 控制面恢复后以 API 为准：更新的 resourceVersion 覆盖本地状态，Agent 回写离线期间的 status。
+  - 本地状态只决定"应当是什么"，不决定 DRBD 实例跑在哪个节点（见自动冷启动一节）。
 - **Agent 主动 watch Ayatori API**，和 kubelet 的做法一样。节点不开放入站端口，控制面也不持有
   宿主机凭据。
 - **controller 给每个候选节点打一个 label**，Agent 按 label selector 只 watch 与自己相关的对象。
@@ -165,6 +177,11 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - VM：`ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
   - LXC：`ocf:heartbeat:Filesystem` 挂载 rootfs，然后是 `lxc@<name>.service`。
 - **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
+- **谁来启动实例：**
+  - DRBD 上 `ha: Restart` 的实例只由 promoter 启动，Agent 不得直接启动，否则会绕过单 Primary
+    互斥。
+  - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地
+    拉起。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
   "纠正"回去。
 - **按存储类型的能力：**
@@ -193,7 +210,8 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
 etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 LXC 中。这种"控制面运行在它管理的
 资源上"的做法成立，前提是：
 
-- 运行中的实例和自动冷启动都不依赖控制面，靠的是节点上 libvirt/LXC 的持久配置和 drbd-reactor。
+- 运行中的实例和自动冷启动都不依赖控制面，靠的是 Agent 的本地状态、libvirt/LXC 的持久配置和
+  drbd-reactor。
 - 控制面完全丢失时，在节点上用 `virsh` 或 `lxc-*` 手工拉起控制面所在的实例；Agent 恢复后按
   名字认领已有实例，不能重复创建。这条路径必须写成 runbook 并实际演练过。
 - Agent、LINSTOR 和 apiserver 的连接地址不得依赖被迁入本后端的 DNS。
@@ -212,6 +230,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
 8. 控制面完全丢失后的手工恢复演练。
+9. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
+   拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
 
 ## 结果
 
