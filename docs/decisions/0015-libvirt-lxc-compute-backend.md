@@ -78,6 +78,11 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
   pool 上的卷，则只有该卷所在节点。
 - **domain/LXC 共有的 Ayatori 自有字段：** `nodeName` 或候选节点、`ha`（`Restart`/`None`）、
   `runState`。
+  - `runState: Running` 只表示"创建后和宿主机故障后应当拉起"，不表示"任何时候都必须在运行"。
+  - `ha: Restart` 只对**崩溃**生效（libvirt 原因为 `crashed`/`failed`、QEMU 或容器 init 消失）。
+    客户机主动关机（`shutdown`）、运维人员在控制台关机或 `destroy`，都是有意的停止，不重启，与
+    vSphere HA 和 KubeVirt `RerunOnFailure` 的语义一致（PoC 01）。
+  - 开关机、重置、换盘等运行时操作不改 spec，见 [ADR-0016](0016-instance-node-services.md)。
 - **由 Ayatori 填写的字段，用户写了也会被覆盖：**
   - domain 的 `name`、`uuid`；
   - lxc 的 `lxc.uts.name`、`lxc.rootfs.path` 和网络 link。
@@ -126,7 +131,8 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 - **Agent 身份**：用 SPIRE JWT-SVID 登录 apiserver，沿用 ADR-0014 的 structured authentication。
 - **写权限**：用 ValidatingAdmissionPolicy 根据 `request.userInfo`，只允许 Agent 修改候选节点
   包含自己的对象的 status。
-- **读权限无法按节点限制。** 每个 Agent 都能读到所有配置，因此配置中不得包含密钥，Ceph key 等
+- **读权限无法按节点限制。** 每个 Agent 都能读到所有配置，因此配置（包括 cloud-init user-data）中
+  不得包含密钥；实例通过 SPIFFE 身份自行向 Bao 取用（ADR-0016）。Ceph key 等
   一律通过 Bao 交付。
 
 ### 存储
@@ -199,11 +205,18 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
     失败就会触发 `OnFailure=`。promoter 的依赖保持默认 `Requires`，`BindsTo` 会让结果取决于 job
     排队顺序。
   - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。
-- **固件状态必须跟随实例**（PoC 02）：UEFI NVRAM 和 vTPM 状态默认在节点本地
-  （`/var/lib/libvirt/qemu/nvram/`、`/var/lib/libvirt/swtpm/<uuid>/`），冷切换后启动项丢失、
-  BitLocker 要求恢复密钥。NVRAM 用 `<nvram type='block'>` 放在实例 DRBD 资源的一个 volume 上；
-  vTPM 状态目录由 promoter 在启动前把实例 DRBD 资源上的文件系统挂载到该路径（libvirt 10.0 不支持
-  TPM backend 的 `<source>`）。
+- **实例状态卷：凡是必须跟随实例的节点侧状态，都放在实例自己的 DRBD 资源上**，不放在节点本地。
+  参照 vSphere 把 VM 的配置和状态文件放在 datastore 上。每个受保护实例的 DRBD 资源多带一个小
+  volume（ext4，几十 MiB），由 promoter 在启动实例前挂载到 `/var/lib/ayatori/instances/<实例>`，
+  内容包括：
+  - **UEFI NVRAM**：默认在节点本地 `/var/lib/libvirt/qemu/nvram/`，冷切换后启动项丢失（PoC 02）。
+    domain 的 `<nvram>` 指向状态卷上的文件。
+  - **vTPM 状态**：默认在节点本地 `/var/lib/libvirt/swtpm/<uuid>/`，冷切换后 BitLocker 会要求恢复
+    密钥。libvirt 10.0 不支持 TPM backend 的 `<source>`，因此把状态卷上的目录 bind mount 到该路径。
+  - **电源意图**：实例被有意关机时写入"off"标记。宿主机故障后接管的节点读到标记就不启动，开机操作
+    清除标记。不依赖控制面，也不依赖 Agent 之间的同步。没有这个标记，有意关机的实例会在原节点
+    故障后被其他节点重新开机（PoC 01 中已识别，尚未验证）。
+  - LXC 的 rootfs 本来就在 DRBD 上，电源意图同样写入状态卷。
 - **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
   PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
@@ -263,6 +276,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    崩溃"一节。LXC 版监管进程待实现时补测。
 10. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
+11. 实例状态卷：NVRAM、vTPM 状态和电源意图随冷切换迁移；有意关机的实例在原节点故障后不会被
+    其他节点开机。
 
 ## 结果
 

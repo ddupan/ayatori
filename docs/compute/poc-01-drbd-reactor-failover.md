@@ -124,6 +124,18 @@ promoter 文档明确写着它"完全不做服务监控"。崩溃分三类，最
   `lxc-start -F`（PoC 只验证了 VM 版，LXC 只验证了反例 3）。
 - `evict` 按配置文件名查找，Agent 为**每个实例生成一个 promoter 配置文件**。
 
+### 有意关机不重启
+
+- 最初的监管进程对实例的**任何**停止都会重启，包括客户机内主动关机，这与 vSphere HA 和 KubeVirt
+  `RerunOnFailure` 的语义不符。
+- 改为只在 libvirt 原因为 `crashed`/`failed` 时重启；`shutdown`（客户机关机）和 `destroyed`
+  （运维操作）以 0 退出。`ExecStop=` 加 `-` 前缀，避免对已停止的 domain 执行 `destroy` 时把单元
+  标记为失败。
+- 结果：客户机内 `poweroff` 后 vm1 保持 `shut off (shutdown)`，单元为 `inactive`，没有触发
+  evict；`kill -9` QEMU 仍在 3 秒内原地重启。
+- 未解决：有意关机后该节点仍持有 Primary。如果这个节点随后故障，接管节点会把实例重新开机。电源
+  意图需要写在实例自己的 DRBD 资源上（ADR-0015 的实例状态卷），尚未验证。
+
 ### 其他发现
 
 - **domain XML 必须启用 ACPI**（`<features><acpi/><apic/></features>`）。PoC 最初没写，客户机
