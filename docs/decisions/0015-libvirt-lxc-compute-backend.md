@@ -178,10 +178,20 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - LXC：`ocf:heartbeat:Filesystem` 挂载 rootfs，然后是 `lxc@<name>.service`。
 - **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
 - **谁来启动实例：**
-  - DRBD 上 `ha: Restart` 的实例只由 promoter 启动，Agent 不得直接启动，否则会绕过单 Primary
-    互斥。
+  - DRBD 上 `ha: Restart` 的实例，**换节点只由 promoter 决定**，Agent 不得在其他节点启动它，
+    否则会绕过单 Primary 互斥。
   - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地
     拉起。
+- **实例自身崩溃**（PoC 01 已验证）：promoter 不监控服务，各层分工如下：
+  - 客户机 panic 和卡死：在 domain XML 中写 `<on_crash>restart</on_crash>` 和 watchdog 设备，
+    由 libvirt/QEMU 处理。
+  - QEMU 进程或容器 init 死亡：由 systemd 的 `Restart=` 原地重启。为此，promoter 启动的单元
+    必须跟踪实例的生命周期：VM 单元在 domain 停止时退出（订阅 libvirt lifecycle 事件），
+    LXC 使用 `lxc-start -F`。不得使用 oneshot 单元，否则实例死亡后节点仍持有 Primary，
+    既不重启也不切换。
+  - 重启次数耗尽：drbd-reactor 不会自动 demote，需要由单元的 `OnFailure=` 在节点本地执行
+    `drbd-reactorctl evict <实例>`，交给其他节点。
+  - 因此 Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。
 - **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
   PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
@@ -233,7 +243,9 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
 8. 控制面完全丢失后的手工恢复演练。
-9. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
+9. 用 `OnFailure=` 自动触发 `drbd-reactorctl evict`，完成"原地重启 → 换节点"的升级；验证
+   `<on_crash>restart</on_crash>` 和 watchdog 设备。
+10. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
 
 ## 结果
