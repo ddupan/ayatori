@@ -19,29 +19,52 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
         with:
+          go: 'true'
           go-version-file: go.mod
-          cache: true
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
 
       - name: Lint integration build
         run: make lint-loadbalancer-integration
 
   test:
     runs-on: [self-hosted, pod]
-    timeout-minutes: 30
+    timeout-minutes: 60  # 冷缓存 + -race 全量编译就要 ~25 分钟；缓存只在成功时保存
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+      # Go 工具链与模块、Docker Hub 镜像走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
         with:
+          go: 'true'
           go-version-file: go.mod
-          cache: true
+          docker: 'true'
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
 
       # Runner 提供本 job 可用的 Docker；workflow 只验证，不重复启动 daemon。
       - name: Verify Docker availability

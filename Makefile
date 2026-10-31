@@ -195,17 +195,19 @@ OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 KUSTOMIZE_VERSION ?= v5.8.1
 CONTROLLER_TOOLS_VERSION ?= v0.22.0
 
-#ENVTEST_VERSION is the controller-runtime version to use for setup-envtest, derived from go.mod
+#ENVTEST_VERSION is the controller-runtime release branch to use for setup-envtest, derived from go.mod.
+# 不用 vX.Y.Z：上面的 go list -m 已把 controller-runtime@vX.Y.Z 写进模块缓存，go install 随后直接用缓存里
+# 的父模块，不再查询 tools/setup-envtest 子模块，于是报 "does not contain package"（空缓存的 CI 必现）。
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_VERSION manually (controller-runtime replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v")
+  printf '%s\n' "$$v" | sed -E 's/^v?([0-9]+)\.([0-9]+).*/release-\1.\2/')
 
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
-GOLANGCI_LINT_VERSION ?= v2.13.1
+GOLANGCI_LINT_VERSION ?= v2.14.0
 OAPI_CODEGEN_VERSION ?= v2.8.0
 # 与 LB 主机部署的 dataplaneapi 版本一致；升级时同时更新校验和并重新生成。
 DATAPLANEAPI_VERSION ?= v3.4.3
@@ -248,13 +250,17 @@ generate-dataplaneapi: oapi-codegen ## 从固定版本的 Data Plane API spec �
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-	@test -f .custom-gcl.yml && { \
-		echo "Building custom golangci-lint with plugins..." && \
-		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
-		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
-	} || true
+# 使用上游发布的二进制并按发布的 checksums 校验，不从源码编译；结构化日志检查用内置 loggercheck。
+$(GOLANGCI_LINT): | $(LOCALBIN)
+	@set -e; v=$(GOLANGCI_LINT_VERSION); v=$${v#v}; \
+	asset=golangci-lint-$$v-$$(go env GOOS)-$$(go env GOARCH).tar.gz; \
+	base=https://github.com/golangci/golangci-lint/releases/download/v$$v; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "Downloading golangci-lint v$$v"; \
+	curl -fsSL -o "$$tmp/$$asset" "$$base/$$asset"; \
+	curl -fsSL "$$base/golangci-lint-$$v-checksums.txt" | grep " $$asset$$" | (cd "$$tmp" && sha256sum -c -) >/dev/null; \
+	tar -xzf "$$tmp/$$asset" -C "$$tmp" --strip-components=1; \
+	mv "$$tmp/golangci-lint" "$(GOLANGCI_LINT)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

@@ -343,11 +343,12 @@ func TestKubernetesSessionWithRealTokenReview(t *testing.T) {
 		t.Fatal("cannot revoke fixture OpenBao token")
 	}
 	waitForAuthentication(t, func() bool { return !session.Ready() && client.Token() == "" })
-	denied, err := api.controller.CoreV1().ServiceAccounts(authNamespace).CreateToken(ctx, authRole,
-		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{authAudience}}}, metav1.CreateOptions{})
-	if !apierrors.IsForbidden(err) || (denied != nil && denied.Status.Token != "") {
-		t.Fatal("revoked caller still obtained a token")
-	}
+	// RBAC 授权器读 informer 缓存，删除 RoleBinding 后要等它观察到才会拒绝；负载高时立即断言会误报。
+	waitForAuthentication(t, func() bool {
+		denied, err := api.controller.CoreV1().ServiceAccounts(authNamespace).CreateToken(ctx, authRole,
+			&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{Audiences: []string{authAudience}}}, metav1.CreateOptions{})
+		return apierrors.IsForbidden(err) && (denied == nil || denied.Status.Token == "")
+	})
 	api.grant()
 	waitForAuthentication(t, session.Ready)
 	if client.Token() == initialToken {
