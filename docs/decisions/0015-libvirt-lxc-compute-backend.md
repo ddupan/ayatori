@@ -303,7 +303,7 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 | | 含义 | VM | LXC |
 |---|---|---|---|
 | 配置量 | 实例看到的内存 | domain XML 的 `<memory>`（`<currentMemory>` 为 balloon 目标） | `lxc.cgroup2.memory.max`，**必须设置**，由 Agent 按 spec 生成 |
-| 保障量 | 承诺给到、不会被回收的部分；默认等于配置量 | Agent 在实例启动后写入其 scope 的 `memory.low`（libvirt 的 `min_guarantee` 不支持 QEMU），祖先 slice 也要有足够的 `MemoryLow` | 同左 |
+| 保障量 | 承诺给到、不会被回收的部分；默认等于配置量 | Agent 在实例启动后写入其 scope 的 `memory.low`（libvirt 的 `min_guarantee` 不支持 QEMU），并逐级设置祖先 slice 的 `MemoryLow`，不小于其下各级之和（PoC 14） | 同左（payload cgroup 直接在根下） |
 | 权重 | 争抢时的比例 | `cpu.weight` 等 | 同左 |
 
 - **准入只按保障量记账**：本节点实例保障量之和不超过 allocatable。配置量之和可以超过物理内存，即超售；可按 pool
@@ -311,7 +311,11 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 - **VM 默认开启 free page reporting**（`<memballoon model='virtio' freePageReporting='on'/>`），客户机释放的内存还给
   宿主机（PoC 12）。KSM 按需开启。
 - 实例超出保障量的部分要能被回收，需要宿主机 swap/zswap；否则超售 VM 在内存紧张时只能被 OOM 杀掉（等同崩溃）。
-  未验证。
+  PoC 14 中开启 swap + zswap 后，实例超出保障量的部分被换出，没有任何 OOM，客户机照常工作。Pod 不使用 swap
+  （`k8s.slice` 设 `MemorySwapMax=0`，kubelet 加 `--fail-swap-on=false`）。
+- `memory.low` 是软保护：各级保护之和超过扣除内核开销后的物理内存时会被突破（PoC 14）。准入时保障量之和不得超过
+  allocatable，宿主机预留要覆盖宿主机进程的实际占用并给内核留出余量。不用 `memory.min` 做实例保障，它会把 OOM
+  推给别人。
 
 **Pod 是弹性层**，用剩下的内存，压力大时最先被牺牲：
 
@@ -398,6 +402,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
     （PoC 13 中真实发生）；DRBD 仍连着时依赖告警（`ExporterDown`、`InstanceDown`）与人工经 PVE/IPMI
     重置，不做 Agent 自我 fencing。资源模型中的硬上限已消除 PoC 11 中的触发原因。
 15. 实例超售：宿主机 swap/zswap 与 KSM 下，`memory.low` 能否保护保障量、超出部分能否被回收而不导致 QEMU 被 OOM。
+    **已完成（2026-10-31）**：swap/zswap 部分通过，见 [PoC 14](../compute/poc-14-instance-overcommit-swap.md)；
+    KSM 与可压缩负载下 zswap 的收益未测。
 
 ## 结果
 
