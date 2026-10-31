@@ -51,8 +51,13 @@
   到本机 Agent。VM 通过 bridge 直连物理 VLAN，需要先在 bridge 层改写目的 MAC 再做 DNAT。
 - **按入口端口识别实例，不按源 IP。** 客户机可以伪造 IP，但无法伪造自己接在哪个 tap/veth 上。
   OpenStack 的 metadata proxy 需要额外签名的 header 才能防伪，宿主机上则直接掌握这个事实。
+  PoC 04 的做法：bridge 层按入口端口打 mark，三层按 mark DNAT 到该实例专属的端口；不需要
+  `br_netfilter`。
+- **实例端口名由 Agent 固定**：domain 中写 `<target dev='ay-<实例>'/>`，LXC 写
+  `lxc.net.N.veth.pair`。默认的 `vnetN` 在冷启动后会变，按端口写的规则随之失效（PoC 04）。
 - **防 SSRF，照搬 AWS IMDSv2**：先 PUT 换取会话 token；响应包的 IP TTL 设为 1，嵌套容器或被转发的
-  请求拿不到；请求必须带指定 header（GCE 用 `Metadata-Flavor`）。
+  请求拿不到；请求必须带指定 header（GCE 用 `Metadata-Flavor`）。TTL 要设在监听 socket 上，否则
+  SYN-ACK 仍是默认 TTL，嵌套的请求能完成握手。
 - **提供的内容**：实例元数据、动态更新的 user-data，以及下文的 SPIFFE JWT-SVID。
 
 ### 身份：Agent 通过 SPIRE 代领 SVID
@@ -101,18 +106,25 @@
   什么操作。
 - **状态**：Agent 把当前介质和电源状态回写到 `status.media`、`status.powerState`。
 - **电源意图**：关机和强制断电写入实例状态卷上的"off"标记，开机时清除。监管进程只对崩溃自动重启
-  （ADR-0015），因此客户机内主动关机和控制台关机都会保持关闭。
+  （ADR-0015），因此客户机内主动关机和控制台关机都会保持关闭。强制断电（`virsh destroy`、
+  `lxc-stop -k`）在监管进程看来可能与崩溃相同，所以由 Agent **先写标记再执行**。
+- **重启**由监管进程在内部完成，Agent 不得 `systemctl restart` promoter 管理的单元：那会连带
+  demote 资源，实例被另一节点接管（PoC 04）。
 
 ## 待验证（Accepted 之前必须完成）
 
 1. 用 nftables 在 VM bridge 和 LXC veth 上把 `169.254.169.254` 重定向到 Agent，并按入口端口
    识别实例；IMDSv2 式 token 与 TTL 1 生效。
+   **已完成（2026-10-31）**：通过，见 [PoC 04](../compute/poc-04-metadata-media-lxc-supervisor.md)。
 2. 通过 Delegated Identity API 为实例选择器签发 JWT-SVID，实例用它登录 Bao；确定注册条目的
    选择器和父 ID。
 3. 控制台代理：OIDC 登录、SubjectAccessReview、noVNC 经 Agent 中继访问 VNC unix socket；SPICE
    `.vv` 经代理连接。
 4. `change-media --live` 在客户机重启后保留、在冷启动后回到配置。
+   **已完成（2026-10-31）**：光驱通过，见 PoC 04；软驱未测。
 5. 电源意图标记：有意关机的实例在原节点故障后不会被其他节点开机。
+   **已完成（2026-10-31）**：VM 见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)，
+   LXC 见 PoC 04。
 
 ## 结果
 

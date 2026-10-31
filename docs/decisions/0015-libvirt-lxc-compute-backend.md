@@ -181,9 +181,13 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
 - **DRBD 参数**：`quorum majority`、`auto-promote no`、`on-no-quorum io-error`，
   `on-no-data-accessible` 与 `on-no-quorum` 取相同的值。至少 3 个副本，或者 2 个副本加
   diskless tiebreaker。drbd-reactor 不做节点级 STONITH，完全依赖 DRBD quorum。
+- **tiebreaker 必须在故障发生前就在线**：故障后才接入的 tiebreaker 没有见证旧 Primary 的最后
+  状态，DRBD 不会因此恢复 quorum（PoC 04）。PoC 中有两个资源的 tiebreaker 掉线 11 小时无人察觉。
+  Agent 必须把每个资源的 peer 连接和 quorum 回写 status，并对缺副本、缺 tiebreaker 告警。
 - **promoter 的 `start` 内容：**
   - VM：`ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
-  - LXC：`ocf:heartbeat:Filesystem` 挂载 rootfs，然后是 `lxc@<name>.service`。
+  - LXC：挂载 rootfs 的 systemd `.mount` 单元（Ubuntu 没有 `ocf:heartbeat:Filesystem`），然后是
+    LXC 版监管进程，不是 `lxc@<name>.service`。
 - **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
 - **谁来启动实例：**
   - DRBD 上 `ha: Restart` 的实例，**换节点只由 promoter 决定**，Agent 不得在其他节点启动它，
@@ -204,7 +208,13 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
     失败就会触发 `OnFailure=`。promoter 的依赖保持默认 `Requires`，`BindsTo` 会让结果取决于 job
     排队顺序。
-  - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。
+  - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。单元名中的 `\x2d` 等
+    转义在 TOML 双引号字符串中非法，必须用单引号字符串（PoC 03）。
+  - **LXC 的停止原因不能看 `lxc-start -F` 的退出码**，它总是 0。容器内关机时内核以 SIGINT 结束
+    init（重启为 SIGHUP），其他终止方式都算崩溃；监管进程需要从 liblxc 拿到 init 的 wait status
+    （PoC 04）。`lxc-start` 不响应 SIGTERM，停止时由监管进程调用 `lxc-stop`。
+  - 实例的重启由监管进程在内部完成。对 promoter 管理的单元执行 `systemctl restart` 会连带
+    demote 资源，实例被其他节点接管。
 - **实例状态卷：凡是必须跟随实例的节点侧状态，都放在实例自己的 DRBD 资源上**，不放在节点本地。
   参照 vSphere 把 VM 的配置和状态文件放在 datastore 上。每个受保护实例的 DRBD 资源多带一个小
   volume（ext4，几十 MiB），由 promoter 在启动实例前挂载到 `/var/lib/ayatori/instances/<实例>`，
@@ -215,7 +225,7 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
     密钥。libvirt 10.0 不支持 TPM backend 的 `<source>`，因此把状态卷上的目录 bind mount 到该路径。
   - **电源意图**：实例被有意关机时写入"off"标记。宿主机故障后接管的节点读到标记就不启动，开机操作
     清除标记。不依赖控制面，也不依赖 Agent 之间的同步。没有这个标记，有意关机的实例会在原节点
-    故障后被其他节点重新开机（PoC 01 中已识别，尚未验证）。
+    故障后被其他节点重新开机（PoC 01 中已识别；VM 和 LXC 分别在 PoC 03、04 中验证）。
   - LXC 的 rootfs 本来就在 DRBD 上，电源意图同样写入状态卷。
 - **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
   PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
@@ -243,7 +253,8 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   DROP（Docker、部分严格 CNI）时实例 bridge 流量 100% 丢包。放行规则必须位于 FORWARD 链内部，另起
   一个更高优先级的 nftables chain 无效。因此运行 kubelet 的节点上，实例网络倾向使用 **OVS**
   （不是 Linux bridge，`br_netfilter` 不作用于它，还能在 network XML 中直接写 VLAN tag）；在
-  不运行 kubelet 的节点上，Linux bridge 仍然可用。
+  不运行 kubelet 的节点上，Linux bridge 仍然可用。不得用 `modprobe -r br_netfilter` 回退：它会连带
+  卸载 `bridge` 模块，宿主机上所有 Linux bridge 随之消失（PoC 04）。
 
 ### 自举与 break-glass
 
@@ -268,8 +279,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 4. Windows 和至少一个 retro 系统（例如 Win9x/DOS，i440fx + IDE + SB16）能否通过 domain XML 透传
    运行。
    **部分完成（2026-10-30）**：设备模型通过，见 [PoC 02](../compute/poc-02-retro-and-windows.md)；
-   NVRAM/vTPM 跟随冷切换待验证。
-5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态。
+   NVRAM/vTPM 跟随冷切换已在 PoC 03 通过；完整安装和 virtio 驱动未测。
+5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态；能否取得容器 init 的 wait status（PoC 04）。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **部分完成（2026-10-30）**：网络机制已确认（PoC 03），真实 kubelet 的 cgroup 与资源切分待验证。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
@@ -277,7 +288,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 9. 用 `OnFailure=` 自动触发 `drbd-reactorctl evict`，完成"原地重启 → 换节点"的升级；验证
    `<on_crash>restart</on_crash>` 和 watchdog 设备。
    **已完成（2026-10-30）**：通过，见 [PoC 01](../compute/poc-01-drbd-reactor-failover.md) 的"实例
-   崩溃"一节。LXC 版监管进程待实现时补测。
+   崩溃"一节；LXC 版见 [PoC 04](../compute/poc-04-metadata-media-lxc-supervisor.md)。
 10. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
 11. 实例状态卷：NVRAM、vTPM 状态和电源意图随冷切换迁移；有意关机的实例在原节点故障后不会被
