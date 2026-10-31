@@ -209,9 +209,10 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
     demote 让其 IO 失败（PoC 05）。
   - 监管进程启动实例前必须确认本节点是该实例 DRBD 资源的 Primary，否则不启动。`virsh start`
     失败不计入重启次数，不得像崩溃那样 evict，否则会在节点之间来回弹跳（PoC 02）。但只停在原地也不对：
-    节点本地的问题（如 bridge 缺失）会让实例持有 Primary 却一直不运行（PoC 11）。待验证的做法是
-    `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试，全部失败时停机并
-    告警。
+    节点本地的问题（如 bridge 缺失）会让实例持有 Primary 却一直不运行（PoC 11，PoC 13 中真实发生过）。
+    因此启动失败时执行 `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试；
+    全部候选节点都失败时实例停机并告警，不会来回弹跳。Agent 确认本节点问题已解决后执行 `--unmask`，屏蔽
+    状态回写 status 并导出为指标（PoC 13）。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
     `drbd-reactorctl evict <实例>`，交给其他节点。
   - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
@@ -391,6 +392,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
     **部分完成（2026-10-31）**：PoC 环境用 Prometheus + webhook 逐条触发通过，见
     [PoC 06](../compute/poc-06-observability.md)；接入中央 VictoriaMetrics 与 Telegram 待实现时进行。
 13. 启动失败时 `evict --keep-masked`：节点本地问题能自动换节点，全局配置错误不会来回弹跳；屏蔽的解除。
+    **已完成（2026-10-31）**：通过，见 [PoC 13](../compute/poc-13-start-failure-keep-masked.md)。
 14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理：是否需要 Agent 自我 fencing
     （PoC 11 中实际出现，目前依赖告警与人工）。
 15. 实例超售：宿主机 swap/zswap 与 KSM 下，`memory.low` 能否保护保障量、超出部分能否被回收而不导致 QEMU 被 OOM。
