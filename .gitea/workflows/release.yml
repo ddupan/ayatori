@@ -30,6 +30,13 @@ jobs:
           grep -qx "version: ${TAG#v}" deploy/ansible/galaxy.yml
           grep -qx "ayatori_version: ${TAG}" deploy/ansible/roles/control_plane/defaults/main.yml
 
+      # 基础镜像与构建内的 go mod download 走 Artifact Keeper 的 pull-through 缓存。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          go: 'true'
+          docker: 'true'
+
       # 与其他仓库相同：runner 提供 dockerd，buildx 以 docker-container driver 构建并附带 provenance/SBOM。
       - name: Build and publish image
         shell: bash
@@ -46,6 +53,7 @@ jobs:
           docker buildx create --name ci-builder --driver docker-container --use >/dev/null
           docker buildx build --platform linux/amd64 \
             --tag "${PUSH_REGISTRY}/${IMAGE_REPOSITORY}:${TAG}" \
+            --build-arg GOPROXY --build-arg GOPRIVATE \
             --provenance=mode=max --sbom=true \
             --metadata-file metadata.json --push .
           image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"
@@ -63,11 +71,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
         with:
+          go: 'true'
           go-version-file: go.mod
-          cache: true
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
 
       - name: Build tarball and checksums
         shell: bash
