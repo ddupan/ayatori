@@ -79,8 +79,10 @@
   容器的 socket。
 - **信任边界是宿主机。** 宿主机本来就拥有实例的全部权限，代领身份不增加新的风险。不在每个实例里
   运行 spire-agent，也不使用 vTPM 做节点证明。
-- 注册条目由 compute controller 在实例创建时通过 SPIRE Server API 写入，删除时清理。具体选择器
-  和父 ID 待验证时确定。
+- 注册条目由 compute controller 在实例创建时通过 SPIRE Server API 写入，删除时清理：
+  - 选择器 `ayatori:instance:<ns>/<name>`，自定义类型，由 Agent 按请求进入的实例端口填写；
+  - parent 是覆盖所有候选节点的"计算节点" node alias。节点证明方式必须能给出共同的选择器（如
+    `x509pop` 由同一 CA 签发节点证书）；join token 做不到，PoC 中只能每个节点各建一份条目。
 
 ### 控制台
 
@@ -89,8 +91,9 @@
   - 串口用于 headless 系统，浏览器端用 xterm.js；
   - SPICE 适合 Windows 桌面（剪贴板、USB 重定向）。浏览器客户端 spice-html5 已基本无人维护，
     因此通过代理下发 `.vv` 文件，由 `remote-viewer` 连接。
-- **节点不对外暴露控制台端口。** QEMU 只监听本机 unix socket 或 127.0.0.1，由 Agent 提供
-  websocket 中继。
+- **节点不对外暴露控制台端口。** QEMU 只监听本机 unix socket（`<listen type='socket'/>`），由 Agent
+  中继。中继只接受控制台代理的 SPIFFE ID，并且只在本节点是实例 DRBD Primary 时服务，避免连到
+  失去 Primary 后残留的 QEMU（PoC 05）。
 - **中央控制台代理**，参照 OpenStack nova-novncproxy：
   - 用户通过 iam-login（OIDC）登录；
   - 代理向 Ayatori apiserver 发起 **SubjectAccessReview**，检查用户对 `libvirtdomains/console`
@@ -126,8 +129,11 @@
    **已完成（2026-10-31）**：通过，见 [PoC 04](../compute/poc-04-metadata-media-lxc-supervisor.md)。
 2. 通过 Delegated Identity API 为实例选择器签发 JWT-SVID，实例用它登录 Bao；确定注册条目的
    选择器和父 ID。
+   **已完成（2026-10-31）**：通过，见 [PoC 05](../compute/poc-05-spiffe-identity-and-console.md)。
 3. 控制台代理：OIDC 登录、SubjectAccessReview、noVNC 经 Agent 中继访问 VNC unix socket；SPICE
    `.vv` 经代理连接。
+   **部分完成（2026-10-31）**：SubjectAccessReview、Event 审计、SPIFFE mTLS 中继和换节点后
+   自动跟随通过，见 PoC 05；OIDC 登录、SPICE、串口未测。
 4. `change-media --live` 在客户机重启后保留、在冷启动后回到配置。
    **已完成（2026-10-31）**：光驱通过，见 PoC 04；软驱未测。
 5. 电源意图标记：有意关机的实例在原节点故障后不会被其他节点开机。

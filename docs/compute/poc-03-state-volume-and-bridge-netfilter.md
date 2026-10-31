@@ -21,7 +21,9 @@
 - domain：q35，OVMF（未启用 Secure Boot），`<nvram>` 指向状态卷上的 `VARS.fd`，`tpm-crb` + swtpm
   2.0。
 - 监管进程：观察到非崩溃停止时在状态卷上写 `power-off` 标记，启动前检查该标记。由 systemd 停止时
-  （evict、切换）通过 TERM trap 执行 `destroy` 并以 0 退出，不写标记。单元不再使用
+  （evict、切换）通过 TERM trap 执行 `destroy` 并以 0 退出，不写标记（单元还需要
+  `KillMode=mixed`，否则 trap 中的 `destroy` 可能被 systemd 杀掉，见
+  [PoC 05](poc-05-spiffe-identity-and-console.md)）。单元不再使用
   `ExecStop=`，否则 evict 时监管进程可能先看到 `destroyed` 并误写标记。
 
 ### 结果

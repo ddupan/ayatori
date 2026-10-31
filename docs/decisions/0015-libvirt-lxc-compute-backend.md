@@ -201,6 +201,9 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - QEMU 进程或容器 init 死亡：promoter 启动的单元是一个**监管进程**，跟踪实例的生命周期（VM 订阅
     libvirt lifecycle 事件，LXC 循环执行 `lxc-start -F`），在本机重启并按滑动窗口计数。不得使用
     oneshot 单元，否则实例死亡后节点仍持有 Primary，既不重启也不切换。
+  - 监管单元使用 `KillMode=mixed`。默认的 `control-group` 下，systemd 停止单元时会反复向 cgroup
+    发送 SIGTERM，监管进程清理时新 fork 的 `virsh destroy` 也可能被杀，QEMU 残留，DRBD 只能强制
+    demote 让其 IO 失败（PoC 05）。
   - 监管进程启动实例前必须确认本节点是该实例 DRBD 资源的 Primary，否则不启动。`virsh start`
     失败属于配置或宿主机问题，不得升级为换节点，否则会在节点之间来回 evict（PoC 02）。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
