@@ -30,6 +30,13 @@ jobs:
           grep -qx "version: ${TAG#v}" deploy/ansible/galaxy.yml
           grep -qx "ayatori_version: ${TAG}" deploy/ansible/roles/control_plane/defaults/main.yml
 
+      # 基础镜像与构建内的 go mod download 走 Artifact Keeper 的 pull-through 缓存。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          go: 'true'
+          docker: 'true'
+
       # 与其他仓库相同：runner 提供 dockerd，buildx 以 docker-container driver 构建并附带 provenance/SBOM。
       - name: Build and publish image
         id: image
@@ -47,6 +54,7 @@ jobs:
           docker buildx create --name ci-builder --driver docker-container --use >/dev/null
           docker buildx build --platform linux/amd64 \
             --tag "${PUSH_REGISTRY}/${IMAGE_REPOSITORY}:${TAG}" \
+            --build-arg GOPROXY --build-arg GOPRIVATE \
             --provenance=mode=max --sbom=true \
             --metadata-file metadata.json --push .
           image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"

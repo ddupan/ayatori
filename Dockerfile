@@ -4,6 +4,9 @@ ARG BASE_IMAGE=golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d
 FROM ${BASE_IMAGE} AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# CI 传入内网 Go 模块缓存；未传时为空，go 使用默认的 proxy.golang.org。
+ARG GOPROXY
+ARG GOPRIVATE
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
