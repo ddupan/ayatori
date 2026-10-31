@@ -46,9 +46,20 @@
 
 ### 元数据服务：169.254.169.254
 
-- **由每个节点上的 Agent 提供**，数据来自 Agent 的本地状态，控制面不可用时照常响应。
+- **独立组件 `ayatori-imds`，不属于 Compute Agent。** 每台宿主机运行一个，Proxmox 等其他环境的
+  宿主机同样可以部署：PVE 迁移完成之前，上面的 VM 也需要用 SPIFFE 身份向 Bao 取凭据，而不是在
+  配置里放静态密钥（ADR-0010）。它只依赖本机的信息，控制面不可用时照常响应。
+- **随宿主机类型替换的只有两件事**，其余（拦截、IMDSv2、TTL、SPIFFE 代领）全部共用：
+
+| | 端口 → 实例 | 元数据来源 |
+|---|---|---|
+| Ayatori 计算节点 | Agent 固定的端口名 `ay-<实例>`（见下） | Agent 的本地状态 |
+| Proxmox VE | PVE 自身就是确定的命名：VM `tap<vmid>i<n>`，LXC `veth<vmid>i<n>`（已在 pve1 上确认） | 本机 pmxcfs 中的 `/etc/pve/qemu-server/<vmid>.conf`、`/etc/pve/lxc/<vmid>.conf`（名称、tags），不调用 PVE API，不需要凭据 |
+
+- **在 PVE 上只提供元数据和身份**，不接管 cloud-init：PVE 已经有自己的 cloud-init 盘，user-data
+  仍由它负责。
 - **拦截**：在实例接入的 tap/veth 端口上，用 nftables 把发往 `169.254.169.254:80` 的流量重定向
-  到本机 Agent。VM 通过 bridge 直连物理 VLAN，需要先在 bridge 层改写目的 MAC 再做 DNAT。
+  到本机的 `ayatori-imds`。VM 通过 bridge 直连物理 VLAN，需要先在 bridge 层改写目的 MAC 再做 DNAT。
 - **按入口端口识别实例，不按源 IP。** 客户机可以伪造 IP，但无法伪造自己接在哪个 tap/veth 上。
   OpenStack 的 metadata proxy 需要额外签名的 header 才能防伪，宿主机上则直接掌握这个事实。
   PoC 04 的做法：bridge 层按入口端口打 mark，三层按 mark DNAT 到该实例专属的端口；不需要
@@ -66,11 +77,12 @@
   DHCP option 121）只解决**没有默认网关的隔离网络**里请求发不出去的问题，OpenStack 的 DHCP
   agent 推送这条路由也是出于同样原因。路由 onlink 时宿主机需要应答 ARP，而且 ARP 不能泄漏到
   上联口，否则同一 VLAN 上的每台宿主机都会应答。出现隔离网络的需求时再做。
-- **提供的内容**：实例元数据、动态更新的 user-data，以及下文的 SPIFFE JWT-SVID。
+- **提供的内容**：实例元数据、动态更新的 user-data（仅 Ayatori 计算节点），以及下文的 SPIFFE
+  JWT-SVID。
 
-### 身份：Agent 通过 SPIRE 代领 SVID
+### 身份：元数据服务通过 SPIRE 代领 SVID
 
-- 宿主机的 spire-agent 开启 **Delegated Identity API**，Ayatori Agent 作为授权的 delegate，按
+- 宿主机的 spire-agent 开启 **Delegated Identity API**，`ayatori-imds` 作为授权的 delegate，按
   实例的选择器代领 SVID，例如 `spiffe://<trust-domain>/ayatori/instance/<ns>/<name>`。
 - **JWT-SVID 通过元数据服务提供**，路径带 `audience` 参数，与 GCE 的
   `.../service-accounts/default/identity?audience=` 是同一种模式。实例拿到后可以直接用
@@ -80,7 +92,9 @@
 - **信任边界是宿主机。** 宿主机本来就拥有实例的全部权限，代领身份不增加新的风险。不在每个实例里
   运行 spire-agent，也不使用 vTPM 做节点证明。
 - 注册条目由 compute controller 在实例创建时通过 SPIRE Server API 写入，删除时清理：
-  - 选择器 `ayatori:instance:<ns>/<name>`，自定义类型，由 Agent 按请求进入的实例端口填写；
+  - 选择器 `ayatori:instance:<ns>/<name>`，自定义类型，由 `ayatori-imds` 按请求进入的实例端口
+    填写；PVE 上为 `pve:vm:<集群>/<vmid>`，带集群名以免 VMID 在不同集群间冲突。PVE VM 的条目在
+    Ayatori 接管它们之前由 Terraform 维护；
   - parent 是覆盖所有候选节点的"计算节点" node alias。节点证明方式必须能给出共同的选择器（如
     `x509pop` 由同一 CA 签发节点证书）；join token 做不到，PoC 中只能每个节点各建一份条目。
 
@@ -157,13 +171,15 @@
 5. 电源意图标记：有意关机的实例在原节点故障后不会被其他节点开机。
    **已完成（2026-10-31）**：VM 见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)，
    LXC 见 PoC 04。
+6. `ayatori-imds` 在一台 PVE 宿主机上运行：按 `tap<vmid>i<n>`/`veth<vmid>i<n>` 识别实例、从
+   pmxcfs 读元数据、代领身份；包括 VM 开启 PVE 防火墙（tap 接在 `fwbr` 上）的情况。
 
 ## 结果
 
 - 实例获得启动配置、元数据和身份，配置中不再需要任何密钥。
 - 控制台和运行时操作复用 RBAC 和审计，不改变 GitOps 对 spec 的所有权。
-- 新增两个组件：计算控制台（中央，无状态，同时是控制台代理和前端），以及 Agent 中的元数据服务、
-  SPIFFE 代领和控制台中继。
+- 新增三个组件：计算控制台（中央，无状态，同时是控制台代理和前端）；`ayatori-imds`（每台宿主机，
+  元数据与 SPIFFE 代领，也可部署在 PVE 上）；Agent 中的控制台中继。
 - 元数据服务和控制台中继都在节点上运行，不依赖控制面。只有控制台代理的 SubjectAccessReview
   依赖 apiserver：控制面不可用时，控制台需要走节点本地的 break-glass 路径（`virsh console`、
   本地 VNC）。
