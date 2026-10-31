@@ -58,6 +58,14 @@
 - **防 SSRF，照搬 AWS IMDSv2**：先 PUT 换取会话 token；响应包的 IP TTL 设为 1，嵌套容器或被转发的
   请求拿不到；请求必须带指定 header（GCE 用 `Metadata-Flavor`）。TTL 要设在监听 socket 上，否则
   SYN-ACK 仍是默认 TTL，嵌套的请求能完成握手。
+- **TTL 可按实例调整**：默认 1。实例内还要运行容器（Docker 默认网络多一跳）时，用
+  `spec.metadata.hopLimit` 调大，对应 EC2 的 `HttpPutResponseHopLimit`。每个实例本来就有自己的
+  监听 socket，按实例设置不需要额外机制。
+- **不依赖客户机路由**：拦截发生在 bridge 层，客户机把请求发给哪个网关都能拦到，retro 和
+  Windows 也不需要任何配置。下发 `169.254.169.254/32` 主机路由（cloud-init network-config 或
+  DHCP option 121）只解决**没有默认网关的隔离网络**里请求发不出去的问题，OpenStack 的 DHCP
+  agent 推送这条路由也是出于同样原因。路由 onlink 时宿主机需要应答 ARP，而且 ARP 不能泄漏到
+  上联口，否则同一 VLAN 上的每台宿主机都会应答。出现隔离网络的需求时再做。
 - **提供的内容**：实例元数据、动态更新的 user-data，以及下文的 SPIFFE JWT-SVID。
 
 ### 身份：Agent 通过 SPIRE 代领 SVID
