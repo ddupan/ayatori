@@ -260,7 +260,7 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 |---|---|---|
 | 冗余降级：副本或 tiebreaker 掉线 | `drbd_connection_state` 不是 `Connected` 持续 5 分钟 | PoC 04 |
 | 失去 quorum | `drbd_device_quorum == 0` | PoC 01 |
-| 强制 demote 后仍有打开者 | `drbd_resource_forceiofailures == 1` | PoC 05 |
+| 强制 demote 后仍有打开者 | Agent 从 `drbdsetup events2` 导出；drbd-reactor 1.12 的 `drbd_resource_forceiofailures` 恒为 0（PoC 06） | PoC 05 |
 | split-brain | 连接状态 `StandAlone` | — |
 | 同步卡住 | `drbd_peerdevice_outofsync_bytes > 0` 持续较长时间 | — |
 | 应运行的实例没有任何节点在运行 | Agent 指标，按 `runState` 判断 | — |
@@ -271,6 +271,8 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 - **不能只看 quorum。** PoC 05 后实测：tiebreaker 下线时 `drbd_device_quorum` 仍是 1，只有对应
   peer 的 `drbd_connection_state` 变成 `Connecting`。剩下两个节点仍构成多数，所以 quorum 不变，
   但再坏一个节点就会全部停机。冗余降级必须按连接状态告警。
+- Agent 指标的实例名用 `name` 标签，不用 `instance`：后者是 Prometheus 的抓取目标标签，重名会被
+  改写为 `exported_instance`，按实例聚合的规则会全部算错（PoC 06）。
 - 控制面可用时，Agent 同时把这些状态写进 status 和 Event，供前端和 `kubectl` 查看；告警不依赖
   这一路。
 
@@ -330,6 +332,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
     其他节点开机。
     **已完成（2026-10-30）**：通过，见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)。
 12. 第一批告警接入中央 VictoriaMetrics，并在 PoC 环境中逐条触发，确认 Telegram 能收到。
+    **部分完成（2026-10-31）**：PoC 环境用 Prometheus + webhook 逐条触发通过，见
+    [PoC 06](../compute/poc-06-observability.md)；接入中央 VictoriaMetrics 与 Telegram 待实现时进行。
 
 ## 结果
 
