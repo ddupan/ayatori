@@ -97,6 +97,15 @@ test-lb-agent-netlink: ## 在一次性容器的网络 namespace 中以 CAP_NET_A
 lint-loadbalancer-integration: golangci-lint ## 检查集成测试构建标签下的 LoadBalancer 代码。
 	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/loadbalancer/... ./internal/testenv/...
 
+.PHONY: test-compute-integration
+test-compute-integration: setup-envtest ## 使用临时 API server 与容器中的 libvirtd（test 驱动）验证 Compute Agent。
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+		go test -tags=integration -race -count=1 ./internal/compute/...
+
+.PHONY: lint-compute-integration
+lint-compute-integration: golangci-lint ## 检查集成测试构建标签下的 Compute 代码。
+	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/compute/...
+
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	"$(GOLANGCI_LINT)" run --fix

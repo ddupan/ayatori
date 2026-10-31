@@ -1,0 +1,88 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: libvirtnetworks.compute.ayatori.ddupan.top
+spec:
+  group: compute.ayatori.ddupan.top
+  names:
+    kind: LibvirtNetwork
+    listKind: LibvirtNetworkList
+    plural: libvirtnetworks
+    singular: libvirtnetwork
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector 按 Node 的 label 选择下发到哪些计算节点；为空时下发到所有计算节点。
+                type: object
+              xml:
+                description: |-
+                  XML 是原生 network XML，原样下发；其中的 name 与 uuid 由 Ayatori 填写为对象名与对象 UID，
+                  domain 因此可以用 <source network='对象名'/> 引用。
+                minLength: 1
+                type: string
+            required:
+            - xml
+            type: object
+          status:
+            properties:
+              nodes:
+                items:
+                  description: |-
+                    NodeObjectStatus 是一个节点对下发对象的观察。每个节点的 Agent 以自己的 field manager
+                    经 server-side apply 只写自己那一项，节点之间不会互相覆盖。
+                  properties:
+                    active:
+                      description: Active 表示对象已在该节点定义并处于活动状态。
+                      type: boolean
+                    message:
+                      description: Message 是最近一次下发失败的原因；成功时为空。
+                      type: string
+                    nodeName:
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      type: integer
+                  required:
+                  - active
+                  - nodeName
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -12,6 +12,9 @@ resources:
 - bases/network.ayatori.ddupan.top_loadbalancers.yaml
 - bases/network.ayatori.ddupan.top_loadbalancerhosts.yaml
 - bases/network.ayatori.ddupan.top_backends.yaml
+- bases/compute.ayatori.ddupan.top_libvirtnetworks.yaml
+- bases/compute.ayatori.ddupan.top_libvirtstoragepools.yaml
+- bases/compute.ayatori.ddupan.top_libvirtdomains.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
