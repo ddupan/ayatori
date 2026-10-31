@@ -27,7 +27,24 @@
 | `lxc.hook.stop` / `lxc.hook.post-stop` 的环境变量 | 只有 `LXC_TARGET=stop`，没有退出状态 |
 | liblxc 日志（INFO 级即可） | 崩溃：`Child <pid> ended on signal Killed(9)`；关机：`Child <pid> ended on signal Interrupt(2)` |
 
-## 对设计的影响
+## 后续：不再解析日志（同日）
+
+参照 Incus：它的容器驱动同样拿不到停止原因，`lxc.hook.stop`/`post-stop` 回调里只有 `stop` 或
+`reboot`；它只区分"停止是否经 Incus API 发起"，开启 `boot.autorestart` 时，非 API 发起的停止（包括
+容器内 `poweroff`）一律重启。VM 则按 QMP `SHUTDOWN` 事件的 reason 区分干净关机与其他情况。
+
+容器没有自己的关机语义，因此改为与 Incus 相同：LXC 监管进程只看电源意图标记，下文"对设计的影响"中的
+日志解析方案作废。新监管进程在 poc-1 上的验证：
+
+| 测试 | 结果 |
+|---|---|
+| `kill -9` init | 无标记，按崩溃原地重启 |
+| 容器内 `poweroff` | 无标记，按崩溃原地重启 |
+| 经 Agent 关机（先写标记再 `lxc-stop`） | 保持关闭，单元 inactive，Primary 留在本节点 |
+| rootfs 路径错误导致启动失败 | `lxc-wait -s RUNNING` 超时，报启动失败，没有写耗尽标记，没有 evict |
+| 恢复配置、清除标记后开机 | 正常运行 |
+
+## 对设计的影响（已作废，见上）
 
 - LXC 监管进程按日志判断：容器配置中写 `lxc.log.file` 与 `lxc.log.level = INFO`（或由 Agent 以
   daemonize 方式启动时指定），容器停止后读取最后一条 `ended on signal`：

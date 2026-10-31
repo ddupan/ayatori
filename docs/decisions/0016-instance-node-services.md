@@ -186,9 +186,11 @@
 - **审计**：代理在实例对象上记录 Kubernetes Event，`kubectl describe` 可以看到谁在什么时候做了
   什么操作。
 - **状态**：Agent 把当前介质和电源状态回写到 `status.media`、`status.powerState`。
-- **电源意图**：关机和强制断电写入实例状态卷上的"off"标记，开机时清除。监管进程只对崩溃自动重启
-  （ADR-0015），因此客户机内主动关机和控制台关机都会保持关闭。强制断电（`virsh destroy`、
-  `lxc-stop -k`）在监管进程看来可能与崩溃相同，所以由 Agent **先写标记再执行**。
+- **电源意图**：关机和强制断电写入实例状态卷上的"off"标记，开机时清除。Agent 一律**先写标记再执行**。
+  - VM：libvirt 按 QMP `SHUTDOWN` 事件的 reason 报告停止原因，监管进程只对崩溃自动重启，因此客户机内
+    主动关机也会保持关闭，并补写标记。`virsh destroy` 与崩溃无法区分，所以必须先写标记。
+  - LXC：容器没有自己的关机语义，监管进程只看标记（ADR-0015）。容器内执行 `poweroff` 会被重新拉起，
+    关机只能经控制台或 API。
 - **重启**由监管进程在内部完成，Agent 不得 `systemctl restart` promoter 管理的单元：那会连带
   demote 资源，实例被另一节点接管（PoC 04）。
 
