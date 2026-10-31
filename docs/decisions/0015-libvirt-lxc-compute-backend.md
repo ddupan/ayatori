@@ -393,8 +393,10 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
     [PoC 06](../compute/poc-06-observability.md)；接入中央 VictoriaMetrics 与 Telegram 待实现时进行。
 13. 启动失败时 `evict --keep-masked`：节点本地问题能自动换节点，全局配置错误不会来回弹跳；屏蔽的解除。
     **已完成（2026-10-31）**：通过，见 [PoC 13](../compute/poc-13-start-failure-keep-masked.md)。
-14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理：是否需要 Agent 自我 fencing
-    （PoC 11 中实际出现，目前依赖告警与人工）。
+14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理。
+    **已决定（2026-10-31）**：不做专门处理，按宿主机故障对待。DRBD 连接随之中断时与断电相同，自动冷切换
+    （PoC 13 中真实发生）；DRBD 仍连着时依赖告警（`ExporterDown`、`InstanceDown`）与人工经 PVE/IPMI
+    重置，不做 Agent 自我 fencing。资源模型中的硬上限已消除 PoC 11 中的触发原因。
 15. 实例超售：宿主机 swap/zswap 与 KSM 下，`memory.low` 能否保护保障量、超出部分能否被回收而不导致 QEMU 被 OOM。
 
 ## 结果
