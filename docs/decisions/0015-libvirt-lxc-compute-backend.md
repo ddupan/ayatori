@@ -214,8 +214,9 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。单元名中的 `\x2d` 等
     转义在 TOML 双引号字符串中非法，必须用单引号字符串（PoC 03）。
   - **LXC 的停止原因不能看 `lxc-start -F` 的退出码**，它总是 0。容器内关机时内核以 SIGINT 结束
-    init（重启为 SIGHUP），其他终止方式都算崩溃；监管进程需要从 liblxc 拿到 init 的 wait status
-    （PoC 04）。`lxc-start` 不响应 SIGTERM，停止时由监管进程调用 `lxc-stop`。
+    init（重启为 SIGHUP），其他终止方式都算崩溃。liblxc 的 API、monitor 通道和 hook 都不提供
+    init 的退出状态，Go 进程也不能前台启动容器，因此监管进程解析 liblxc INFO 级日志中的
+    `ended on signal`（PoC 04、08）。`lxc-start` 不响应 SIGTERM，停止时由监管进程调用 `lxc-stop`。
   - 实例的重启由监管进程在内部完成。对 promoter 管理的单元执行 `systemctl restart` 会连带
     demote 资源，实例被其他节点接管。
 - **实例状态卷：凡是必须跟随实例的节点侧状态，都放在实例自己的 DRBD 资源上**，不放在节点本地。
@@ -319,6 +320,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    **部分完成（2026-10-30）**：设备模型通过，见 [PoC 02](../compute/poc-02-retro-and-windows.md)；
    NVRAM/vTPM 跟随冷切换已在 PoC 03 通过；完整安装和 virtio 驱动未测。
 5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态；能否取得容器 init 的 wait status（PoC 04）。
+   **已完成（2026-10-31）**：见 [PoC 08](../compute/poc-08-go-lxc.md)。go-lxc 动态链接 liblxc，Agent
+   按节点发行版构建；liblxc 的 API、monitor 和 hook 都拿不到停止原因，只能解析 INFO 级日志。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **部分完成（2026-10-30）**：网络机制已确认（PoC 03），真实 kubelet 的 cgroup 与资源切分待验证。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
