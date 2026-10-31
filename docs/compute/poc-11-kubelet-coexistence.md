@@ -51,7 +51,7 @@ BestEffort Pod 不断分配内存。
 - 同样的 Pod：kubepods 在约 2.3 GiB 处封顶，kubelet 约 2 分钟后将其驱逐（`Evicted`）。整个过程中节点
   一直有响应，vm1 与 ct1 持续运行，客户机内正常。
 
-结论：静态切分不是可选项。`systemReserved`（或 `kubeReserved`）必须覆盖 VM/LXC 的全部内存与宿主机
+结论（后由 [PoC 12](poc-12-memory-tiers-and-overcommit.md) 的动态上限取代，硬上限仍然必需）：静态切分不是可选项。`systemReserved`（或 `kubeReserved`）必须覆盖 VM/LXC 的全部内存与宿主机
 自身开销，并保持 `enforceNodeAllocatable` 包含 `pods`，这样 Pod 的内存压力被限制在 kubepods 内。
 
 ## 其他发现

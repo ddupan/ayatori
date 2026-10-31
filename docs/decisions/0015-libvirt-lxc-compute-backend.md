@@ -251,8 +251,7 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - 本地：只在原节点自动拉起。
   - Ceph：RBD 的 exclusive-lock 是协作式的，不能防止两个节点同时写，fencing 需要加入黑名单
     （blocklist），drbd-reactor 也覆盖不到。出现真实需求时再设计。
-- **容量预留**在创建时由控制面检查（对应 vSphere 的 admission control）。运行时不检查容量，接受
-  偶尔超卖的风险。
+- **容量预留**在创建时由控制面按实例保障量检查（对应 vSphere 的 admission control），见"资源模型"。
 
 ### 可观测性：告警不依赖控制面
 
@@ -289,18 +288,50 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 - 控制面可用时，Agent 同时把这些状态写进 status 和 Event，供前端和 `kubectl` 查看；告警不依赖
   这一路。
 
+### 资源模型：实例有保障，Pod 是弹性层
+
+**Node 的内存语义**照搬 kubelet（ADR-0007 的 Node 由 Agent 写入）：
+
+- `status.capacity`：整机真实内存。
+- `status.allocatable`：整机内存减去宿主机自身预留，即实例可用的上限。
+- `MemoryPressure` 等 condition：按真实可用内存判定，压力大时控制面不再往该节点放新实例。
+- 实际用量走指标（见"可观测性"），不写进 Node。
+
+**实例的三个量**，对应 vSphere 的 reservation、limit、shares：
+
+| | 含义 | VM | LXC |
+|---|---|---|---|
+| 配置量 | 实例看到的内存 | domain XML 的 `<memory>`（`<currentMemory>` 为 balloon 目标） | `lxc.cgroup2.memory.max`，**必须设置**，由 Agent 按 spec 生成 |
+| 保障量 | 承诺给到、不会被回收的部分；默认等于配置量 | Agent 在实例启动后写入其 scope 的 `memory.low`（libvirt 的 `min_guarantee` 不支持 QEMU），祖先 slice 也要有足够的 `MemoryLow` | 同左 |
+| 权重 | 争抢时的比例 | `cpu.weight` 等 | 同左 |
+
+- **准入只按保障量记账**：本节点实例保障量之和不超过 allocatable。配置量之和可以超过物理内存，即超售；可按 pool
+  设置超售比例上限（类似 OpenStack 的 `ram_allocation_ratio`）。冷切换所需的容量同样按保障量计算。
+- **VM 默认开启 free page reporting**（`<memballoon model='virtio' freePageReporting='on'/>`），客户机释放的内存还给
+  宿主机（PoC 12）。KSM 按需开启。
+- 实例超出保障量的部分要能被回收，需要宿主机 swap/zswap；否则超售 VM 在内存紧张时只能被 OOM 杀掉（等同崩溃）。
+  未验证。
+
+**Pod 是弹性层**，用剩下的内存，压力大时最先被牺牲：
+
+- kubelet 以 `--cgroup-root=/k8s.slice` 运行在 Agent 管理的 `k8s.slice` 下，`systemReserved` 只覆盖宿主机自身。
+  kubelet 的 allocatable 因此偏大，允许 Pod 使用实例暂时没用到的内存。
+- **Agent 动态设置 `k8s.slice` 的 `MemoryMax`** = 整机内存 − 宿主机预留 − 本节点正在运行的实例保障量之和。实例
+  （包括冷切换过来的实例）启动前先压低上限，停止后放宽。重启后上限会丢失，Agent 必须在 kubelet 启动前设好。
+- 超用时在 `k8s.slice` 内被 OOM，BestEffort 最先；节点和实例不受影响（PoC 12）。没有硬上限时，一个 Pod 就能让整台
+  宿主机失去响应、实例卡住且不会冷切换（PoC 11）。**systemd-oomd 在无 swap 时救不了节点**（PoC 12），只能作补充。
+- 代价：实例冷切换到某节点时，那里的 Pod 可能被挤掉。需要硬保障的 Pod 应放在不运行实例的节点上。
+- 不采用"每个实例在 workload 集群建占位 Pod、由 k8s 调度器统一记账"：实例冷启动将依赖 workload 集群的
+  apiserver，违背"HA 不依赖控制面"。
+- CPU 以 `cpu.weight` 按比例共享，本来就没有闲置问题；只有做了 CPU 绑定的实例需要静态划分
+  （`reservedSystemCPUs` 配合 `<vcpupin>`/`<emulatorpin>`）。
+
 ### 与 kubelet 共用宿主机
 
 - **两个 Node 对象分属不同的 apiserver。** Agent 写到 Ayatori，kubelet 写到 workload 集群，
-  两者互不相关。
-- **容量第一版静态切分，且必须配置：**
-  - 内存用 `systemReserved`/`kubeReserved` 扣掉留给 VM/LXC 和宿主机自身的部分，`enforceNodeAllocatable`
-    保持包含 `pods`，使 kubepods cgroup 有硬上限。PoC 11 中不设预留时，一个 BestEffort Pod 就让整台
-    宿主机失去响应数分钟，实例随之卡住且不会冷切换；设置后 Pod 被限制在 kubepods 内并被驱逐，实例
-    不受影响。
-  - CPU 用 `reservedSystemCPUs`，配合 libvirt 的 `<vcpupin>`/`<emulatorpin>`。
-- **cgroup：** libvirt 在 `machine.slice`，LXC 在自己的 payload cgroup，kubelet 在
-  `kubepods.slice`，统一使用 systemd 驱动。
+  两者互不相关；内存的分层见上一节。
+- **cgroup：** libvirt 在 `machine.slice`，LXC 在自己的 payload cgroup，kubelet 在 Agent 管理的 `k8s.slice` 下。
+  k0s 默认使用 cgroupfs 驱动，实施时评估是否统一为 systemd 驱动。
 - **网络：** k8s 要求打开 `net.bridge.bridge-nf-call-iptables=1`，这是全局开关，打开后**所有**
   Linux bridge 上的 VM/LXC 流量都会经过宿主机 iptables FORWARD。PoC 03 实测：FORWARD 策略被设为
   DROP（Docker、部分严格 CNI）时实例 bridge 流量 100% 丢包。放行规则必须位于 FORWARD 链内部，另起
@@ -341,7 +372,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    标记，不解析日志（见"实例自身崩溃"）。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **已完成（2026-10-31）**：网络机制见 PoC 03；kubelet 共存见
-   [PoC 11](../compute/poc-11-kubelet-coexistence.md)，内存静态切分必须配置。CPU 切分与其他 CNI 未测。
+   [PoC 11](../compute/poc-11-kubelet-coexistence.md)；内存分层与动态上限见
+   [PoC 12](../compute/poc-12-memory-tiers-and-overcommit.md)。CPU 绑定与其他 CNI 未测。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
    **已完成（2026-10-31）**：可行，见 [PoC 09](../compute/poc-09-agent-status-vap.md)。按节点分开的
    status 字段待 API 设计时确定。
@@ -361,6 +393,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 13. 启动失败时 `evict --keep-masked`：节点本地问题能自动换节点，全局配置错误不会来回弹跳；屏蔽的解除。
 14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理：是否需要 Agent 自我 fencing
     （PoC 11 中实际出现，目前依赖告警与人工）。
+15. 实例超售：宿主机 swap/zswap 与 KSM 下，`memory.low` 能否保护保障量、超出部分能否被回收而不导致 QEMU 被 OOM。
 
 ## 结果
 
