@@ -81,7 +81,8 @@ set -e
 cp /fixture/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
 cp /fixture/dataplaneapi.yml /usr/local/etc/haproxy/dataplaneapi.yml
 haproxy -W -D -S /var/run/haproxy-master.sock -p /var/run/haproxy.pid -f /usr/local/etc/haproxy/haproxy.cfg
-exec dataplaneapi -f /usr/local/etc/haproxy/dataplaneapi.yml
+# 循环运行：测试可重启 dataplaneapi，模拟其重启后丢失已排期的 reload。
+while :; do dataplaneapi -f /usr/local/etc/haproxy/dataplaneapi.yml; done
 `
 
 type fixture struct {
@@ -249,6 +250,33 @@ func TestHostsContract(t *testing.T) {
 			t.Fatalf("连接应被关闭而不是转发或挂起: %v", err)
 		} else if err != io.EOF && !strings.Contains(err.Error(), "reset") {
 			t.Logf("连接以 %v 结束", err)
+		}
+	})
+
+	t.Run("配置已写入但进程未加载时重新 reload", func(t *testing.T) {
+		// 运行中的进程换回不含 LB 的配置，文件再恢复后重启 dataplaneapi：文件是期望配置，
+		// 进程未加载，也没有任何排期的 reload（与 dataplaneapi 重启丢失排期相同）。
+		script := `set -e
+cfg=/usr/local/etc/haproxy/haproxy.cfg
+cp $cfg /tmp/full.cfg
+cp /fixture/haproxy.cfg $cfg
+kill -USR2 $(cat /var/run/haproxy.pid)
+sleep 2
+cp /tmp/full.cfg $cfg
+pkill -x dataplaneapi`
+		if out, err := exec.CommandContext(t.Context(), "docker", "exec", f.id, "sh", "-c", script).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		waitFor(t, func() bool {
+			_, err := hosts.Observe(t.Context(), f.host, aggregate(uid, ports))
+			return err == nil
+		})
+		if facts := converged(t, hosts, f, uid, ports); facts.Matches {
+			t.Fatalf("进程未加载时不应判为一致: %+v", facts)
+		}
+		applyUntilMatches(t, hosts, f, aggregate(uid, ports))
+		if facts := converged(t, hosts, f, uid, ports); len(facts.Frontends) != len(ports) {
+			t.Fatalf("reload 后应重新报告 frontend: %+v", facts)
 		}
 	})
 

@@ -66,7 +66,8 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 		Present: len(gotFrontends)+len(gotBackends) > 0,
 		Matches: reflect.DeepEqual(gotFrontends, wantFrontends) && reflect.DeepEqual(gotBackends, wantBackends),
 	}
-	if facts.Reload, facts.Message, err = lastReload(ctx, api); err != nil {
+	var reloadedAt time.Time
+	if facts.Reload, facts.Message, reloadedAt, err = lastReload(ctx, api); err != nil {
 		return loadbalancer.ProxyFacts{}, err
 	}
 	if facts.Matches && facts.Reload == loadbalancer.ReloadSucceeded {
@@ -74,11 +75,17 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 		if facts.Matches, loaded, err = runtimeReady(ctx, api, wantBackends); err != nil {
 			return loadbalancer.ProxyFacts{}, err
 		}
-		if !loaded {
-			// 配置已写入但运行中的进程尚未加载：reload 已排期未执行。
+		switch {
+		case loaded:
+			if facts.Frontends, err = frontendStates(ctx, api, vip, wantFrontends); err != nil {
+				return loadbalancer.ProxyFacts{}, err
+			}
+		case h.now().Sub(reloadedAt) < reloadSettle:
+			// reload 刚完成，新 worker 尚未接管运行时接口。
 			facts.Matches, facts.Reload = true, loadbalancer.ReloadPending
-		} else if facts.Frontends, err = frontendStates(ctx, api, vip, wantFrontends); err != nil {
-			return loadbalancer.ProxyFacts{}, err
+		default:
+			// 配置已写入但运行中的进程未加载，也没有排期的 reload（如 dataplaneapi 重启丢了排期）：
+			// 视为不一致，由 Apply 重新触发 reload。
 		}
 	}
 	return facts, nil
@@ -133,6 +140,12 @@ func (h *Hosts) apply(ctx context.Context, host loadbalancer.Host, uid, vip stri
 		return err
 	}
 	if gotBackends := owned(backends, uid); sameStructure(owned(frontends, uid), wantFrontends, gotBackends, wantBackends) {
+		if _, loaded, err := runtimeReady(ctx, api, wantBackends); err != nil {
+			return err
+		} else if !loaded {
+			// 文件已是期望配置，只缺 reload：提交空事务即排期一次 reload。
+			return transact(ctx, api, func(*string, map[string]dataplaneapi.Frontend, map[string]dataplaneapi.Backend) error { return nil })
+		}
 		return h.reconcileServers(ctx, api, host.Name, gotBackends, wantBackends, drainTimeouts)
 	}
 	// 新建、端口增减或检查、超时等 section 级变化需要 reload：整段替换。
@@ -306,29 +319,46 @@ func sections(ctx context.Context, api *dataplaneapi.ClientWithResponses, tx *st
 	if err := check(backends, err); err != nil {
 		return nil, nil, err
 	}
+	// dataplaneapi 重新解析自己写出的文件（如重启后）时，为每个 section 补上 from <匿名 defaults>；
+	// Ayatori 从不设置 from，比较前清除，否则重启后每个 LoadBalancer 都被判为漂移并整段替换。
+	for i := range *frontends.JSON200 {
+		(*frontends.JSON200)[i].From = nil
+	}
+	for i := range *backends.JSON200 {
+		(*backends.JSON200)[i].From = nil
+	}
 	return byName(*frontends.JSON200, func(f dataplaneapi.Frontend) string { return f.Name }),
 		byName(*backends.JSON200, func(b dataplaneapi.Backend) string { return b.Name }), nil
 }
 
-// lastReload 返回 Host 最近一次 reload 的结果；仍有 reload 进行中时为 Pending。
-func lastReload(ctx context.Context, api *dataplaneapi.ClientWithResponses) (loadbalancer.Reload, string, error) {
+// reloadSettle 是 reload 完成后等待新 worker 接管运行时接口的上限；超过后仍未加载视为没有排期的
+// reload。ponytail: 固定值，按实测接管时长（秒级）取宽；接管更慢的主机会多触发一次 reload。
+const reloadSettle = 30 * time.Second
+
+// lastReload 返回 Host 最近一次 reload 的结果与时间；仍有 reload 进行中时为 Pending。没有任何
+// reload 记录（如 dataplaneapi 刚重启）时时间为零值。
+func lastReload(ctx context.Context, api *dataplaneapi.ClientWithResponses) (loadbalancer.Reload, string, time.Time, error) {
 	response, err := api.GetReloadsWithResponse(ctx)
 	if err := check(response, err); err != nil {
-		return 0, "", err
+		return 0, "", time.Time{}, err
 	}
 	var latest *dataplaneapi.Reload
 	for i, reload := range *response.JSON200 {
 		if reload.Status != nil && *reload.Status == dataplaneapi.ReloadStatusInProgress {
-			return loadbalancer.ReloadPending, "", nil
+			return loadbalancer.ReloadPending, "", time.Time{}, nil
 		}
 		if latest == nil || value(reload.ReloadTimestamp) > value(latest.ReloadTimestamp) {
 			latest = &(*response.JSON200)[i]
 		}
 	}
-	if latest != nil && latest.Status != nil && *latest.Status == dataplaneapi.ReloadStatusFailed {
-		return loadbalancer.ReloadFailed, value(latest.Response), nil
+	if latest == nil {
+		return loadbalancer.ReloadSucceeded, "", time.Time{}, nil
 	}
-	return loadbalancer.ReloadSucceeded, "", nil
+	at := time.Unix(int64(value(latest.ReloadTimestamp)), 0)
+	if latest.Status != nil && *latest.Status == dataplaneapi.ReloadStatusFailed {
+		return loadbalancer.ReloadFailed, value(latest.Response), at, nil
+	}
+	return loadbalancer.ReloadSucceeded, "", at, nil
 }
 
 type response interface{ StatusCode() int }

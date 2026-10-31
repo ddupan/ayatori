@@ -256,8 +256,12 @@ LB 主机部署（homelab-infra）须保证：
 
 - `haproxy.cfg` 中 `lb_` 前缀 section 只由 Ayatori 写入；
 - `net.ipv4.ip_nonlocal_bind=1`，frontend 可在宣告前绑定 VIP；
-- LB agent 以 `BindsTo=haproxy.service` 运行，可读写 HAProxy 的 admin stats socket，并有
+- LB agent 以 `BindsTo=haproxy.service` 运行并由其拉起（`[Install] WantedBy=haproxy.service`；
+  只有 BindsTo 时 HAProxy 重启后 agent 停着不再启动），可读写 HAProxy 的 admin stats socket，并有
   `CAP_NET_ADMIN`（管理 lo 上的 VIP）；lo 上除 `127.0.0.1/8` 外的 IPv4 地址不得由其他组件写入；
+- 主机上的服务不得监听通配地址：VIP 是本机地址，通配监听会在每个 VIP 上应答（如经 VIP 登录 sshd），
+  且其端口永远无法被 VIP 使用（HAProxy bind 失败使整次 reload 失败）。发往 VIP 段、落到通配
+  socket 的流量须在主机防火墙拒绝（nftables `socket wildcard`），以防新装的组件默认监听 0.0.0.0；
 - reload 前以 `server-state-file` 保存 server 状态，否则每次 reload 所有 server 回到
   `fully-down`，主机上全部 LB 中断约 rise × interval；
 - `hard-stop-after` 限定旧 worker 排空时长；
