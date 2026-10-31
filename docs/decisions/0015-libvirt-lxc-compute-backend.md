@@ -325,6 +325,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **部分完成（2026-10-30）**：网络机制已确认（PoC 03），真实 kubelet 的 cgroup 与资源切分待验证。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
+   **已完成（2026-10-31）**：可行，见 [PoC 09](../compute/poc-09-agent-status-vap.md)。按节点分开的
+   status 字段待 API 设计时确定。
 8. 控制面完全丢失后的手工恢复演练。
 9. 用 `OnFailure=` 自动触发 `drbd-reactorctl evict`，完成"原地重启 → 换节点"的升级；验证
    `<on_crash>restart</on_crash>` 和 watchdog 设备。
