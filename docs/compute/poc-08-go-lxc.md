@@ -5,8 +5,9 @@
   [PoC 04](poc-04-metadata-media-lxc-supervisor.md) 中"`go-lxc` 能否取得 init 的 wait status"的问题
 - 环境：poc-2（Ubuntu 24.04，liblxc 5.0.3，Go 1.22.2），一次性测试容器 t1（Alpine 3.24），测试后
   已删除。
-- 结论：**go-lxc 能构建，但通过 liblxc 的任何 API 都拿不到容器 init 的退出原因。** 唯一能区分崩溃
-  和关机的是 liblxc INFO 级日志里的 `Child <pid> ended on signal …`，Agent 只能解析这行日志。
+- 结论：**go-lxc 能构建，但通过 liblxc 的任何 API 都拿不到容器 init 的退出原因。** 只有 liblxc INFO 级
+  日志里的 `Child <pid> ended on signal …` 能区分崩溃和关机。最终决定不依赖它：容器没有自己的关机
+  语义，监管进程只看电源意图标记，与 Incus 相同（见"后续"）。
 
 ## 构建
 
