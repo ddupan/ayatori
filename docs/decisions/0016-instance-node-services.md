@@ -120,14 +120,17 @@
 - 需要标准 Workload API（go-spiffe、spiffe-helper、Envoy SDS）、X.509-SVID 与自动轮换，或者要在
   实例内区分不同进程和容器时，实例里运行 spire-agent。现有的 etcd、LB 等 LXC 已经是这样运行的
   （`spiffe://<td>/node/<name>`），只是目前用 join token 做节点证明。
-- **节点证明照搬 `gcp_iit`/`aws_iid`**：`ayatori-imds` 为实例签发**实例身份文档**，用宿主机自己的
+- **节点证明照搬 `gcp_iit`/`aws_iid`**（插件 `ayatori_iid`，PoC 07）：`ayatori-imds` 为实例签发**实例身份文档**，用宿主机自己的
   X.509-SVID 签名，不另建 PKI。SPIRE server 侧的自定义节点证明插件校验签名链属于本 trust domain、
   签发的宿主机确实托管该实例（以 compute controller 写入的信息为准），再给出实例的选择器。防重放
   使用 SPIRE 节点证明的 challenge-response：挑战由实例内 agent 转交宿主机上的 `ayatori-imds` 签名，
   只有确实运行在该宿主机上的实例能完成。
-- 实例的节点 ID 为 `spiffe://<td>/ayatori/instance/<ns>/<name>`，回答"这是哪台实例"；实例内工作
-  负载的条目以它为 parent，SPIFFE ID 按需要取 service account 的 ID 或更细的 ID，回答"以谁的
+- 实例的 agent ID 为 `spiffe://<td>/spire/agent/ayatori_iid/<ns>/<name>`（SPIRE 要求 agent ID 位于
+  `/spire/agent/` 下），回答"这是哪台实例"。工作负载条目以按 service account 聚合的 node alias（选择器
+  `ayatori_iid:sa:<ns>/<sa>`）为 parent，SPIFFE ID 取 service account 的 ID 或更细的 ID，回答"以谁的
   名义访问资源"。
+- server 插件除了校验签名链，还必须核对签发的宿主机是该实例的候选节点（compute controller 的记录或
+  DRBD Primary），否则一台被攻破的宿主机可以为任意实例签发文档。PoC 07 尚未实现这一步。
 - LXC 同样在容器内运行 agent：没有能透过 LXC 命名空间区分进程的 workload attestor，把宿主机的
   agent socket 挂进容器不可行。
 - `ayatori-imds` 在 PVE 上同样签发实例身份文档，PVE 上的 VM 和 LXC 也能用这种方式接入，替换掉现有
@@ -209,9 +212,13 @@
    LXC 见 PoC 04。
 6. `ayatori-imds` 在一台 PVE 宿主机上运行：按 `tap<vmid>i<n>`/`veth<vmid>i<n>` 识别实例、从
    pmxcfs 读元数据、代领身份；包括 VM 开启 PVE 防火墙（tap 接在 `fwbr` 上）的情况。
+   **已完成（2026-10-31）**：pve3 上的 VM 与 LXC 均通过，含 VM 开启防火墙；见
+   [PoC 07](../compute/poc-07-instance-attestation-and-pve-imds.md)。数据中心级防火墙开启的情况未测。
 7. 实例内 spire-agent 的节点证明：`ayatori-imds` 用宿主机 SVID 签发实例身份文档，SPIRE server
    的自定义插件校验并完成 challenge-response；实例换节点后由新宿主机签发，仍能重新证明；伪造或
    重放的文档被拒绝。
+   **已完成（2026-10-31）**：poc 节点与 PVE 上均通过，见 PoC 07。签发宿主机与实例实际所在节点的
+   核对尚未实现。
 
 ## 结果
 

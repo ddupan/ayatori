@@ -265,6 +265,7 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 | 同步卡住 | `drbd_peerdevice_outofsync_bytes > 0` 持续较长时间 | — |
 | 应运行的实例没有任何节点在运行 | Agent 指标，按 `runState` 判断 | — |
 | 实例在非 Primary 节点运行 | Agent 指标 | PoC 05 |
+| promoter 的 target 为 active 但本节点不是 Primary | Agent 指标；在 promoter 之外 demote 后 systemd 状态会过期，该节点实际无法再接管 | PoC 07 |
 | 发生原地重启或 evict | Agent 计数器增加 | PoC 01 |
 | exporter 消失 | `drbdreactor_up` 缺失 | — |
 
