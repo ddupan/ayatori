@@ -3,6 +3,8 @@
 - 状态：Accepted
 - 日期：2026-09-20
 - 实施优先级：Deferred；当前优先 Database、LoadBalancer 与 Bucket
+- 修订：2026-10-30 [ADR-0015](0015-libvirt-lxc-compute-backend.md)（Proposed）提议把北向改为透传
+  原生配置的 `LibvirtDomain`/`LXCContainer`，HA 运行时下沉到节点（DRBD + drbd-reactor）。
 
 ## 背景
 
