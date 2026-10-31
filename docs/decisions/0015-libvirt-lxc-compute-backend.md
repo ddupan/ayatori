@@ -208,7 +208,10 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
     发送 SIGTERM，监管进程清理时新 fork 的 `virsh destroy` 也可能被杀，QEMU 残留，DRBD 只能强制
     demote 让其 IO 失败（PoC 05）。
   - 监管进程启动实例前必须确认本节点是该实例 DRBD 资源的 Primary，否则不启动。`virsh start`
-    失败属于配置或宿主机问题，不得升级为换节点，否则会在节点之间来回 evict（PoC 02）。
+    失败不计入重启次数，不得像崩溃那样 evict，否则会在节点之间来回弹跳（PoC 02）。但只停在原地也不对：
+    节点本地的问题（如 bridge 缺失）会让实例持有 Primary 却一直不运行（PoC 11）。待验证的做法是
+    `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试，全部失败时停机并
+    告警。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
     `drbd-reactorctl evict <实例>`，交给其他节点。
   - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
@@ -290,8 +293,11 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 
 - **两个 Node 对象分属不同的 apiserver。** Agent 写到 Ayatori，kubelet 写到 workload 集群，
   两者互不相关。
-- **容量第一版静态切分：**
-  - 内存用 `systemReserved`/`kubeReserved` 扣掉留给 VM/LXC 的部分。
+- **容量第一版静态切分，且必须配置：**
+  - 内存用 `systemReserved`/`kubeReserved` 扣掉留给 VM/LXC 和宿主机自身的部分，`enforceNodeAllocatable`
+    保持包含 `pods`，使 kubepods cgroup 有硬上限。PoC 11 中不设预留时，一个 BestEffort Pod 就让整台
+    宿主机失去响应数分钟，实例随之卡住且不会冷切换；设置后 Pod 被限制在 kubepods 内并被驱逐，实例
+    不受影响。
   - CPU 用 `reservedSystemCPUs`，配合 libvirt 的 `<vcpupin>`/`<emulatorpin>`。
 - **cgroup：** libvirt 在 `machine.slice`，LXC 在自己的 payload cgroup，kubelet 在
   `kubepods.slice`，统一使用 systemd 驱动。
@@ -334,7 +340,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    按节点发行版构建。liblxc 的 API、monitor 和 hook 都拿不到停止原因；因此 LXC 改为只看电源意图
    标记，不解析日志（见"实例自身崩溃"）。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
-   **部分完成（2026-10-30）**：网络机制已确认（PoC 03），真实 kubelet 的 cgroup 与资源切分待验证。
+   **已完成（2026-10-31）**：网络机制见 PoC 03；kubelet 共存见
+   [PoC 11](../compute/poc-11-kubelet-coexistence.md)，内存静态切分必须配置。CPU 切分与其他 CNI 未测。
 7. 用 ValidatingAdmissionPolicy 按节点身份限制 Agent 写 status 是否可行。
    **已完成（2026-10-31）**：可行，见 [PoC 09](../compute/poc-09-agent-status-vap.md)。按节点分开的
    status 字段待 API 设计时确定。
@@ -351,6 +358,9 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 12. 第一批告警接入中央 VictoriaMetrics，并在 PoC 环境中逐条触发，确认 Telegram 能收到。
     **部分完成（2026-10-31）**：PoC 环境用 Prometheus + webhook 逐条触发通过，见
     [PoC 06](../compute/poc-06-observability.md)；接入中央 VictoriaMetrics 与 Telegram 待实现时进行。
+13. 启动失败时 `evict --keep-masked`：节点本地问题能自动换节点，全局配置错误不会来回弹跳；屏蔽的解除。
+14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理：是否需要 Agent 自我 fencing
+    （PoC 11 中实际出现，目前依赖告警与人工）。
 
 ## 结果
 
