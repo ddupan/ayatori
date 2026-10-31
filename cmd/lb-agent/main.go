@@ -1,4 +1,5 @@
-// lb-agent 在 LB 主机上按本机 HAProxy 的 frontend 状态宣告 VIP（ADR-0014）。
+// lb-agent 在 LB 主机上按本机 HAProxy 的 frontend 状态宣告 VIP（ADR-0014），并在指标端口
+// 提供只读的 /status（ADR-0015）。
 package main
 
 import (
@@ -42,9 +43,12 @@ func run(path string, logger *slog.Logger) error {
 	}
 	metricsErr := make(chan error, 1)
 	if config.MetricsAddress != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+		mux.Handle("/status", a.StatusHandler())
 		server := &http.Server{
 			Addr:              config.MetricsAddress,
-			Handler:           promhttp.HandlerFor(registry, promhttp.HandlerOpts{}),
+			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() { metricsErr <- server.ListenAndServe() }()

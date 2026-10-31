@@ -195,6 +195,11 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
 - 指标：`ayatori_lb_agent_haproxy_up`、`ayatori_lb_agent_vip_announced{vip}`、
   `ayatori_lb_agent_bgp_session_established{neighbor}`、
   `ayatori_lb_agent_last_sync_success_timestamp_seconds`。
+- 只读的 `GET /status`（ADR-0015，与 `/metrics` 同一监听）：HAProxy 是否应答、各邻居会话、最近
+  一次成功收敛时间，以及每个有 bind 的 VIP 是否已发给路由器与未发出的原因。原因按三层取第一个
+  不满足的：`not-local`（内核不把它当本机地址）、`frontend-not-open`（某个 frontend 或 bind 不是
+  OPEN）、`not-advertised`（应宣告，但不在任何已建立会话的 adj-rib-out 中）。前两层是宣告规则
+  `Check` 的输出；第三层只观察，不影响是否宣告。HAProxy 不应答时 VIP 列表为空。
 
 本地配置（`/etc/ayatori/lb-agent.yaml`，由 homelab-cookbooks 写入）：
 
@@ -335,3 +340,5 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
   `Announcements` 与聚合共用）；删除 `gobgp.Speakers` 与 controller 的 `RouteBackend`，删除不再
   先撤回；Attachment 改为 `Ready`/`Removed`；frontend 开启 `option socket-stats`；
   `--loadbalancer-host` 去掉 gobgpd 地址。切片 3a/3b 中的宣告部分随之作废。
+- 切片 6a（ADR-0015，agent 状态接口）：宣告规则拆出逐 VIP 原因 `Check`；agent 读 adj-rib-out，
+  在指标端口提供 `GET /status`（`loadbalancer.AgentStatus`）。controller 尚未读取它。

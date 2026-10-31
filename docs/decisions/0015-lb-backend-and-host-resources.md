@@ -1,6 +1,6 @@
 # ADR-0015：后端与 LB 主机成为 API 资源
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-10-16
 - 依据：维护者讨论（ADR-0014 实现后的建模复盘）。
 - 部分取代：[ADR-0012](0012-l4-loadbalancer.md)「北向资源」中 `LoadBalancer` 内嵌 endpoint 与
