@@ -142,7 +142,8 @@
   - VNC 为默认，retro 的 cirrus/VGA 和 UEFI 安装界面都能使用，浏览器端用 noVNC；
   - 串口用于 headless 系统，浏览器端用 xterm.js；
   - SPICE 适合 Windows 桌面（剪贴板、USB 重定向）。浏览器客户端 spice-html5 已基本无人维护，
-    因此通过代理下发 `.vv` 文件，由 `remote-viewer` 连接。
+    因此通过代理下发 `.vv` 文件，由 `remote-viewer` 连接。`.vv` 的 `host` 是一次性 ticket，`proxy=` 指向
+    代理，remote-viewer 发 `CONNECT <ticket>:5900` 后由代理经中继接到实例（PoC 15）。
 - **节点不对外暴露控制台端口。** QEMU 只监听本机 unix socket（`<listen type='socket'/>`），由 Agent
   中继。中继只接受控制台代理的 SPIFFE ID，并且只在本节点是实例 DRBD Primary 时服务，避免连到
   失去 Primary 后残留的 QEMU（PoC 05）。
@@ -206,9 +207,10 @@
 3. 控制台代理：OIDC 登录、SubjectAccessReview、noVNC 经 Agent 中继访问 VNC unix socket；SPICE
    `.vv` 经代理连接。
    **部分完成（2026-10-31）**：SubjectAccessReview、Event 审计、SPIFFE mTLS 中继和换节点后
-   自动跟随通过，见 PoC 05；OIDC 登录、SPICE、串口未测。
+   自动跟随通过，见 PoC 05；串口与 SPICE 通过，见 [PoC 15](../compute/poc-15-serial-spice-floppy.md)；
+   OIDC 登录未测。
 4. `change-media --live` 在客户机重启后保留、在冷启动后回到配置。
-   **已完成（2026-10-31）**：光驱通过，见 PoC 04；软驱未测。
+   **已完成（2026-10-31）**：光驱见 PoC 04，软驱见 PoC 15。
 5. 电源意图标记：有意关机的实例在原节点故障后不会被其他节点开机。
    **已完成（2026-10-31）**：VM 见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)，
    LXC 见 PoC 04。
