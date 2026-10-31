@@ -242,6 +242,38 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
 - **容量预留**在创建时由控制面检查（对应 vSphere 的 admission control）。运行时不检查容量，接受
   偶尔超卖的风险。
 
+### 可观测性：告警不依赖控制面
+
+HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小时，期间一切照常运行，直到下一次
+故障才暴露；PoC 05 中 evict 后残留的 QEMU 也没有任何提示。因此 HA 的健康状态首先是告警问题，
+前端展示（ADR-0016）只是补充。
+
+- **采集和告警路径与 HA 一样不依赖控制面**：中央 VictoriaMetrics 直接抓取节点上的 exporter，沿用
+  现有的规则与 Telegram 通知。Ayatori apiserver、controller 和前端都不在这条路径上。
+- **DRBD 状态用 drbd-reactor 自带的 Prometheus 插件**（`[[prometheus]]`，默认 `:9942`），不自己
+  实现。它导出资源角色、quorum、各 peer 的连接状态、out-of-sync 字节数和 `force-io-failures` 等。
+- **Agent 导出 DRBD 看不到的部分**：各实例的原地重启次数、重启耗尽与 evict、启动失败、电源意图，
+  以及"实例在非 Primary 节点上运行"（PoC 05 的残留 QEMU）。
+- **第一批告警：**
+
+| 告警 | 依据 | 来源 |
+|---|---|---|
+| 冗余降级：副本或 tiebreaker 掉线 | `drbd_connection_state` 不是 `Connected` 持续 5 分钟 | PoC 04 |
+| 失去 quorum | `drbd_device_quorum == 0` | PoC 01 |
+| 强制 demote 后仍有打开者 | `drbd_resource_forceiofailures == 1` | PoC 05 |
+| split-brain | 连接状态 `StandAlone` | — |
+| 同步卡住 | `drbd_peerdevice_outofsync_bytes > 0` 持续较长时间 | — |
+| 应运行的实例没有任何节点在运行 | Agent 指标，按 `runState` 判断 | — |
+| 实例在非 Primary 节点运行 | Agent 指标 | PoC 05 |
+| 发生原地重启或 evict | Agent 计数器增加 | PoC 01 |
+| exporter 消失 | `drbdreactor_up` 缺失 | — |
+
+- **不能只看 quorum。** PoC 05 后实测：tiebreaker 下线时 `drbd_device_quorum` 仍是 1，只有对应
+  peer 的 `drbd_connection_state` 变成 `Connecting`。剩下两个节点仍构成多数，所以 quorum 不变，
+  但再坏一个节点就会全部停机。冗余降级必须按连接状态告警。
+- 控制面可用时，Agent 同时把这些状态写进 status 和 Event，供前端和 `kubectl` 查看；告警不依赖
+  这一路。
+
 ### 与 kubelet 共用宿主机
 
 - **两个 Node 对象分属不同的 apiserver。** Agent 写到 Ayatori，kubelet 写到 workload 集群，
@@ -297,6 +329,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 11. 实例状态卷：NVRAM、vTPM 状态和电源意图随冷切换迁移；有意关机的实例在原节点故障后不会被
     其他节点开机。
     **已完成（2026-10-30）**：通过，见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)。
+12. 第一批告警接入中央 VictoriaMetrics，并在 PoC 环境中逐条触发，确认 Telegram 能收到。
 
 ## 结果
 

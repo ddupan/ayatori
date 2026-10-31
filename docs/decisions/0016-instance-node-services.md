@@ -106,6 +106,24 @@
 - **部署**：代理是无状态服务，不运行在 API-only 的控制面 LXC 上（ADR-0013）。可以作为计算节点上
   的普通服务运行，通过 Ayatori `LoadBalancer` 的 VIP 和 Hostname 对外提供。
 
+### 计算控制台：代理即前端
+
+换掉 PVE 后，日常的看控制台、换盘、开关机需要一个 Web 页面。控制台代理已经负责登录、权限和到
+节点的连接，因此把它做成整个计算后端的前端（下称"计算控制台"），**只管运行时，不管配置**：
+
+| 做 | 不做 |
+|---|---|
+| 实例列表与详情：所在节点、电源状态、当前介质、Events | 创建实例、编辑 spec（走 git） |
+| 控制台：VNC、串口、SPICE `.vv` 下载 | 编辑 domain XML |
+| 运行时操作：换盘、开机、关机、断电、重置、发送按键 | 管理 pool 和 network 的定义 |
+| HA 健康：副本和 tiebreaker 的连接、quorum、最近的重启和 evict | 告警（见 ADR-0015"可观测性"） |
+
+- **读取用用户自己的身份**：列表和详情把用户的 OIDC token 转给 apiserver，由 apiserver 做 RBAC，
+  代理不需要 impersonation 权限。只有不经过 apiserver 的运行时操作，才由代理发起
+  SubjectAccessReview。前提是 Ayatori apiserver 接受 iam-login 签发的 token，待确认。
+- **不采用 Headlamp 插件**：它能通用地展示 CRD，但控制台、换盘和电源仍要自己实现，还多一套插件和
+  一个部署组件；需要的是以单台实例为中心、类似 PVE 的页面。
+
 ### 运行时操作
 
 - **范围**：换光盘和软盘、开机、关机（ACPI）、强制断电、重置、发送 Ctrl+Alt+Del 等按键。
@@ -144,7 +162,8 @@
 
 - 实例获得启动配置、元数据和身份，配置中不再需要任何密钥。
 - 控制台和运行时操作复用 RBAC 和审计，不改变 GitOps 对 spec 的所有权。
-- 新增两个组件：中央控制台代理（无状态），以及 Agent 中的元数据服务、SPIFFE 代领和控制台中继。
+- 新增两个组件：计算控制台（中央，无状态，同时是控制台代理和前端），以及 Agent 中的元数据服务、
+  SPIFFE 代领和控制台中继。
 - 元数据服务和控制台中继都在节点上运行，不依赖控制面。只有控制台代理的 SubjectAccessReview
   依赖 apiserver：控制面不可用时，控制台需要走节点本地的 break-glass 路径（`virsh console`、
   本地 VNC）。
