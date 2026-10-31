@@ -80,23 +80,58 @@
 - **提供的内容**：实例元数据、动态更新的 user-data（仅 Ayatori 计算节点），以及下文的 SPIFFE
   JWT-SVID。
 
-### 身份：元数据服务通过 SPIRE 代领 SVID
+### 身份：service account 与两层 SVID
 
-- 宿主机的 spire-agent 开启 **Delegated Identity API**，`ayatori-imds` 作为授权的 delegate，按
-  实例的选择器代领 SVID，例如 `spiffe://<trust-domain>/ayatori/instance/<ns>/<name>`。
+参照公有云：实例挂一个 service account（对应 EC2 的 instance profile、GCE VM 上的 service account），
+实例内需要更细的身份时再在实例里运行 spire-agent（对应 EKS 上 Pod 的 IRSA）。
+
+**身份挂 service account，不用实例名。**
+
+- `LibvirtDomain`/`LXCContainer` 增加 `spec.serviceAccountName`，引用同 namespace 的
+  `core/v1 ServiceAccount`。复用内置资源作为 API contract，不新增 CRD：ServiceAccount 由用户或
+  GitOps 创建，compute controller 消费它并写 SPIRE 注册条目。
+- 权限语义照搬 Pod：能在某个 namespace 创建实例，就能使用该 namespace 的任何 service account。
+  不做 GCP 那样单独的 `serviceAccountUser` 授权，出现需求再加。
+- SPIFFE ID 为 `spiffe://<td>/ayatori/ns/<ns>/sa/<sa>`。与 workload 集群 Pod 的
+  `/ns/<ns>/sa/<sa>` 结构一致，但加 `ayatori` 前缀：两者的 namespace 属于不同的 apiserver，在同一个
+  trust domain 中必须区分，否则一方可以冒充另一方（sandbox 集群的 `/sandbox/ns/...` 是同样的做法）。
+- 多台实例做同一件事时共用一个身份，Bao 的 role 只写一次；实例重建或改名不影响身份。
+
+**第一层：实例级身份，由元数据服务代领（IAM 模式）**
+
+- 宿主机的 spire-agent 开启 **Delegated Identity API**，`ayatori-imds` 作为授权的 delegate，按实例
+  的选择器代领该实例所挂 service account 的 SVID。
 - **JWT-SVID 通过元数据服务提供**，路径带 `audience` 参数，与 GCE 的
   `.../service-accounts/default/identity?audience=` 是同一种模式。实例拿到后可以直接用
   `auth/jwt-spire/login` 登录 Bao，符合 ADR-0010"凭据交付止于 Bao"。
-- **X.509-SVID 和证书轮换**等出现需求再做：VM 可用 virtio-vsock，LXC 可绑定挂载一个只服务于该
-  容器的 socket。
-- **信任边界是宿主机。** 宿主机本来就拥有实例的全部权限，代领身份不增加新的风险。不在每个实例里
-  运行 spire-agent，也不使用 vTPM 做节点证明。
-- 注册条目由 compute controller 在实例创建时通过 SPIRE Server API 写入，删除时清理：
-  - 选择器 `ayatori:instance:<ns>/<name>`，自定义类型，由 `ayatori-imds` 按请求进入的实例端口
-    填写；PVE 上为 `pve:vm:<集群>/<vmid>`，带集群名以免 VMID 在不同集群间冲突。PVE VM 的条目在
-    Ayatori 接管它们之前由 Terraform 维护；
-  - parent 是覆盖所有候选节点的"计算节点" node alias。节点证明方式必须能给出共同的选择器（如
+- 粒度是整台实例：实例内任何进程都能取到。不需要在实例里安装任何东西，retro、Windows 和一次性的
+  轻量实例都能用。
+- **信任边界是宿主机。** 宿主机本来就拥有实例的全部权限，代领身份不增加新的风险。
+- 注册条目由 compute controller 写入，删除时清理：
+  - SPIFFE ID 为 service account 的 ID；选择器 `ayatori:instance:<ns>/<name>`，自定义类型，由
+    `ayatori-imds` 按请求进入的实例端口填写。PVE 上为 `pve:vmid:<集群>/<vmid>`（VMID 在集群内对
+    VM 和 LXC 共用，带集群名以免跨集群冲突）；PVE 实例在 Ayatori 接管之前由 Terraform 维护条目，
+    用 PVE tag 标明所挂的 service account；
+  - parent 是覆盖所有候选宿主机的 node alias。宿主机的节点证明方式必须能给出共同的选择器（如
     `x509pop` 由同一 CA 签发节点证书）；join token 做不到，PoC 中只能每个节点各建一份条目。
+
+**第二层：工作负载级身份，实例内运行 spire-agent**
+
+- 需要标准 Workload API（go-spiffe、spiffe-helper、Envoy SDS）、X.509-SVID 与自动轮换，或者要在
+  实例内区分不同进程和容器时，实例里运行 spire-agent。现有的 etcd、LB 等 LXC 已经是这样运行的
+  （`spiffe://<td>/node/<name>`），只是目前用 join token 做节点证明。
+- **节点证明照搬 `gcp_iit`/`aws_iid`**：`ayatori-imds` 为实例签发**实例身份文档**，用宿主机自己的
+  X.509-SVID 签名，不另建 PKI。SPIRE server 侧的自定义节点证明插件校验签名链属于本 trust domain、
+  签发的宿主机确实托管该实例（以 compute controller 写入的信息为准），再给出实例的选择器。防重放
+  使用 SPIRE 节点证明的 challenge-response：挑战由实例内 agent 转交宿主机上的 `ayatori-imds` 签名，
+  只有确实运行在该宿主机上的实例能完成。
+- 实例的节点 ID 为 `spiffe://<td>/ayatori/instance/<ns>/<name>`，回答"这是哪台实例"；实例内工作
+  负载的条目以它为 parent，SPIFFE ID 按需要取 service account 的 ID 或更细的 ID，回答"以谁的
+  名义访问资源"。
+- LXC 同样在容器内运行 agent：没有能透过 LXC 命名空间区分进程的 workload attestor，把宿主机的
+  agent socket 挂进容器不可行。
+- `ayatori-imds` 在 PVE 上同样签发实例身份文档，PVE 上的 VM 和 LXC 也能用这种方式接入，替换掉现有
+  LXC 的 join token。
 
 ### 控制台
 
@@ -162,6 +197,7 @@
 2. 通过 Delegated Identity API 为实例选择器签发 JWT-SVID，实例用它登录 Bao；确定注册条目的
    选择器和父 ID。
    **已完成（2026-10-31）**：通过，见 [PoC 05](../compute/poc-05-spiffe-identity-and-console.md)。
+   PoC 中 SPIFFE ID 用的是实例名，改为 service account 后机制不变。
 3. 控制台代理：OIDC 登录、SubjectAccessReview、noVNC 经 Agent 中继访问 VNC unix socket；SPICE
    `.vv` 经代理连接。
    **部分完成（2026-10-31）**：SubjectAccessReview、Event 审计、SPIFFE mTLS 中继和换节点后
@@ -173,11 +209,16 @@
    LXC 见 PoC 04。
 6. `ayatori-imds` 在一台 PVE 宿主机上运行：按 `tap<vmid>i<n>`/`veth<vmid>i<n>` 识别实例、从
    pmxcfs 读元数据、代领身份；包括 VM 开启 PVE 防火墙（tap 接在 `fwbr` 上）的情况。
+7. 实例内 spire-agent 的节点证明：`ayatori-imds` 用宿主机 SVID 签发实例身份文档，SPIRE server
+   的自定义插件校验并完成 challenge-response；实例换节点后由新宿主机签发，仍能重新证明；伪造或
+   重放的文档被拒绝。
 
 ## 结果
 
-- 实例获得启动配置、元数据和身份，配置中不再需要任何密钥。
+- 实例获得启动配置、元数据和身份，配置中不再需要任何密钥。身份挂在 service account 上，与
+  workload 集群中 Pod 的身份结构一致。
 - 控制台和运行时操作复用 RBAC 和审计，不改变 GitOps 对 spec 的所有权。
+- 需要自行维护一个 SPIRE 节点证明插件（server 与 agent 两侧）。
 - 新增三个组件：计算控制台（中央，无状态，同时是控制台代理和前端）；`ayatori-imds`（每台宿主机，
   元数据与 SPIFFE 代领，也可部署在 PVE 上）；Agent 中的控制台中继。
 - 元数据服务和控制台中继都在节点上运行，不依赖控制面。只有控制台代理的 SubjectAccessReview
