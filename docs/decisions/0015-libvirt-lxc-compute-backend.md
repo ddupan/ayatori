@@ -145,6 +145,9 @@ Ayatori 不抽象磁盘格式。存储能力尽量通过 libvirt 原生 pool 表
 | 本地 | `dir`/`logical`/`zfs` 类型 pool | Agent 取卷路径直接使用或挂载 | 不能，固定在卷所在节点 |
 | LINSTOR/DRBD | **例外**，见下 | 挂载 DRBD 设备 | 能 |
 
+本地 `logical`/`zfs` pool 不得指向 LINSTOR/DRBD 的底层 VG 或 zpool：libvirt 会把 DRBD 的底层卷也列成
+pool 中的卷，经 libvirt 删除或直接挂载它们会绕过 DRBD（PoC 10）。
+
 **LINSTOR 没有 libvirt pool 驱动**，是本设计中唯一的非原生部分：
 
 - `LibvirtStorageVolume` 增加 `backend: linstor` 分支，由 controller 调用 LINSTOR API 创建卷，
@@ -320,6 +323,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    共存，或者是否需要单独的 resource group。
 3. 各节点下发同名 `rbd`、`logical` pool 和 bridge 型 network 后，domain 使用原生引用，冷启动换
    节点仍能正常解析；LXC 能通过 Agent 解析同一份 pool/network。
+   **大部分完成（2026-10-31）**：`logical` pool 与 bridge 型 network 通过，见
+   [PoC 10](../compute/poc-10-native-pool-network-refs.md)；`rbd` 待有 Ceph 时验证。
 4. Windows 和至少一个 retro 系统（例如 Win9x/DOS，i440fx + IDE + SB16）能否通过 domain XML 透传
    运行。
    **部分完成（2026-10-30）**：设备模型通过，见 [PoC 02](../compute/poc-02-retro-and-windows.md)；
