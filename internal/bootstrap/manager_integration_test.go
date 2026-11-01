@@ -56,7 +56,7 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "")
 	createLoadBalancerCredentials(t, config)
 	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1",
-		"--loadbalancer-address-pool=10.62.0.0/24", "--loadbalancer-host=lb1,https://127.0.0.1:1",
+		"--loadbalancer-address-pool=10.62.0.0/24",
 		"--loadbalancer-credentials=default/loadbalancer-hosts",
 		"--loadbalancer-dns-url=http://127.0.0.1:1", "--loadbalancer-dns-zone=lb.example.test")
 	manager, err := newManager(options)

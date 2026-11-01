@@ -20,12 +20,10 @@ import (
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/powerdns"
 	lbcontroller "git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 type loadBalancerOptions struct {
 	addressPool    string
-	hosts          []loadbalancer.Host
 	credentials    string
 	connectTimeout time.Duration
 	resolvers      string
@@ -36,17 +34,8 @@ type loadBalancerOptions struct {
 func (o *loadBalancerOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.addressPool, "loadbalancer-address-pool", "",
 		"LoadBalancer VIP 池（IPv4 CIDR），不得与本 API server 的 Service CIDR 重叠；为空时不启用 LoadBalancer")
-	flags.Func("loadbalancer-host", "LB 主机，格式 <名称>,<Data Plane API URL>；可重复；为空时只分配 VIP",
-		func(value string) error {
-			name, url, ok := strings.Cut(value, ",")
-			if !ok || name == "" || url == "" || strings.Contains(url, ",") {
-				return fmt.Errorf("want <name>,<data plane API URL>")
-			}
-			o.hosts = append(o.hosts, loadbalancer.Host{Name: name, ProxyURL: url})
-			return nil
-		})
 	flags.StringVar(&o.credentials, "loadbalancer-credentials", "",
-		"LB 凭据 Secret（<namespace>/<name>）：username、password 为 Data Plane API Basic 凭据，tls.crt、tls.key、ca.crt 为 Data Plane API 的 mTLS，powerdns-api-key 为 PowerDNS API key")
+		"LB 凭据 Secret（<namespace>/<name>），为空时只分配 VIP、不管理 LoadBalancerHost：username、password 为 Data Plane API Basic 凭据，tls.crt、tls.key、ca.crt 为 Data Plane API 的 mTLS，powerdns-api-key 为 PowerDNS API key")
 	flags.DurationVar(&o.connectTimeout, "loadbalancer-connect-timeout", 5*time.Second, "代理连接后端的超时")
 	flags.StringVar(&o.resolvers, "loadbalancer-resolvers", "", "DNS endpoint 使用的 HAProxy resolvers section 名称")
 	flags.StringVar(&o.dnsURL, "loadbalancer-dns-url", "", "PowerDNS API 地址；与 --loadbalancer-dns-zone 同时设置时维护 Hostname")
@@ -61,26 +50,32 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 	if err != nil || !prefix.Addr().Is4() {
 		return fmt.Errorf("loadbalancer address pool %q must be an IPv4 CIDR", options.addressPool)
 	}
-	reconciler := &lbcontroller.LoadBalancerReconciler{Client: manager.GetClient(), Pool: address.Pool{Prefix: prefix.Masked()}, Hosts: options.hosts}
+	reconciler := &lbcontroller.LoadBalancerReconciler{Client: manager.GetClient(), Pool: address.Pool{Prefix: prefix.Masked()}}
 	if (options.dnsURL == "") != (options.dnsZone == "") {
 		return errors.New("--loadbalancer-dns-url and --loadbalancer-dns-zone must be set together")
 	}
-	if len(options.hosts) > 0 || options.dnsZone != "" {
+	if options.dnsZone != "" && options.credentials == "" {
+		return errors.New("LoadBalancer DNS requires --loadbalancer-credentials=<namespace>/<name>")
+	}
+	if options.credentials != "" {
 		secret, err := loadBalancerCredentials(ctx, manager, options.credentials)
 		if err != nil {
 			return err
 		}
-		if len(options.hosts) > 0 {
-			certificate, err := newClientCertificate(secret, manager.GetAPIReader())
-			if err != nil {
-				return err
-			}
-			if err := manager.Add(certificate); err != nil {
-				return fmt.Errorf("set up LoadBalancer client certificate refresh: %w", err)
-			}
-			if reconciler.Proxy, err = loadBalancerProxy(secret, certificate, options); err != nil {
-				return err
-			}
+		certificate, err := newClientCertificate(secret, manager.GetAPIReader())
+		if err != nil {
+			return err
+		}
+		if err := manager.Add(certificate); err != nil {
+			return fmt.Errorf("set up LoadBalancer client certificate refresh: %w", err)
+		}
+		proxy, err := loadBalancerProxy(secret, certificate, options)
+		if err != nil {
+			return err
+		}
+		reconciler.Proxy = proxy
+		if err := (&lbcontroller.LoadBalancerHostReconciler{Client: manager.GetClient(), Proxy: proxy}).SetupWithManager(manager); err != nil {
+			return fmt.Errorf("set up LoadBalancerHost controller: %w", err)
 		}
 		if options.dnsZone != "" {
 			reconciler.DNS = powerdns.New(options.dnsURL, string(secret.Data["powerdns-api-key"]), options.dnsZone, &http.Client{Timeout: 30 * time.Second})
@@ -100,7 +95,7 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 func loadBalancerCredentials(ctx context.Context, manager ctrl.Manager, reference string) (*corev1.Secret, error) {
 	namespace, name, ok := strings.Cut(reference, "/")
 	if !ok || namespace == "" || name == "" {
-		return nil, errors.New("LB hosts or DNS require --loadbalancer-credentials=<namespace>/<name>")
+		return nil, errors.New("--loadbalancer-credentials must be <namespace>/<name>")
 	}
 	secret := &corev1.Secret{}
 	// manager 尚未启动，直接读 API server，Secret 也不进入共享 cache。

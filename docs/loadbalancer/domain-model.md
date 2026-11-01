@@ -12,15 +12,15 @@
 | LoadBalancer | 消费方声明的 L4 入口：VIP、listener、backend endpoint 与健康检查 |
 | Address | 已分配给某个 LoadBalancer 的 VIP；以“名字即 IP”的 API 对象记录占用 |
 | Pool | 当前环境可分配的 VIP 范围，首版来自 controller 配置 |
-| Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 LB agent，首版来自 controller 配置 |
+| Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 LB agent，即 cluster 级资源 `LoadBalancerHost`（ADR-0015） |
 | Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、是否满足宣告规则 |
 | 宣告规则 | Host 宣告某 VIP /32，当且仅当本机 HAProxy 应答、绑定该 VIP 的 frontend 全部处于 OPEN，且内核把该 VIP 当作本机地址 |
 | LB agent | 每台 Host 上内嵌 GoBGP 的进程，按宣告规则自行宣告与撤回，不经 controller |
 | Hostname | Ayatori 为 LoadBalancer 生成并维护的域名，A 记录指向其 VIP |
 
 LoadBalancer 一对一 Address、一对一 Hostname；首版每个 LoadBalancer 落地到全部 Host，每台 Host 一个 Attachment。
-Host 不是 API 资源，也不持有 LoadBalancer 集合；Attachment 只作为 LoadBalancer status 的一部分
-存在。
+Host 不持有 LoadBalancer 集合；Attachment 只作为 LoadBalancer status 的一部分存在，主机自身的
+可达性在 LoadBalancerHost status 的 `DataPlaneReachable`。
 
 ## 聚合与职责
 
@@ -152,6 +152,7 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | Reconciler | 职责 |
 | --- | --- |
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
+| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
 
 Address 复用内置 `networking.k8s.io/v1 IPAddress`（envtest 1.37 验证：Service CIDR 外的地址
@@ -235,8 +236,11 @@ conditions 参照 Octavia 将控制面下发（provisioning_status）与数据�
 - `Available`：每个 port 至少有一个健康 endpoint。PostgreSQL 无 primary 时为 False，但
   `Programmed` 不受影响。
 
-Host 从配置中移除时，其 Attachment 不再参与 Programmed 判定；该主机上残留的配置与宣告不再受管，
-由管理员清理（或随该主机下线而失效）。
+LoadBalancer 只落地到已带 finalizer 且未在删除的 LoadBalancerHost：finalizer 保证写入的配置在主机
+删除时被清理。删除 LoadBalancerHost 时它的 Attachment 立即不再出现、不再参与 Programmed 判定；
+LoadBalancerHost controller 删除该主机上全部 `lb_` 前缀 section（包括已删除的 LoadBalancer 遗留的），
+等 reload 后运行中的进程不再有 `lb_` frontend（agent 随之撤回）再放行。主机不可达时删除等待，由管理员
+移除 finalizer 强制完成。增删主机无需重启 controller。
 
 ## 删除
 
@@ -277,8 +281,7 @@ LB 主机部署（homelab-infra）须保证：
 | 参数 | 含义 |
 | --- | --- |
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
-| `--loadbalancer-host=<名称>,<Data Plane API URL>` | LB 主机，可重复；为空时只分配 VIP |
-| `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS） |
+| `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
@@ -296,8 +299,8 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
    finalizer 正常删除，清扫留作后续，是否接受？
 2. **指定 VIP 的授权**：首版任何有权创建 LoadBalancer 的 namespace 都可请求 Pool 内的空闲 VIP；
    按 namespace 限定可请求范围留作后续。
-3. **Pool、Host 与 DNS zone 的配置来源**：首版放在 controller 配置，变更需重启 controller；出现频繁变更
-   或多池需求时再改为 API 资源。
+3. **Pool 与 DNS zone 的配置来源**：放在 controller 配置，变更需重启 controller；出现多池需求时再改为
+   API 资源（Host 已按 ADR-0015 成为 `LoadBalancerHost`）。
 
 ## 测试分层
 
@@ -342,3 +345,6 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
   `--loadbalancer-host` 去掉 gobgpd 地址。切片 3a/3b 中的宣告部分随之作废。
 - 切片 6a（ADR-0015，agent 状态接口）：宣告规则拆出逐 VIP 原因 `Check`；agent 读 adj-rib-out，
   在指标端口提供 `GET /status`（`loadbalancer.AgentStatus`）。controller 尚未读取它。
+- 切片 6b（ADR-0015，LoadBalancerHost）：主机成为 cluster 级资源，取代 `--loadbalancer-host`；
+  `LoadBalancerHostReconciler` 报告 `DataPlaneReachable`，删除时整机清理（`haproxy.Hosts.Purge`）。
+  部署 role 从 inventory 渲染 LoadBalancerHost。`agentURL` 与 `AgentReady` 留给下一步。

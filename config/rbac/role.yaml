@@ -48,6 +48,7 @@ rules:
 - apiGroups:
   - network.ayatori.ddupan.top
   resources:
+  - loadbalancerhosts
   - loadbalancers
   verbs:
   - get
@@ -58,12 +59,14 @@ rules:
 - apiGroups:
   - network.ayatori.ddupan.top
   resources:
+  - loadbalancerhosts/finalizers
   - loadbalancers/finalizers
   verbs:
   - update
 - apiGroups:
   - network.ayatori.ddupan.top
   resources:
+  - loadbalancerhosts/status
   - loadbalancers/status
   verbs:
   - get

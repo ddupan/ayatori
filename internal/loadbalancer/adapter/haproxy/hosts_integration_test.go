@@ -308,6 +308,37 @@ pkill -x dataplaneapi`
 			t.Fatalf("其他 LoadBalancer 的配置不应受影响: %+v", facts)
 		}
 	})
+
+	t.Run("Probe 以当前凭据确认应答", func(t *testing.T) { probes(t, hosts, f) })
+	t.Run("Purge 删除全部 lb_ section 且等进程不再服务", func(t *testing.T) { purges(t, hosts, f) })
+}
+
+func probes(t *testing.T, hosts *haproxy.Hosts, f fixture) {
+	if err := hosts.Probe(t.Context(), f.host); err != nil {
+		t.Fatal(err)
+	}
+	wrong := &haproxy.Hosts{HTTP: http.DefaultClient, Username: fixtureUser, Password: "wrong"}
+	if err := wrong.Probe(t.Context(), f.host); err == nil {
+		t.Fatal("凭据错误时应报告不可达")
+	}
+}
+
+// purges 在 otherUID 的 LoadBalancer 仍在时调用：主机删除时不区分归属。
+func purges(t *testing.T, hosts *haproxy.Hosts, f fixture) {
+	waitFor(t, func() bool {
+		done, err := hosts.Purge(t.Context(), f.host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return done
+	})
+	config := f.config(t)
+	if strings.Contains(config, "lb_") || !strings.Contains(config, "userlist dataplaneapi") {
+		t.Fatalf("应只删除 lb_ section:\n%s", config)
+	}
+	if done, err := hosts.Purge(t.Context(), f.host); err != nil || !done {
+		t.Fatalf("清理后再次调用应直接完成: %v %v", done, err)
+	}
 }
 
 func reloadCount(t *testing.T, f fixture) int {
