@@ -52,16 +52,15 @@ func (a *Agent) reconcile() {
 // connect 在没有连接或连接已断开时重连 libvirt。
 func (a *Agent) connect() bool {
 	if a.hv != nil {
-		select {
-		case <-a.hv.Disconnected():
-			a.hv = nil
-		default:
+		if a.hv.Alive() {
 			return true
 		}
+		_ = a.hv.Close()
+		a.hv = nil
 	}
-	hv, err := libvirt.Dial(a.config.LibvirtAddress, a.config.LibvirtURI)
+	hv, err := libvirt.Dial(a.config.LibvirtURI)
 	if err != nil {
-		a.logger.Error("connect libvirt", "address", a.config.LibvirtAddress, "error", err)
+		a.logger.Error("connect libvirt", "uri", a.config.LibvirtURI, "error", err)
 		a.connected = false
 		a.facts.Store(&nodeFacts{})
 		return false

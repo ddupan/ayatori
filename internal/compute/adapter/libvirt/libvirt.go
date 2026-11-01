@@ -1,45 +1,34 @@
 // Package libvirt 是 Compute Agent 访问本机 libvirt 的薄 adapter：只做调用与翻译，返回事实，
-// 不含"何时下发、何时启动"的策略。经 RPC 连接 libvirtd，不需要 cgo。
+// 不含"何时下发、何时启动"的策略。使用 libvirt 官方的 cgo 绑定。
 package libvirt
 
 import (
 	"errors"
-	"fmt"
-	"net/url"
-	"time"
 
-	golibvirt "github.com/digitalocean/go-libvirt"
-	"github.com/digitalocean/go-libvirt/socket/dialers"
+	golibvirt "libvirt.org/go/libvirt"
 )
 
-type Client struct{ l *golibvirt.Libvirt }
+type Client struct{ conn *golibvirt.Connect }
 
-// Dial 连接 address 上的 libvirtd 并打开 uri 指定的驱动。
-// address 为 unix:///run/libvirt/libvirt-sock 或 tcp://host:port（测试用）。
-func Dial(address, uri string) (*Client, error) {
-	u, err := url.Parse(address)
+// Dial 打开 uri（例如 qemu:///system；测试用 test:///default）。
+func Dial(uri string) (*Client, error) {
+	conn, err := golibvirt.NewConnect(uri)
 	if err != nil {
 		return nil, err
 	}
-	var l *golibvirt.Libvirt
-	switch u.Scheme {
-	case "unix":
-		l = golibvirt.NewWithDialer(dialers.NewLocal(dialers.WithSocket(u.Path), dialers.WithLocalTimeout(5*time.Second)))
-	case "tcp":
-		l = golibvirt.NewWithDialer(dialers.NewRemote(u.Hostname(), dialers.UsePort(u.Port()), dialers.WithRemoteTimeout(5*time.Second)))
-	default:
-		return nil, fmt.Errorf("unsupported libvirt address %q", address)
-	}
-	if err := l.ConnectToURI(golibvirt.ConnectURI(uri)); err != nil {
-		return nil, err
-	}
-	return &Client{l: l}, nil
+	return &Client{conn: conn}, nil
 }
 
-func (c *Client) Close() error { return c.l.Disconnect() }
+func (c *Client) Close() error {
+	_, err := c.conn.Close()
+	return err
+}
 
-// Disconnected 在连接断开后关闭；调用方据此重连。
-func (c *Client) Disconnected() <-chan struct{} { return c.l.Disconnected() }
+// Alive 报告连接是否仍可用；断开后调用方重连。
+func (c *Client) Alive() bool {
+	ok, err := c.conn.IsAlive()
+	return err == nil && ok
+}
 
 // Object 是 network 或 pool 的现状；XML 为 inactive（持久）配置。
 type Object struct {
@@ -49,129 +38,151 @@ type Object struct {
 }
 
 func (c *Client) Network(name string) (Object, error) {
-	n, err := c.l.NetworkLookupByName(name)
+	n, err := c.conn.LookupNetworkByName(name)
 	if IsNotFound(err) {
 		return Object{}, nil
 	} else if err != nil {
 		return Object{}, err
 	}
-	xml, err := inactiveXML(func(flags uint32) (string, error) { return c.l.NetworkGetXMLDesc(n, flags) }, uint32(golibvirt.NetworkXMLInactive))
+	defer n.Free()
+	xml, err := inactiveXML(func(inactive bool) (string, error) {
+		if inactive {
+			return n.GetXMLDesc(golibvirt.NETWORK_XML_INACTIVE)
+		}
+		return n.GetXMLDesc(0)
+	})
 	if err != nil {
 		return Object{}, err
 	}
-	active, err := c.l.NetworkIsActive(n)
-	return Object{Found: true, Active: active == 1, XML: xml}, err
+	active, err := n.IsActive()
+	return Object{Found: true, Active: active, XML: xml}, err
 }
 
 func (c *Client) DefineNetwork(xml string) error {
-	_, err := c.l.NetworkDefineXML(xml)
-	return err
+	n, err := c.conn.NetworkDefineXML(xml)
+	if err != nil {
+		return err
+	}
+	return n.Free()
 }
 
 // StartNetwork 启动 network 并打开 autostart：network 是实例的前提，不应依赖 Agent 是否在运行。
 func (c *Client) StartNetwork(name string) error {
-	n, err := c.l.NetworkLookupByName(name)
+	n, err := c.conn.LookupNetworkByName(name)
 	if err != nil {
 		return err
 	}
-	if err := c.l.NetworkSetAutostart(n, 1); err != nil {
+	defer n.Free()
+	if err := n.SetAutostart(true); err != nil {
 		return err
 	}
-	if active, err := c.l.NetworkIsActive(n); err != nil || active == 1 {
+	if active, err := n.IsActive(); err != nil || active {
 		return err
 	}
-	return c.l.NetworkCreate(n)
+	return n.Create()
 }
 
 // RemoveNetwork 停止并删除定义；不存在时什么也不做。
 func (c *Client) RemoveNetwork(name string) error {
-	n, err := c.l.NetworkLookupByName(name)
+	n, err := c.conn.LookupNetworkByName(name)
 	if IsNotFound(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if active, err := c.l.NetworkIsActive(n); err != nil {
+	defer n.Free()
+	if active, err := n.IsActive(); err != nil {
 		return err
-	} else if active == 1 {
-		if err := c.l.NetworkDestroy(n); err != nil {
+	} else if active {
+		if err := n.Destroy(); err != nil {
 			return err
 		}
 	}
-	return c.l.NetworkUndefine(n)
+	return n.Undefine()
 }
 
 func (c *Client) Pool(name string) (Object, error) {
-	p, err := c.l.StoragePoolLookupByName(name)
+	p, err := c.conn.LookupStoragePoolByName(name)
 	if IsNotFound(err) {
 		return Object{}, nil
 	} else if err != nil {
 		return Object{}, err
 	}
-	xml, err := inactiveXML(func(flags uint32) (string, error) {
-		return c.l.StoragePoolGetXMLDesc(p, golibvirt.StorageXMLFlags(flags))
-	}, uint32(golibvirt.StorageXMLInactive))
+	defer p.Free()
+	xml, err := inactiveXML(func(inactive bool) (string, error) {
+		if inactive {
+			return p.GetXMLDesc(golibvirt.STORAGE_XML_INACTIVE)
+		}
+		return p.GetXMLDesc(0)
+	})
 	if err != nil {
 		return Object{}, err
 	}
-	active, err := c.l.StoragePoolIsActive(p)
-	return Object{Found: true, Active: active == 1, XML: xml}, err
+	active, err := p.IsActive()
+	return Object{Found: true, Active: active, XML: xml}, err
 }
 
 func (c *Client) DefinePool(xml string) error {
-	_, err := c.l.StoragePoolDefineXML(xml, 0)
-	return err
+	p, err := c.conn.StoragePoolDefineXML(xml, 0)
+	if err != nil {
+		return err
+	}
+	return p.Free()
 }
 
 // StartPool 启动 pool 并打开 autostart。不执行 pool-build：对 logical 等类型它会创建或覆盖底层存储。
 func (c *Client) StartPool(name string) error {
-	p, err := c.l.StoragePoolLookupByName(name)
+	p, err := c.conn.LookupStoragePoolByName(name)
 	if err != nil {
 		return err
 	}
-	if err := c.l.StoragePoolSetAutostart(p, 1); err != nil {
+	defer p.Free()
+	if err := p.SetAutostart(true); err != nil {
 		return err
 	}
-	if active, err := c.l.StoragePoolIsActive(p); err != nil || active == 1 {
+	if active, err := p.IsActive(); err != nil || active {
 		return err
 	}
-	return c.l.StoragePoolCreate(p, 0)
+	return p.Create(0)
 }
 
 // RemovePool 停止并删除定义，不删除底层存储。
 func (c *Client) RemovePool(name string) error {
-	p, err := c.l.StoragePoolLookupByName(name)
+	p, err := c.conn.LookupStoragePoolByName(name)
 	if IsNotFound(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if active, err := c.l.StoragePoolIsActive(p); err != nil {
+	defer p.Free()
+	if active, err := p.IsActive(); err != nil {
 		return err
-	} else if active == 1 {
-		if err := c.l.StoragePoolDestroy(p); err != nil {
+	} else if active {
+		if err := p.Destroy(); err != nil {
 			return err
 		}
 	}
-	return c.l.StoragePoolUndefine(p)
+	return p.Undefine()
 }
 
 // Volume 返回 pool 中卷在本机的路径，以及它是否为块设备。
 func (c *Client) Volume(pool, volume string) (path string, block bool, err error) {
-	p, err := c.l.StoragePoolLookupByName(pool)
+	p, err := c.conn.LookupStoragePoolByName(pool)
 	if err != nil {
 		return "", false, err
 	}
-	v, err := c.l.StorageVolLookupByName(p, volume)
+	defer p.Free()
+	v, err := p.LookupStorageVolByName(volume)
 	if err != nil {
 		return "", false, err
 	}
-	kind, _, _, err := c.l.StorageVolGetInfo(v)
+	defer v.Free()
+	info, err := v.GetInfo()
 	if err != nil {
 		return "", false, err
 	}
-	path, err = c.l.StorageVolGetPath(v)
-	return path, golibvirt.StorageVolType(kind) == golibvirt.StorageVolBlock, err
+	path, err = v.GetPath()
+	return path, info.Type == golibvirt.STORAGE_VOL_BLOCK, err
 }
 
 // Domain 是实例的现状；State 与 Reason 与 `virsh domstate --reason` 的写法一致。
@@ -185,86 +196,121 @@ type Domain struct {
 func (d Domain) Running() bool { return d.State == "running" || d.State == "paused" }
 
 func (c *Client) Domain(name string) (Domain, error) {
-	d, err := c.l.DomainLookupByName(name)
+	d, err := c.conn.LookupDomainByName(name)
 	if IsNotFound(err) {
 		return Domain{}, nil
 	} else if err != nil {
 		return Domain{}, err
 	}
-	xml, err := c.l.DomainGetXMLDesc(d, golibvirt.DomainXMLInactive)
+	defer d.Free()
+	xml, err := d.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
 	if err != nil {
 		return Domain{}, err
 	}
-	state, reason, err := c.l.DomainGetState(d, 0)
+	state, reason, err := d.GetState()
 	if err != nil {
 		return Domain{}, err
 	}
-	s, r := stateNames(golibvirt.DomainState(state), reason)
+	s, r := stateNames(state, reason)
 	return Domain{Found: true, XML: xml, State: s, Reason: r}, nil
 }
 
 // DefineDomain 定义实例并关闭 autostart：实例只由 Agent 或 drbd-reactor 启动（ADR-0015）。
 func (c *Client) DefineDomain(xml string) error {
-	d, err := c.l.DomainDefineXML(xml)
+	d, err := c.conn.DomainDefineXML(xml)
 	if err != nil {
 		return err
 	}
-	return c.l.DomainSetAutostart(d, 0)
+	defer d.Free()
+	return d.SetAutostart(false)
 }
 
 func (c *Client) StartDomain(name string) error {
-	d, err := c.l.DomainLookupByName(name)
+	d, err := c.conn.LookupDomainByName(name)
 	if err != nil {
 		return err
 	}
-	return c.l.DomainCreate(d)
+	defer d.Free()
+	return d.Create()
 }
 
 // RemoveDomain 强制停止并删除定义（连同 NVRAM），不删除磁盘。
 func (c *Client) RemoveDomain(name string) error {
-	d, err := c.l.DomainLookupByName(name)
+	d, err := c.conn.LookupDomainByName(name)
 	if IsNotFound(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	state, _, err := c.l.DomainGetState(d, 0)
+	defer d.Free()
+	state, _, err := d.GetState()
 	if err != nil {
 		return err
 	}
-	if golibvirt.DomainState(state) != golibvirt.DomainShutoff {
-		if err := c.l.DomainDestroy(d); err != nil {
+	if state != golibvirt.DOMAIN_SHUTOFF {
+		if err := d.Destroy(); err != nil {
 			return err
 		}
 	}
-	err = c.l.DomainUndefineFlags(d, golibvirt.DomainUndefineNvram)
+	err = d.UndefineFlags(golibvirt.DOMAIN_UNDEFINE_NVRAM)
 	if isUnsupportedFlags(err) { // test 驱动不支持 NVRAM flag；QEMU 驱动支持
-		err = c.l.DomainUndefine(d)
+		err = d.Undefine()
 	}
 	return err
 }
 
 // NodeInfo 返回本机的 CPU 数与内存（字节）。
 func (c *Client) NodeInfo() (cpus int64, memory int64, err error) {
-	_, memKiB, n, _, _, _, _, _, err := c.l.NodeGetInfo()
-	return int64(n), int64(memKiB) * 1024, err
+	info, err := c.conn.GetNodeInfo()
+	if err != nil {
+		return 0, 0, err
+	}
+	return int64(info.Cpus), int64(info.Memory) * 1024, nil
 }
 
-func stateNames(state golibvirt.DomainState, reason int32) (string, string) {
+// IsNotFound 判断 domain、network、pool 或卷不存在。
+func IsNotFound(err error) bool {
+	var e golibvirt.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	switch e.Code {
+	case golibvirt.ERR_NO_DOMAIN, golibvirt.ERR_NO_NETWORK, golibvirt.ERR_NO_STORAGE_POOL, golibvirt.ERR_NO_STORAGE_VOL:
+		return true
+	}
+	return false
+}
+
+// inactiveXML 读取持久配置。libvirt 的 test 驱动不支持 network 与 pool 的 INACTIVE flag，
+// 此时退回不带 flag 读取：test 驱动中两者相同；QEMU 驱动支持该 flag，不会走到这里。
+func inactiveXML(get func(inactive bool) (string, error)) (string, error) {
+	xml, err := get(true)
+	if isUnsupportedFlags(err) {
+		return get(false)
+	}
+	return xml, err
+}
+
+func isUnsupportedFlags(err error) bool {
+	var e golibvirt.Error
+	return errors.As(err, &e) && e.Code == golibvirt.ERR_INVALID_ARG
+}
+
+func stateNames(state golibvirt.DomainState, reason int) (string, string) {
 	switch state {
-	case golibvirt.DomainRunning:
+	case golibvirt.DOMAIN_RUNNING:
 		return "running", pick(runningReasons, reason)
-	case golibvirt.DomainShutoff:
+	case golibvirt.DOMAIN_SHUTOFF:
 		return "shut off", pick(shutoffReasons, reason)
-	case golibvirt.DomainPaused:
+	case golibvirt.DOMAIN_PAUSED:
 		return "paused", "unknown"
-	case golibvirt.DomainShutdown:
+	case golibvirt.DOMAIN_SHUTDOWN:
 		return "in shutdown", "unknown"
-	case golibvirt.DomainCrashed:
+	case golibvirt.DOMAIN_CRASHED:
 		return "crashed", "unknown"
-	case golibvirt.DomainPmsuspended:
+	case golibvirt.DOMAIN_PMSUSPENDED:
 		return "pmsuspended", "unknown"
-	case golibvirt.DomainBlocked:
+	case golibvirt.DOMAIN_BLOCKED:
 		return "idle", "unknown"
 	}
 	return "no state", "unknown"
@@ -277,37 +323,9 @@ var (
 		"from snapshot", "daemon"}
 )
 
-func pick(names []string, i int32) string {
-	if i < 0 || int(i) >= len(names) {
+func pick(names []string, i int) string {
+	if i < 0 || i >= len(names) {
 		return "unknown"
 	}
 	return names[i]
-}
-
-// IsNotFound 判断对象不存在。go-libvirt 自带的 IsNotFound 只认 domain，这里覆盖 network、pool 与卷。
-func IsNotFound(err error) bool {
-	var e golibvirt.Error
-	if !errors.As(err, &e) {
-		return false
-	}
-	switch golibvirt.ErrorNumber(e.Code) {
-	case golibvirt.ErrNoDomain, golibvirt.ErrNoNetwork, golibvirt.ErrNoStoragePool, golibvirt.ErrNoStorageVol:
-		return true
-	}
-	return false
-}
-
-// inactiveXML 读取持久配置。libvirt 的 test 驱动不支持 network 与 pool 的 INACTIVE flag，
-// 此时退回不带 flag 读取：test 驱动中两者相同；QEMU 驱动支持该 flag，不会走到这里。
-func inactiveXML(get func(flags uint32) (string, error), inactive uint32) (string, error) {
-	xml, err := get(inactive)
-	if isUnsupportedFlags(err) {
-		return get(0)
-	}
-	return xml, err
-}
-
-func isUnsupportedFlags(err error) bool {
-	var e golibvirt.Error
-	return errors.As(err, &e) && golibvirt.ErrorNumber(e.Code) == golibvirt.ErrInvalidArg
 }

@@ -44,9 +44,8 @@ type Config struct {
 	// ponytail: 先用 kubeconfig；SPIFFE JWT-SVID 登录待 apiserver 的 structured authentication 就绪（ADR-0014）。
 	Kubeconfig string `json:"kubeconfig"`
 	StateDir   string `json:"stateDir"`
-	// LibvirtAddress 为 unix:///run/libvirt/libvirt-sock 或 tcp://host:port。
-	LibvirtAddress string `json:"libvirtAddress"`
-	LibvirtURI     string `json:"libvirtURI"`
+	// LibvirtURI 缺省为 qemu:///system。
+	LibvirtURI string `json:"libvirtURI"`
 	// HostReservedMemory 是宿主机自身的预留，从 Node 的 allocatable 中扣除（ADR-0015 资源模型）。
 	HostReservedMemory resource.Quantity `json:"hostReservedMemory"`
 	// ResyncInterval 是没有变化时重新收敛的间隔，也是发现带外修改的最长延迟。
@@ -62,9 +61,6 @@ func LoadConfig(path string) (Config, error) {
 	var c Config
 	if err := yaml.UnmarshalStrict(data, &c); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if c.LibvirtAddress == "" {
-		c.LibvirtAddress = "unix:///run/libvirt/libvirt-sock"
 	}
 	if c.LibvirtURI == "" {
 		c.LibvirtURI = "qemu:///system"
