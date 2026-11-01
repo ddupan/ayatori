@@ -2,6 +2,7 @@ package loadbalancer
 
 import (
 	"net/netip"
+	"slices"
 	"time"
 )
 
@@ -13,6 +14,20 @@ type AgentStatus struct {
 	LastSync *time.Time `json:"lastSync,omitempty"`
 	// VIPs 是 HAProxy 中绑定在 VIP 段内的全部地址；HAProxy 不应答时为空。
 	VIPs []VIPStatus `json:"vips"`
+}
+
+// Ready 判断 agent 是否在正常收发：HAProxy 应答、至少一个 BGP 会话已建立、最近 staleAfter 内成功
+// 收敛过。不满足时返回原因。
+func (s AgentStatus) Ready(now time.Time, staleAfter time.Duration) (bool, string) {
+	switch {
+	case !s.HAProxyUp:
+		return false, "HAProxy 不应答"
+	case !slices.ContainsFunc(s.Neighbors, func(n NeighborStatus) bool { return n.Established }):
+		return false, "没有已建立的 BGP 会话"
+	case s.LastSync == nil || now.Sub(*s.LastSync) > staleAfter:
+		return false, "收敛停滞"
+	}
+	return true, ""
 }
 
 type NeighborStatus struct {

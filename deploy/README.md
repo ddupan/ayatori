@@ -73,6 +73,7 @@ ayatori_loadbalancer:
   hosts:  # 每项渲染为一个 LoadBalancerHost
     - name: lb-dev-1
       data_plane_url: https://lb-dev-1.lab.ddupan.top:5555
+      agent_url: http://lb-dev-1.lab.ddupan.top:9641   # agent 的 metricsAddress，manager 须能访问
 ```
 
 role 在控制面容器启动、Flux 同步 CRD 之后应用这些 LoadBalancerHost，并按标签

@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"net/netip"
+	"time"
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
@@ -15,6 +17,9 @@ import (
 const (
 	LoadBalancerHostFinalizer = "network.ayatori.ddupan.top/loadbalancerhost"
 	dataPlaneReachableType    = "DataPlaneReachable"
+	agentReadyType            = "AgentReady"
+	// agentUnreachable 是 AgentReady 在 agent 不应答时的 reason；只有此时 status.vips 不是 agent 的报告。
+	agentUnreachable = "AgentUnreachable"
 )
 
 // HostBackend 观察与清理整台主机，不区分 LoadBalancer。
@@ -24,11 +29,21 @@ type HostBackend interface {
 	Purge(context.Context, loadbalancer.Host) (bool, error)
 }
 
-// LoadBalancerHostReconciler 报告主机可达性；删除时先清理主机上全部 LoadBalancer 配置再放行
-// （ADR-0015）。主机不可达时删除等待，由管理员移除 finalizer 强制完成。
+// AgentBackend 读取 LB agent 报告的本机事实。
+type AgentBackend interface {
+	Status(ctx context.Context, agentURL string) (loadbalancer.AgentStatus, error)
+}
+
+// LoadBalancerHostReconciler 报告主机可达性与 agent 状态；删除时先清理主机上全部 LoadBalancer 配置
+// 再放行（ADR-0015）。主机不可达时删除等待，由管理员移除 finalizer 强制完成。
 type LoadBalancerHostReconciler struct {
 	Client client.Client
 	Proxy  HostBackend
+	Agent  AgentBackend
+	// AgentStaleAfter 是 agent 最近一次成功收敛距今的上限，超过即视为收敛停滞。
+	AgentStaleAfter time.Duration
+	// Now 只供测试替换。
+	Now func() time.Time
 }
 
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancerhosts,verbs=get;list;watch;update;patch
@@ -52,7 +67,8 @@ func (r *LoadBalancerHostReconciler) Reconcile(ctx context.Context, request ctrl
 	hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
 	defer cancel()
 	probe := r.Proxy.Probe(hostCtx, host)
-	if err := r.saveHost(ctx, object, probe); err != nil {
+	agent, agentErr := r.Agent.Status(hostCtx, object.Spec.AgentURL)
+	if err := r.saveHost(ctx, object, probe, agent, agentErr); err != nil {
 		return ctrl.Result{}, err
 	}
 	if !deleting || probe != nil {
@@ -69,7 +85,8 @@ func (r *LoadBalancerHostReconciler) Reconcile(ctx context.Context, request ctrl
 	return ctrl.Result{}, client.IgnoreNotFound(r.Client.Update(ctx, object))
 }
 
-func (r *LoadBalancerHostReconciler) saveHost(ctx context.Context, object *networkv1alpha1.LoadBalancerHost, probe error) error {
+func (r *LoadBalancerHostReconciler) saveHost(ctx context.Context, object *networkv1alpha1.LoadBalancerHost,
+	probe error, agent loadbalancer.AgentStatus, agentErr error) error {
 	status := object.Status.DeepCopy()
 	status.ObservedGeneration = object.Generation
 	reachable := condition(dataPlaneReachableType, true, "Reachable", "", object.Generation)
@@ -77,11 +94,52 @@ func (r *LoadBalancerHostReconciler) saveHost(ctx context.Context, object *netwo
 		reachable = condition(dataPlaneReachableType, false, "Unreachable", probe.Error(), object.Generation)
 	}
 	meta.SetStatusCondition(&status.Conditions, reachable)
+	status.VIPs = nil
+	if agentErr != nil {
+		meta.SetStatusCondition(&status.Conditions, condition(agentReadyType, false, agentUnreachable, agentErr.Error(), object.Generation))
+	} else {
+		ready, reason := agent.Ready(r.now(), r.AgentStaleAfter)
+		agentReady := condition(agentReadyType, true, "Ready", "", object.Generation)
+		if !ready {
+			agentReady = condition(agentReadyType, false, "NotReady", reason, object.Generation)
+		}
+		meta.SetStatusCondition(&status.Conditions, agentReady)
+		for _, vip := range agent.VIPs {
+			status.VIPs = append(status.VIPs, networkv1alpha1.AgentVIPStatus{
+				Address: vip.Address.String(), Announced: vip.Announced, Reason: string(vip.Reason),
+			})
+		}
+	}
 	if equality.Semantic.DeepEqual(&object.Status, status) {
 		return nil
 	}
 	object.Status = *status
 	return r.Client.Status().Update(ctx, object)
+}
+
+func (r *LoadBalancerHostReconciler) now() time.Time {
+	if r.Now == nil {
+		return time.Now()
+	}
+	return r.Now()
+}
+
+// reportOf 把 status 中 agent 的报告还原为领域事实；agent 不应答或尚未观察时 Reported 为 false。
+func reportOf(object *networkv1alpha1.LoadBalancerHost) loadbalancer.AgentReport {
+	agentReady := meta.FindStatusCondition(object.Status.Conditions, agentReadyType)
+	if agentReady == nil || agentReady.Reason == agentUnreachable {
+		return loadbalancer.AgentReport{}
+	}
+	report := loadbalancer.AgentReport{Reported: true, VIPs: map[netip.Addr]loadbalancer.Reason{}}
+	for _, vip := range object.Status.VIPs {
+		if addr, err := netip.ParseAddr(vip.Address); err == nil {
+			report.VIPs[addr] = loadbalancer.Reason(vip.Reason)
+			if vip.Announced {
+				report.VIPs[addr] = ""
+			}
+		}
+	}
+	return report
 }
 
 func hostOf(object *networkv1alpha1.LoadBalancerHost) loadbalancer.Host {

@@ -57,8 +57,8 @@ type DNSBackend interface {
 }
 
 // LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置，并写 LoadBalancer status。
-// 路由由各主机的 LB agent 按同一宣告规则自行宣告（ADR-0014）；主机是 LoadBalancerHost 资源
-// （ADR-0015）。Proxy 为空时只分配 VIP；DNS 为空时不维护 Hostname。
+// 路由由各主机的 LB agent 自行宣告（ADR-0014）；主机是 LoadBalancerHost 资源，Attachment 是否就绪
+// 以其 status 中 agent 的报告为准（ADR-0015）。Proxy 为空时只分配 VIP；DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
 	Client  client.Client
 	Pool    address.Pool
@@ -146,7 +146,7 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	case len(lb.Degraded()) > 0:
 		return ctrl.Result{RequeueAfter: hostRetry}, nil
 	default:
-		// 主机侧没有 watch；周期观察以发现配置漂移与 frontend 状态变化。
+		// 代理配置没有 watch，周期观察以发现漂移；agent 报告的变化经 LoadBalancerHost watch 触发。
 		return ctrl.Result{RequeueAfter: observeInterval}, nil
 	}
 }
@@ -160,11 +160,12 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 	if err != nil {
 		return err
 	}
-	for _, host := range hosts {
+	for _, target := range hosts {
+		host := target.host
 		hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
 		facts, err := r.Proxy.Observe(hostCtx, host, lb)
 		var write error
-		switch lb.PlanHost(host.Name, facts, err, deleting) {
+		switch lb.PlanHost(host.Name, facts, target.agent, err, deleting) {
 		case loadbalancer.ApplyConfig:
 			write = r.Proxy.Apply(hostCtx, host, lb)
 		case loadbalancer.RemoveConfig:
@@ -178,21 +179,27 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 	return nil
 }
 
+// hostTarget 是一台参与落地的主机与其 agent 最近一次报告（由 LoadBalancerHost controller 写入 status）。
+type hostTarget struct {
+	host  loadbalancer.Host
+	agent loadbalancer.AgentReport
+}
+
 // hosts 返回参与落地的主机，按名称排序。只用已带 finalizer 且未在删除的主机：finalizer 保证
 // 写入的配置在主机删除时被清理；删除中的主机由 LoadBalancerHost controller 整机清理。
-func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]loadbalancer.Host, error) {
+func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]hostTarget, error) {
 	list := &networkv1alpha1.LoadBalancerHostList{}
 	if err := r.Client.List(ctx, list); err != nil {
 		return nil, err
 	}
-	hosts := make([]loadbalancer.Host, 0, len(list.Items))
+	hosts := make([]hostTarget, 0, len(list.Items))
 	for i := range list.Items {
 		object := &list.Items[i]
 		if object.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
-			hosts = append(hosts, hostOf(object))
+			hosts = append(hosts, hostTarget{host: hostOf(object), agent: reportOf(object)})
 		}
 	}
-	slices.SortFunc(hosts, func(a, b loadbalancer.Host) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(hosts, func(a, b hostTarget) int { return strings.Compare(a.host.Name, b.host.Name) })
 	return hosts, nil
 }
 

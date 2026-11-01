@@ -3,6 +3,7 @@ package controller
 import (
 	"slices"
 	"testing"
+	"time"
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,7 +37,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 	c := environment(t)
 	plane := newDataPlane()
 	lbs := &LoadBalancerReconciler{Client: c, Pool: testPool, Proxy: plane}
-	hosts := &LoadBalancerHostReconciler{Client: c, Proxy: plane}
+	hosts := &LoadBalancerHostReconciler{Client: c, Proxy: plane, Agent: plane, AgentStaleAfter: time.Minute}
 	createHosts(t, c, "lb1")
 	lb := newLoadBalancer("pg", "")
 	create(t, c, lb)
@@ -44,7 +45,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 	plane.take()
 
 	t.Run("新主机在 controller 加上 finalizer 后才落地", func(t *testing.T) {
-		host := &networkv1alpha1.LoadBalancerHost{Spec: networkv1alpha1.LoadBalancerHostSpec{DataPlaneURL: "https://lb2.example.test:5555"}}
+		host := &networkv1alpha1.LoadBalancerHost{Spec: hostSpec(secondHost)}
 		host.Name = secondHost
 		create(t, c, host)
 		converge(t, lbs, lb)
@@ -64,6 +65,27 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 		if names := hostNames(t, c, lb); !slices.Equal(names, []string{"lb1", secondHost}) {
 			t.Fatalf("got %v", names)
 		}
+		reload(t, c, host)
+		agentReady := meta.FindStatusCondition(host.Status.Conditions, agentReadyType)
+		if agentReady == nil || agentReady.Status != "True" || len(host.Status.VIPs) != 1 ||
+			host.Status.VIPs[0].Address != lb.Status.Address || !host.Status.VIPs[0].Announced {
+			t.Fatalf("status 应记录 agent 报告的宣告，got %+v", host.Status)
+		}
+		if lb.Status.Hosts[1].Phase != "Ready" {
+			t.Fatalf("Attachment 以 agent 报告为准，got %+v", lb.Status.Hosts)
+		}
+	})
+
+	t.Run("agent 不应答时清空报告", func(t *testing.T) {
+		plane.unreachable[secondHost] = true
+		reconcileSecondHost(t, hosts)
+		host := &networkv1alpha1.LoadBalancerHost{}
+		host.Name = secondHost
+		reload(t, c, host)
+		if agentReady := meta.FindStatusCondition(host.Status.Conditions, agentReadyType); agentReady.Reason != agentUnreachable || host.Status.VIPs != nil {
+			t.Fatalf("got %+v", host.Status)
+		}
+		delete(plane.unreachable, secondHost)
 	})
 
 	t.Run("不可达时报告并在删除时等待", func(t *testing.T) {

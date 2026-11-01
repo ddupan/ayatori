@@ -87,7 +87,8 @@ func newLoadBalancer(name, requested string) *networkv1alpha1.LoadBalancer {
 	return lb
 }
 
-// converge 模拟 controller-runtime 的连续协调，直到不再请求立即重试。
+// converge 模拟 controller-runtime 的连续协调，直到不再请求立即重试。每轮之后像 LoadBalancerHost
+// controller 一样刷新主机 status 中的 agent 报告。
 func converge(t *testing.T, r *LoadBalancerReconciler, lb *networkv1alpha1.LoadBalancer) ctrl.Result {
 	t.Helper()
 	var result ctrl.Result
@@ -97,8 +98,32 @@ func converge(t *testing.T, r *LoadBalancerReconciler, lb *networkv1alpha1.LoadB
 		if err != nil {
 			t.Fatal(err)
 		}
+		refreshAgents(t, r)
 	}
 	return result
+}
+
+// refreshAgents 只观察已带 finalizer 且未在删除的主机：加 finalizer 与删除时的清理由各测试显式驱动。
+func refreshAgents(t *testing.T, r *LoadBalancerReconciler) {
+	t.Helper()
+	plane, ok := r.Proxy.(*dataPlane)
+	if !ok {
+		return
+	}
+	hosts := &LoadBalancerHostReconciler{Client: r.Client, Proxy: plane, Agent: plane, AgentStaleAfter: time.Minute}
+	list := &networkv1alpha1.LoadBalancerHostList{}
+	if err := r.Client.List(t.Context(), list); err != nil {
+		t.Fatal(err)
+	}
+	for i := range list.Items {
+		object := &list.Items[i]
+		if !object.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
+			continue
+		}
+		if _, err := hosts.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func programmed(t *testing.T, c client.Client, lb *networkv1alpha1.LoadBalancer) string {

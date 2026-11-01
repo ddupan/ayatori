@@ -148,7 +148,7 @@ func TestLoadBalancerAPI(t *testing.T) {
 func TestLoadBalancerHostAPI(t *testing.T) {
 	c := environment(t)
 	host := func(name, url string) *networkv1alpha1.LoadBalancerHost {
-		h := &networkv1alpha1.LoadBalancerHost{Spec: networkv1alpha1.LoadBalancerHostSpec{DataPlaneURL: url}}
+		h := &networkv1alpha1.LoadBalancerHost{Spec: networkv1alpha1.LoadBalancerHostSpec{DataPlaneURL: url, AgentURL: "http://lb-dev-1.lab.ddupan.top:9641"}}
 		h.Name = name
 		return h
 	}
@@ -159,6 +159,11 @@ func TestLoadBalancerHostAPI(t *testing.T) {
 		"Data Plane API 必须是 HTTPS": host("plain", "http://lb-dev-1.lab.ddupan.top:5555"),
 		"不是 URL":                   host("garbage", "lb-dev-1:5555"),
 		"名称必须是 DNS label":          host("with.dot", "https://lb-dev-1.lab.ddupan.top:5555"),
+		"agent 地址不是 URL": func() *networkv1alpha1.LoadBalancerHost {
+			h := host("bad-agent", "https://lb-dev-1.lab.ddupan.top:5555")
+			h.Spec.AgentURL = "lb-dev-1:9641"
+			return h
+		}(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := c.Create(t.Context(), invalid); !apierrors.IsInvalid(err) {
