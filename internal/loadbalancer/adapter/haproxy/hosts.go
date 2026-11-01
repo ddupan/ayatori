@@ -75,41 +75,14 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 		if facts.Matches, loaded, err = runtimeReady(ctx, api, wantBackends); err != nil {
 			return loadbalancer.ProxyFacts{}, err
 		}
-		switch {
-		case loaded:
-			if facts.Frontends, err = frontendStates(ctx, api, vip, wantFrontends); err != nil {
-				return loadbalancer.ProxyFacts{}, err
-			}
-		case h.now().Sub(reloadedAt) < reloadSettle:
+		// 未加载且超过 reloadSettle：配置已写入但运行中的进程未加载，也没有排期的 reload（如
+		// dataplaneapi 重启丢了排期），保持不一致，由 Apply 重新触发 reload。
+		if !loaded && h.now().Sub(reloadedAt) < reloadSettle {
 			// reload 刚完成，新 worker 尚未接管运行时接口。
 			facts.Matches, facts.Reload = true, loadbalancer.ReloadPending
-		default:
-			// 配置已写入但运行中的进程未加载，也没有排期的 reload（如 dataplaneapi 重启丢了排期）：
-			// 视为不一致，由 Apply 重新触发 reload。
 		}
 	}
 	return facts, nil
-}
-
-// frontendStates 读取运行中进程里各 frontend 的状态，供 controller 按宣告规则判断。
-// LB agent 从 stats socket 读取同一事实（ADR-0014）。
-func frontendStates(ctx context.Context, api *dataplaneapi.ClientWithResponses, vip netip.Addr,
-	frontends map[string]dataplaneapi.Frontend) ([]loadbalancer.Frontend, error) {
-	response, err := api.GetStatsWithResponse(ctx, &dataplaneapi.GetStatsParams{Type: new(dataplaneapi.GetStatsParamsTypeFrontend)})
-	if err := check(response, err); err != nil {
-		return nil, err
-	}
-	open := map[string]bool{}
-	for _, stat := range value(value(response.JSON200).Stats) {
-		if stat.Stats != nil {
-			open[value(stat.Name)] = string(value(stat.Stats.Status)) == "OPEN"
-		}
-	}
-	states := make([]loadbalancer.Frontend, 0, len(frontends))
-	for name := range frontends {
-		states = append(states, loadbalancer.Frontend{Address: vip, Open: open[name]})
-	}
-	return states, nil
 }
 
 // Apply 在一个事务中写入该 LoadBalancer 的全部 section 并删除多余端口，提交后由代理 reload。

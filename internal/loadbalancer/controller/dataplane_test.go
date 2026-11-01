@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
@@ -18,11 +20,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// dataPlane 在内存中模拟各主机的代理配置与 frontend 状态，并记录写入顺序。
+// dataPlane 在内存中模拟各主机的代理配置与 agent 报告，并记录写入顺序。
 // 真实代理的语义由 adapter 的 contract test 验证；宣告由 LB agent 负责，不经 controller。
 type dataPlane struct {
 	configs     map[string]loadbalancer.Snapshot // host/uid → 已写入的期望
-	stopped     map[string]bool                  // host：frontend 未处于 OPEN
+	stopped     map[string]bool                  // host：agent 报告 frontend 未处于 OPEN
 	unreachable map[string]bool
 	records     map[string]netip.Addr // hostname
 	events      []string
@@ -40,11 +42,7 @@ func (d *dataPlane) Observe(_ context.Context, host loadbalancer.Host, lb *loadb
 	}
 	got, present := d.configs[host.Name+"/"+lb.Snapshot().Owner.UID]
 	want := lb.Snapshot()
-	facts := loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports)}
-	if facts.Matches {
-		facts.Frontends = []loadbalancer.Frontend{{Address: got.Address, Open: !d.stopped[host.Name]}}
-	}
-	return facts, nil
+	return loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports)}, nil
 }
 
 func (d *dataPlane) Apply(_ context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {
@@ -64,6 +62,31 @@ func (d *dataPlane) Probe(_ context.Context, host loadbalancer.Host) error {
 		return errUnreachable
 	}
 	return nil
+}
+
+// Status 模拟 agent：已写入的配置都有 bind，未 stopped 时已宣告。主机名取 agentURL 的第一段。
+func (d *dataPlane) Status(_ context.Context, agentURL string) (loadbalancer.AgentStatus, error) {
+	parsed, err := url.Parse(agentURL)
+	if err != nil {
+		return loadbalancer.AgentStatus{}, err
+	}
+	host, _, _ := strings.Cut(parsed.Hostname(), ".")
+	if d.unreachable[host] {
+		return loadbalancer.AgentStatus{}, errUnreachable
+	}
+	now := time.Now()
+	status := loadbalancer.AgentStatus{HAProxyUp: true, LastSync: &now,
+		Neighbors: []loadbalancer.NeighborStatus{{Address: "10.60.0.1", Established: true}}}
+	for key, snapshot := range d.configs {
+		if strings.HasPrefix(key, host+"/") {
+			vip := loadbalancer.VIPStatus{Address: snapshot.Address, Announced: !d.stopped[host]}
+			if d.stopped[host] {
+				vip.Reason = loadbalancer.FrontendNotOpen
+			}
+			status.VIPs = append(status.VIPs, vip)
+		}
+	}
+	return status, nil
 }
 
 // Purge 与真实 adapter 相同：本轮删除后返回 false，下一轮确认已无配置才返回 true。
@@ -112,11 +135,17 @@ func (d *dataPlane) take() []string {
 	return events
 }
 
+func hostSpec(name string) networkv1alpha1.LoadBalancerHostSpec {
+	return networkv1alpha1.LoadBalancerHostSpec{
+		DataPlaneURL: "https://" + name + ".example.test:5555", AgentURL: "http://" + name + ".example.test:9641",
+	}
+}
+
 // createHosts 创建已由 LoadBalancerHost controller 加上 finalizer 的主机。
 func createHosts(t *testing.T, c client.Client, names ...string) {
 	t.Helper()
 	for _, name := range names {
-		host := &networkv1alpha1.LoadBalancerHost{Spec: networkv1alpha1.LoadBalancerHostSpec{DataPlaneURL: "https://" + name + ".example.test:5555"}}
+		host := &networkv1alpha1.LoadBalancerHost{Spec: hostSpec(name)}
 		host.Name = name
 		host.Finalizers = []string{LoadBalancerHostFinalizer}
 		create(t, c, host)

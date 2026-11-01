@@ -1,10 +1,20 @@
 package loadbalancer
 
+import "net/netip"
+
 // Host 是一台 LB 主机上经 Data Plane API 管理的 HAProxy。路由由该主机上的 LB agent 自行宣告
 // （ADR-0014），controller 不连接 BGP speaker。
 type Host struct {
 	Name     string
 	ProxyURL string
+}
+
+// AgentReport 是 controller 从 LoadBalancerHost status 读到的该主机 agent 报告（ADR-0015）。
+type AgentReport struct {
+	// Reported 为 false 表示 agent 不应答或从未报告。
+	Reported bool
+	// VIPs 是 agent 看到 bind 的每个 VIP 与未宣告原因；空原因表示路径已发给路由器。
+	VIPs map[netip.Addr]Reason
 }
 
 // HostAction 是聚合要求 Reconciler 在某台 Host 上执行的下一步；每轮每台 Host 至多一次写入。
@@ -21,9 +31,9 @@ type AttachmentPhase string
 
 const (
 	AttachmentPending AttachmentPhase = "Pending"
-	// AttachmentConfigured 表示配置已生效，但不满足宣告规则，该主机的 agent 不宣告。
+	// AttachmentConfigured 表示配置已生效，但该主机的 agent 报告未宣告 VIP。
 	AttachmentConfigured AttachmentPhase = "Configured"
-	// AttachmentReady 表示配置已生效且满足宣告规则，该主机的 agent 会宣告 VIP。
+	// AttachmentReady 表示配置已生效且该主机的 agent 报告已宣告 VIP。
 	AttachmentReady       AttachmentPhase = "Ready"
 	AttachmentRemoved     AttachmentPhase = "Removed"
 	AttachmentUnavailable AttachmentPhase = "Unavailable"
@@ -36,8 +46,9 @@ type Attachment struct {
 }
 
 // PlanHost 根据某台 Host 的事实决定下一步。observeErr 非空表示本轮无法观察该 Host，
-// 只影响它自己的 Attachment。宣告与撤回由 agent 按同一规则（Announcements）在本机完成。
-func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, observeErr error, deleting bool) HostAction {
+// 只影响它自己的 Attachment。宣告与撤回由 agent 在本机判断；是否就绪只取 agent 的报告，
+// controller 不自行推算（ADR-0015）。
+func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, agent AgentReport, observeErr error, deleting bool) HostAction {
 	switch {
 	case observeErr != nil:
 		lb.attach(host, AttachmentUnavailable, "无法观察主机："+observeErr.Error())
@@ -57,13 +68,20 @@ func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, observeErr error
 	case facts.Reload == ReloadFailed:
 		lb.attach(host, AttachmentUnavailable, "代理 reload 失败："+facts.Message)
 		return HostWait
-	case !announces(lb.snapshot.Address, facts.Frontends):
-		lb.attach(host, AttachmentConfigured, "frontend 未处于 OPEN，主机不宣告")
-		return HostWait
-	default:
-		lb.attach(host, AttachmentReady, "")
+	case !agent.Reported:
+		// 路由以路由器为准：agent 可能仍在宣告，这里只表示观察不到。
+		lb.attach(host, AttachmentUnavailable, "agent 未报告")
 		return HostWait
 	}
+	switch reason, bound := agent.VIPs[lb.snapshot.Address]; {
+	case !bound:
+		lb.attach(host, AttachmentConfigured, "agent 尚未看到该 VIP 的 bind")
+	case reason != "":
+		lb.attach(host, AttachmentConfigured, "agent 未宣告："+string(reason))
+	default:
+		lb.attach(host, AttachmentReady, "")
+	}
+	return HostWait
 }
 
 // planRemoval 直接删除配置：frontend 消失后 agent 在下一轮自行撤回，无需先撤回。

@@ -13,7 +13,7 @@
 | Address | 已分配给某个 LoadBalancer 的 VIP；以“名字即 IP”的 API 对象记录占用 |
 | Pool | 当前环境可分配的 VIP 范围，首版来自 controller 配置 |
 | Host | 一台 LB 主机：一个 HAProxy（经 Data Plane API 管理）与一个 LB agent，即 cluster 级资源 `LoadBalancerHost`（ADR-0015） |
-| Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、是否满足宣告规则 |
+| Attachment | 某个 LoadBalancer 在某台 Host 上的落地进度：配置是否生效、agent 是否报告已宣告 |
 | 宣告规则 | Host 宣告某 VIP /32，当且仅当本机 HAProxy 应答、绑定该 VIP 的 frontend 全部处于 OPEN，且内核把该 VIP 当作本机地址 |
 | LB agent | 每台 Host 上内嵌 GoBGP 的进程，按宣告规则自行宣告与撤回，不经 controller |
 | Hostname | Ayatori 为 LoadBalancer 生成并维护的域名，A 记录指向其 VIP |
@@ -47,17 +47,18 @@ func Reconstitute(snapshot Snapshot, deps Dependencies) *LoadBalancer
 
 func (lb *LoadBalancer) PlanAddress(pool Pool) Action           // Allocate / Save / Wait
 func (lb *LoadBalancer) AddressClaimed(ip netip.Addr, err error) // 结果分类见下
-func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts) Action
+func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, agent AgentReport, err error, deleting bool) Action
 // ApplyConfig / RemoveConfig / Wait
 func (lb *LoadBalancer) Programmed() bool
 
-// 宣告规则：纯函数，LB agent 与聚合共用。
-func Announcements(pool Pool, frontends []Frontend) []netip.Addr
+// 宣告规则：纯函数，只在 LB agent 中求值（ADR-0015）。
+func Check(pool Pool, frontends []Frontend, local func(netip.Addr) bool) map[netip.Addr]Reason
 ```
 
 `ProxyFacts` 是 adapter 返回的原始事实：配置是否存在、是否与期望一致、最近一次 reload 的状态
-（无 / 进行中 / 成功 / 失败），以及配置生效后各 frontend 在运行中进程里是否 OPEN。聚合据此给出
-该 Host 的下一步，并以宣告规则判断该 Host 是否就绪，记录 Attachment。
+（无 / 进行中 / 成功 / 失败）。`AgentReport` 是该主机 agent 最近一次报告的每个 VIP 是否已宣告与
+原因（LoadBalancerHost `status.vips`）。聚合据此给出该 Host 的下一步，配置生效后是否就绪只取
+agent 的报告，不自行推算，记录 Attachment。
 
 宣告规则只反映 LB 本身，不反映后端：某 port 后端全部不健康时仍宣告，由 HAProxy 拒绝连接
 （fail-closed）。同一 VIP 的多个端口中任一 frontend 不 OPEN 即不宣告，把流量让给其他 Host。
@@ -223,8 +224,9 @@ LoadBalancer status：
 - `address`：已确认的 VIP。
 - `hostname`：已发布的域名。
 - `hosts[]`：每台 Host 的 Attachment 与说明：`Pending`（配置未生效）、`Configured`（配置已生效
-  但不满足宣告规则）、`Ready`（满足宣告规则，agent 会宣告）、`Removed`（删除时配置已清除）、
-  `Unavailable`（无法观察或 reload 失败）。controller 不读路由，实际宣告以 agent 指标为准。
+  但 agent 报告未宣告，说明中带原因）、`Ready`（agent 报告已把 VIP 发给路由器）、`Removed`（删除时配置已清除）、
+  `Unavailable`（无法观察、reload 失败或 agent 不应答）。agent 的报告是观察：agent 不应答而实际仍在
+  宣告时这里是 `Unavailable`，路由以路由器为准。
 - `ports[].endpoints[]`：各 endpoint 在该 port 健康检查下的观察，只做呈现，不参与状态迁移——
   健康摘除由 HAProxy 在数据面完成。
 
@@ -283,6 +285,7 @@ LB 主机部署（homelab-infra）须保证：
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
 | `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
+| `--loadbalancer-agent-stale-after`（默认 1m） | agent 最近一次成功收敛距今超过此值即 `AgentReady=False` |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
 凭据 Secret 由部署 role 的 `deploy/flux/loadbalancer` 以 ExternalSecret 从 OpenBao 同步到 controller
@@ -347,4 +350,8 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
   在指标端口提供 `GET /status`（`loadbalancer.AgentStatus`）。controller 尚未读取它。
 - 切片 6b（ADR-0015，LoadBalancerHost）：主机成为 cluster 级资源，取代 `--loadbalancer-host`；
   `LoadBalancerHostReconciler` 报告 `DataPlaneReachable`，删除时整机清理（`haproxy.Hosts.Purge`）。
-  部署 role 从 inventory 渲染 LoadBalancerHost。`agentURL` 与 `AgentReady` 留给下一步。
+  部署 role 从 inventory 渲染 LoadBalancerHost。
+- 切片 6c（ADR-0015，以 agent 报告为准）：LoadBalancerHost 增加 `agentURL`；controller 每轮读取
+  agent `/status`，写入 `AgentReady`（HAProxy 应答、至少一个会话、`--loadbalancer-agent-stale-after`
+  内收敛过）与 `status.vips`。Attachment 的 `Ready`/`Configured` 改为取 `status.vips` 中该 VIP 的报告，
+  agent 不应答时为 `Unavailable`；删除 controller 侧的 `announces` 与 `ProxyFacts.Frontends`。

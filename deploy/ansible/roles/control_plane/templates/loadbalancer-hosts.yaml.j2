@@ -8,4 +8,5 @@ metadata:
     {{ loadbalancer_host_label.split('=') | join(': ') }}
 spec:
   dataPlaneURL: {{ host.data_plane_url | to_json }}
+  agentURL: {{ host.agent_url | to_json }}
 {% endfor %}

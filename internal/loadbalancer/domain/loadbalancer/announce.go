@@ -77,10 +77,3 @@ func Bound(pool address.Pool, frontends []Frontend) []netip.Addr {
 	slices.SortFunc(vips, netip.Addr.Compare)
 	return vips
 }
-
-// announces 判断某台 Host 是否满足宣告该 VIP 的规则。
-// ponytail: controller 看不到主机的内核状态，视 VIP 为本机地址；ADR-0015 改为读取 agent 报告的宣告。
-func announces(vip netip.Addr, frontends []Frontend) bool {
-	everywhere := func(netip.Addr) bool { return true }
-	return slices.Contains(Announcements(address.Pool{Prefix: netip.PrefixFrom(vip, 32)}, frontends, everywhere), vip)
-}

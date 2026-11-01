@@ -23,6 +23,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='DataPlaneReachable')].status
       name: Reachable
       type: string
+    - jsonPath: .status.conditions[?(@.type=='AgentReady')].status
+      name: Agent
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -55,6 +58,14 @@ spec:
               LoadBalancerHostSpec 指向一台 LB 主机上的 Data Plane API（ADR-0015）。凭据按环境统一，留在
               controller 的凭据 Secret，资源里只有地址。
             properties:
+              agentURL:
+                description: AgentURL 是该主机 LB agent 指标端口的地址，controller 读取其只读的 GET
+                  /status。
+                maxLength: 253
+                type: string
+                x-kubernetes-validations:
+                - message: agentURL must be an http or https URL
+                  rule: isURL(self) && url(self).getScheme() in ['http', 'https']
               dataPlaneURL:
                 description: DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller
                   以 mTLS 与 Basic 凭据访问。
@@ -64,6 +75,7 @@ spec:
                 - message: dataPlaneURL must be an https URL
                   rule: isURL(self) && url(self).getScheme() == 'https'
             required:
+            - agentURL
             - dataPlaneURL
             type: object
           status:
@@ -131,6 +143,30 @@ spec:
                 description: ObservedGeneration 是本 status 观察的 spec 版本。
                 format: int64
                 type: integer
+              vips:
+                description: |-
+                  VIPs 是 agent 最近一次报告的每个 VIP 是否已发给路由器；agent 不应答时清空。只呈现观察，
+                  LoadBalancer 的 Attachment 以它为准。
+                items:
+                  properties:
+                    address:
+                      maxLength: 15
+                      type: string
+                    announced:
+                      type: boolean
+                    reason:
+                      description: Reason 是未宣告的原因：not-local、frontend-not-open 或 not-advertised。
+                      maxLength: 64
+                      type: string
+                  required:
+                  - address
+                  - announced
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - address
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec

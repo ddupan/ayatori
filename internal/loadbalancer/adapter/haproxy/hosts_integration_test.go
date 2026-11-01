@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -213,11 +212,6 @@ func TestHostsContract(t *testing.T) {
 	if !facts.Present || !facts.Matches || facts.Reload != loadbalancer.ReloadSucceeded {
 		t.Fatalf("写入后回读应与期望一致: %+v", facts)
 	}
-	// closedPort 没有健康后端，其 frontend 仍是 OPEN：后端健康不影响宣告。
-	if len(facts.Frontends) != len(ports) || !slices.ContainsFunc(facts.Frontends, func(f loadbalancer.Frontend) bool { return f.Open }) ||
-		slices.ContainsFunc(facts.Frontends, func(f loadbalancer.Frontend) bool { return !f.Open || f.Address != netip.MustParseAddr(fixtureVIP) }) {
-		t.Fatalf("每个端口的 frontend 都应以 VIP 报告 OPEN: %+v", facts.Frontends)
-	}
 	config := f.config(t)
 	for _, directive := range []string{
 		"option socket-stats", "option httpchk GET /v3/health", "http-check expect rstatus ^(401)$", "balance leastconn",
@@ -275,8 +269,8 @@ pkill -x dataplaneapi`
 			t.Fatalf("进程未加载时不应判为一致: %+v", facts)
 		}
 		applyUntilMatches(t, hosts, f, aggregate(uid, ports))
-		if facts := converged(t, hosts, f, uid, ports); len(facts.Frontends) != len(ports) {
-			t.Fatalf("reload 后应重新报告 frontend: %+v", facts)
+		if facts := converged(t, hosts, f, uid, ports); !facts.Matches || facts.Reload != loadbalancer.ReloadSucceeded {
+			t.Fatalf("reload 后运行中的进程应已加载: %+v", facts)
 		}
 	})
 
