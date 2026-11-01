@@ -118,6 +118,27 @@ func (s *Speaker) Announced() (map[netip.Addr]bool, error) {
 	return announced, err
 }
 
+// Advertised 返回出现在至少一个已建立会话 adj-rib-out 中的 /32：路径确实发给了路由器，
+// 而不只是在本地 RIB 里（export 策略或会话状态都可能让它停在本机）。
+func (s *Speaker) Advertised(ctx context.Context, established map[string]bool) (map[netip.Addr]bool, error) {
+	advertised := map[netip.Addr]bool{}
+	for neighbor, up := range established {
+		if !up {
+			continue
+		}
+		err := s.server.ListPath(apiutil.ListPathRequest{TableType: api.TableType_TABLE_TYPE_ADJ_OUT, Name: neighbor, Family: bgp.RF_IPv4_UC},
+			func(nlri bgp.NLRI, _ []*apiutil.Path) {
+				if prefix, err := netip.ParsePrefix(nlri.String()); err == nil && prefix.Bits() == 32 {
+					advertised[prefix.Addr()] = true
+				}
+			})
+		if err != nil {
+			return nil, fmt.Errorf("list adj-rib-out of %s: %w", neighbor, err)
+		}
+	}
+	return advertised, nil
+}
+
 // Established 返回各邻居的会话是否已建立。
 func (s *Speaker) Established(ctx context.Context) (map[string]bool, error) {
 	peers := map[string]bool{}

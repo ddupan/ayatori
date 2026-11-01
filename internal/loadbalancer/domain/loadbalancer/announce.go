@@ -13,12 +13,24 @@ type Frontend struct {
 	Open    bool
 }
 
-// Announcements 是宣告规则（ADR-0014），LB agent 与 controller 共用：返回绑定地址在 pool 内、
-// 内核把它当作本机地址（local 报告），且绑定该地址的 frontend 全部处于 OPEN 的 VIP，按地址排序。
-// HAProxy 不应答时调用方传入 nil，结果为空，即撤回全部。后端健康不是输入：后端全部失败时
-// 仍宣告，由 HAProxy 拒绝连接。同一 VIP 的多个端口有一个不 OPEN 即不宣告：该主机只能服务
-// 部分端口时把流量让给其他主机。不是本机地址的 VIP 不宣告：路由器送来的包会被内核丢弃。
-func Announcements(pool address.Pool, frontends []Frontend, local func(netip.Addr) bool) []netip.Addr {
+// Reason 是 VIP 未宣告的原因，对应 ADR-0015 三层自检；空表示应宣告。
+type Reason string
+
+const (
+	// NotLocal：内核不把该 VIP 当作本机地址，路由器送来的包会被丢弃（收）。
+	NotLocal Reason = "not-local"
+	// FrontendNotOpen：绑定该 VIP 的 frontend 或 bind 有一个不是 OPEN（处理）。
+	FrontendNotOpen Reason = "frontend-not-open"
+	// NotAdvertised：本机应宣告，但路径没有出现在任何已建立会话的 adj-rib-out 中（宣告）。
+	// 它是结果而不是输入，只由 agent 观察后报告，Check 不返回它。
+	NotAdvertised Reason = "not-advertised"
+)
+
+// Check 是宣告规则（ADR-0014、ADR-0015），返回 Bound 中每个 VIP 不应宣告的原因，按层的顺序取
+// 第一个不满足的层。HAProxy 不应答时调用方传入 nil，结果为空，即撤回全部。后端健康不是输入：
+// 后端全部失败时仍宣告，由 HAProxy 拒绝连接。同一 VIP 的多个端口有一个不 OPEN 即不宣告：该主机
+// 只能服务部分端口时把流量让给其他主机。
+func Check(pool address.Pool, frontends []Frontend, local func(netip.Addr) bool) map[netip.Addr]Reason {
 	open := map[netip.Addr]bool{}
 	for _, frontend := range frontends {
 		if !pool.Contains(frontend.Address) {
@@ -27,9 +39,25 @@ func Announcements(pool address.Pool, frontends []Frontend, local func(netip.Add
 		previous, seen := open[frontend.Address]
 		open[frontend.Address] = frontend.Open && (!seen || previous)
 	}
-	var vips []netip.Addr
+	reasons := make(map[netip.Addr]Reason, len(open))
 	for vip, ok := range open {
-		if ok && local(vip) {
+		switch {
+		case !local(vip):
+			reasons[vip] = NotLocal
+		case !ok:
+			reasons[vip] = FrontendNotOpen
+		default:
+			reasons[vip] = ""
+		}
+	}
+	return reasons
+}
+
+// Announcements 返回 Check 判定应宣告的 VIP，按地址排序。
+func Announcements(pool address.Pool, frontends []Frontend, local func(netip.Addr) bool) []netip.Addr {
+	var vips []netip.Addr
+	for vip, reason := range Check(pool, frontends, local) {
+		if reason == "" {
 			vips = append(vips, vip)
 		}
 	}

@@ -4,9 +4,12 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -25,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 const (
@@ -229,7 +233,7 @@ func (f *fakeVIPs) refuse(vip netip.Addr, refused bool) {
 	f.refused[vip] = refused
 }
 
-func startAgent(t *testing.T, port int, vips agent.VIPs) context.CancelFunc {
+func startAgent(t *testing.T, port int, vips agent.VIPs) (*agent.Agent, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	a, err := agent.New(ctx, agent.Config{
@@ -244,7 +248,36 @@ func startAgent(t *testing.T, port int, vips agent.VIPs) context.CancelFunc {
 	go func() { a.Run(ctx); close(done) }()
 	stop := func() { cancel(); <-done }
 	t.Cleanup(stop)
-	return stop
+	return a, stop
+}
+
+// status 经 HTTP handler 读取，连同 JSON 编码一起验证。
+func status(t *testing.T, a *agent.Agent) loadbalancer.AgentStatus {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	a.StatusHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+	var got loadbalancer.AgentStatus
+	if err := json.NewDecoder(recorder.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// reports 在 status 中各 VIP 的原因恰为 want 时满足；"" 表示已宣告。
+func reports(t *testing.T, a *agent.Agent, haproxyUp bool, want map[netip.Addr]loadbalancer.Reason) func() bool {
+	return func() bool {
+		got := status(t, a)
+		if got.HAProxyUp != haproxyUp || len(got.VIPs) != len(want) {
+			return false
+		}
+		for _, v := range got.VIPs {
+			reason, ok := want[v.Address]
+			if !ok || v.Reason != reason || v.Announced != (reason == "") {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 func TestAgentAnnouncesFromHAProxy(t *testing.T) {
@@ -252,15 +285,21 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 	port := freePort(t)
 	router := startRouter(t, port)
 	vips := newFakeVIPs()
-	stopAgent := startAgent(t, port, vips)
+	top := t
+	a, stopAgent := startAgent(t, port, vips)
 
 	waitFor(t, "后端全部失败时仍宣告 VIP 段内的全部 VIP", receives(t, router, vip, another))
+	waitFor(t, "status 报告两个 VIP 都已发给路由器", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: "", another: ""}))
+	if got := status(t, a); len(got.Neighbors) != 1 || !got.Neighbors[0].Established || got.LastSync == nil {
+		t.Fatalf("status 应报告已建立的会话与最近收敛时间，got %+v", got)
+	}
 
 	t.Run("frontend 禁用后撤回、恢复后重新宣告", func(t *testing.T) {
 		if err := command(socket, "disable frontend lb_a_7001"); err != nil {
 			t.Fatal(err)
 		}
 		waitFor(t, "同一 VIP 任一端口禁用即撤回，其他 VIP 不受影响", receives(t, router, another))
+		waitFor(t, "status 报告 frontend 未 OPEN", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: loadbalancer.FrontendNotOpen, another: ""}))
 		if err := command(socket, "enable frontend lb_a_7001"); err != nil {
 			t.Fatal(err)
 		}
@@ -270,19 +309,33 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 	t.Run("VIP 不是本机地址时不宣告", func(t *testing.T) {
 		vips.refuse(another, true)
 		waitFor(t, "无法接收流量的 VIP 撤回", receives(t, router, vip))
+		waitFor(t, "status 报告不是本机地址", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: "", another: loadbalancer.NotLocal}))
 		vips.refuse(another, false)
 		waitFor(t, "恢复后重新宣告", receives(t, router, vip, another))
+	})
+
+	t.Run("会话断开时报告未发出", func(t *testing.T) {
+		if err := router.DisablePeer(t.Context(), &api.DisablePeerRequest{Address: loopback}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "本机应宣告但没有会话可发", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: loadbalancer.NotAdvertised, another: loadbalancer.NotAdvertised}))
+		if err := router.EnablePeer(t.Context(), &api.EnablePeerRequest{Address: loopback}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "会话恢复后重新发出", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: "", another: ""}))
 	})
 
 	t.Run("agent 重启后首轮即补回", func(t *testing.T) {
 		stopAgent()
 		waitFor(t, "agent 停止后对端撤回全部路径", receives(t, router))
-		stopAgent = startAgent(t, port, vips)
+		// 用外层 t：subtest 的 Cleanup 会在 subtest 结束时停掉 agent，后面的 subtest 就验证不到它。
+		a, stopAgent = startAgent(top, port, vips)
 		waitFor(t, "重启后补回", receives(t, router, vip, another))
 	})
 
 	t.Run("HAProxy 停止后撤回全部", func(t *testing.T) {
 		stopHAProxy()
 		waitFor(t, "HAProxy 不应答时撤回全部", receives(t, router))
+		waitFor(t, "status 报告 HAProxy 不应答且没有 VIP", reports(t, a, false, map[netip.Addr]loadbalancer.Reason{}))
 	})
 }

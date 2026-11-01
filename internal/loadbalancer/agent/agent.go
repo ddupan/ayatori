@@ -4,11 +4,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -121,6 +126,9 @@ type Agent struct {
 	vips    VIPs
 	metrics *metrics
 	logger  *slog.Logger
+
+	mu     sync.Mutex
+	status loadbalancer.AgentStatus
 }
 
 // New 启动 speaker；vips 在生产中为 Loopback。
@@ -159,6 +167,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 		a.logger.Warn("HAProxy 不应答，撤回全部 VIP", "error", err)
 	}
 	a.metrics.haproxyUp.Set(boolGauge(err == nil))
+	reasons := loadbalancer.Check(a.pool, frontends, a.vips.Local)
 	want := loadbalancer.Announcements(a.pool, frontends, a.vips.Local)
 	synced := a.speaker.Sync(want)
 	if synced != nil {
@@ -172,14 +181,19 @@ func (a *Agent) reconcile(ctx context.Context) {
 			synced = err
 		}
 	}
+	a.mu.Lock()
+	a.status.HAProxyUp = err == nil
 	if synced == nil {
-		a.metrics.lastSuccess.SetToCurrentTime()
+		now := time.Now()
+		a.status.LastSync = &now
+		a.metrics.lastSuccess.Set(float64(now.Unix()))
 	}
-	a.observe(ctx)
+	a.mu.Unlock()
+	a.observe(ctx, reasons)
 }
 
-// observe 以本地 RIB 为准导出指标，而不是以本轮期望为准。
-func (a *Agent) observe(ctx context.Context) {
+// observe 以本地 RIB 与 adj-rib-out 为准导出指标和 status，而不是以本轮期望为准。
+func (a *Agent) observe(ctx context.Context, reasons map[netip.Addr]loadbalancer.Reason) {
 	announced, err := a.speaker.Announced()
 	if err == nil {
 		a.metrics.announced.Reset()
@@ -187,11 +201,57 @@ func (a *Agent) observe(ctx context.Context) {
 			a.metrics.announced.WithLabelValues(vip.String()).Set(1)
 		}
 	}
-	if peers, err := a.speaker.Established(ctx); err == nil {
-		for neighbor, up := range peers {
-			a.metrics.established.WithLabelValues(neighbor).Set(boolGauge(up))
-		}
+	peers, err := a.speaker.Established(ctx)
+	if err != nil {
+		a.logger.Warn("读取 BGP 会话失败", "error", err)
 	}
+	for neighbor, up := range peers {
+		a.metrics.established.WithLabelValues(neighbor).Set(boolGauge(up))
+	}
+	advertised, err := a.speaker.Advertised(ctx, peers)
+	if err != nil {
+		// 读不到就当作未发出：status 宁可报告未宣告，也不报告没有证实的宣告。
+		a.logger.Warn("读取 adj-rib-out 失败", "error", err)
+	}
+	neighbors := make([]loadbalancer.NeighborStatus, 0, len(peers))
+	for neighbor, up := range peers {
+		neighbors = append(neighbors, loadbalancer.NeighborStatus{Address: neighbor, Established: up})
+	}
+	slices.SortFunc(neighbors, func(x, y loadbalancer.NeighborStatus) int { return strings.Compare(x.Address, y.Address) })
+	vips := make([]loadbalancer.VIPStatus, 0, len(reasons))
+	for vip, reason := range reasons {
+		status := loadbalancer.VIPStatus{Address: vip, Announced: advertised[vip], Reason: reason}
+		if status.Announced {
+			status.Reason = ""
+		} else if reason == "" {
+			status.Reason = loadbalancer.NotAdvertised
+		}
+		vips = append(vips, status)
+	}
+	slices.SortFunc(vips, func(x, y loadbalancer.VIPStatus) int { return x.Address.Compare(y.Address) })
+	a.mu.Lock()
+	a.status.Neighbors, a.status.VIPs = neighbors, vips
+	a.mu.Unlock()
+}
+
+// Status 返回最近一轮观察到的本机事实；首轮完成前各项为零值。
+func (a *Agent) Status() loadbalancer.AgentStatus {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.status
+}
+
+// StatusHandler 是只读的 GET /status（ADR-0015）：不含凭据，与 /metrics 同一明文监听。
+func (a *Agent) StatusHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(a.Status())
+	})
 }
 
 func boolGauge(value bool) float64 {

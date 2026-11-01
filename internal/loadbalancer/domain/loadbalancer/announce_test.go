@@ -1,6 +1,7 @@
 package loadbalancer
 
 import (
+	"maps"
 	"net/netip"
 	"slices"
 	"testing"
@@ -39,6 +40,19 @@ func TestAnnouncements(t *testing.T) {
 			t.Fatalf("got %v", got)
 		}
 	})
+}
+
+func TestCheckReasons(t *testing.T) {
+	pool := address.Pool{Prefix: netip.MustParsePrefix("10.62.0.0/24")}
+	a, b, c := netip.MustParseAddr("10.62.0.5"), netip.MustParseAddr("10.62.0.6"), netip.MustParseAddr("10.62.0.7")
+	frontends := []Frontend{{Address: a, Open: true}, {Address: b, Open: false}, {Address: c, Open: false},
+		{Address: netip.MustParseAddr("192.168.10.40"), Open: true}}
+	local := func(addr netip.Addr) bool { return addr != c }
+	got := Check(pool, frontends, local)
+	want := map[netip.Addr]Reason{a: "", b: FrontendNotOpen, c: NotLocal}
+	if !maps.Equal(got, want) {
+		t.Fatalf("每个 VIP 报告第一个不满足的层（收先于处理），VIP 段外不计；got %v", got)
+	}
 }
 
 func TestBound(t *testing.T) {
