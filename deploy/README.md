@@ -70,9 +70,14 @@ Promotion 即把 Prod 安装的 release 改为 Dev 已验收的 tag。
 ```yaml
 ayatori_loadbalancer:
   address_pool: 10.62.1.0/24
-  hosts:  # 与 --loadbalancer-host 同格式：<名称>,<Data Plane API URL>
-    - lb-dev-1,https://lb-dev-1.lab.ddupan.top:5555
+  hosts:  # 每项渲染为一个 LoadBalancerHost
+    - name: lb-dev-1
+      data_plane_url: https://lb-dev-1.lab.ddupan.top:5555
 ```
+
+role 在控制面容器启动、Flux 同步 CRD 之后应用这些 LoadBalancerHost，并按标签
+`app.kubernetes.io/managed-by=ayatori-deploy` 删除 inventory 中已移除的主机。删除是异步的：
+controller 先清理该主机上的全部 LoadBalancer 配置再放行，主机不可达时对象停在删除中。
 
 此时 Flux 另同步 `deploy/flux/loadbalancer`：ESO 把 Data Plane API 客户端证书（`pki-loadbalancer-<env>`
 每天签发）、服务端 CA（`pki/cert/ca`）与 Basic 凭据（`kv/infra/loadbalancer/<env>`）写入

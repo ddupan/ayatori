@@ -1,0 +1,11 @@
+{% for host in loadbalancer_hosts %}
+---
+apiVersion: network.ayatori.ddupan.top/v1alpha1
+kind: LoadBalancerHost
+metadata:
+  name: {{ host.name }}
+  labels:
+    {{ loadbalancer_host_label.split('=') | join(': ') }}
+spec:
+  dataPlaneURL: {{ host.data_plane_url | to_json }}
+{% endfor %}

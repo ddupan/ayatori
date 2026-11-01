@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,12 +57,11 @@ type DNSBackend interface {
 }
 
 // LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置，并写 LoadBalancer status。
-// 路由由各主机的 LB agent 按同一宣告规则自行宣告（ADR-0014）。
-// Hosts 为空时只分配 VIP；DNS 为空时不维护 Hostname。
+// 路由由各主机的 LB agent 按同一宣告规则自行宣告（ADR-0014）；主机是 LoadBalancerHost 资源
+// （ADR-0015）。Proxy 为空时只分配 VIP；DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
 	Client  client.Client
 	Pool    address.Pool
-	Hosts   []loadbalancer.Host
 	Proxy   ProxyBackend
 	DNS     DNSBackend
 	DNSZone string
@@ -71,6 +71,7 @@ type LoadBalancerReconciler struct {
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ipaddresses,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancerhosts,verbs=get;list;watch
 
 func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	object := &networkv1alpha1.LoadBalancer{}
@@ -88,7 +89,9 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 			return ctrl.Result{}, nil
 		}
 		// 先在全部主机删除配置（agent 随后撤回），再删除 DNS 记录，最后释放 VIP。
-		r.converge(ctx, lb, true)
+		if err := r.converge(ctx, lb, true); err != nil {
+			return ctrl.Result{}, err
+		}
 		if !lb.HostsReleased() {
 			return ctrl.Result{RequeueAfter: hostRetry}, r.save(ctx, object, lb)
 		}
@@ -130,7 +133,9 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		}
 		lb.AddressClaimed(addr)
 	}
-	r.converge(ctx, lb, false)
+	if err := r.converge(ctx, lb, false); err != nil {
+		return ctrl.Result{}, err
+	}
 	r.record(ctx, lb, false)
 	if err := r.save(ctx, object, lb); err != nil {
 		return ctrl.Result{}, err
@@ -147,11 +152,15 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 }
 
 // converge 在每台主机上至多执行一次写入；主机之间相互独立，失败只影响该主机的 Attachment。
-func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) {
+func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) error {
 	if r.Proxy == nil {
-		return
+		return nil
 	}
-	for _, host := range r.Hosts {
+	hosts, err := r.hosts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, host := range hosts {
 		hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
 		facts, err := r.Proxy.Observe(hostCtx, host, lb)
 		var write error
@@ -166,6 +175,25 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 			lb.HostFailed(host.Name, write)
 		}
 	}
+	return nil
+}
+
+// hosts 返回参与落地的主机，按名称排序。只用已带 finalizer 且未在删除的主机：finalizer 保证
+// 写入的配置在主机删除时被清理；删除中的主机由 LoadBalancerHost controller 整机清理。
+func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]loadbalancer.Host, error) {
+	list := &networkv1alpha1.LoadBalancerHostList{}
+	if err := r.Client.List(ctx, list); err != nil {
+		return nil, err
+	}
+	hosts := make([]loadbalancer.Host, 0, len(list.Items))
+	for i := range list.Items {
+		object := &list.Items[i]
+		if object.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
+			hosts = append(hosts, hostOf(object))
+		}
+	}
+	slices.SortFunc(hosts, func(a, b loadbalancer.Host) int { return strings.Compare(a.Name, b.Name) })
+	return hosts, nil
 }
 
 // record 观察并至多写入一次 Hostname 的 A 记录。
@@ -321,7 +349,21 @@ func (r *LoadBalancerReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Named("loadbalancer").
 		For(&networkv1alpha1.LoadBalancer{}).
 		Watches(&networkingv1.IPAddress{}, handler.EnqueueRequestsFromMapFunc(parentOf)).
+		// 主机增删让全部 LoadBalancer 重新落地，无需重启 controller。
+		Watches(&networkv1alpha1.LoadBalancerHost{}, handler.EnqueueRequestsFromMapFunc(r.everyLoadBalancer)).
 		Complete(r)
+}
+
+func (r *LoadBalancerReconciler) everyLoadBalancer(ctx context.Context, _ client.Object) []ctrl.Request {
+	list := &networkv1alpha1.LoadBalancerList{}
+	if err := r.Client.List(ctx, list); err != nil {
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(list.Items))
+	for i := range list.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+	}
+	return requests
 }
 
 func parentOf(_ context.Context, object client.Object) []ctrl.Request {

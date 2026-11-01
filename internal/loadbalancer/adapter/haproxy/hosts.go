@@ -124,6 +124,68 @@ func (h *Hosts) Remove(ctx context.Context, host loadbalancer.Host, lb *loadbala
 	return h.apply(ctx, host, lb.Snapshot().Owner.UID, "", nil)
 }
 
+// Probe 确认 Host 的 Data Plane API 以当前凭据应答。
+func (h *Hosts) Probe(ctx context.Context, host loadbalancer.Host) error {
+	api, err := h.client(host)
+	if err != nil {
+		return err
+	}
+	return check(api.GetConfigurationVersionWithResponse(ctx, &dataplaneapi.GetConfigurationVersionParams{}))
+}
+
+// Purge 删除 Host 上全部 lb_ 前缀 section，包括已不存在的 LoadBalancer 留下的（LoadBalancerHost
+// 删除时，ADR-0015）。返回 true 表示配置中已没有这些 section，运行中的进程也不再有 lb_ frontend：
+// 此时 agent 已无 VIP 可宣告。reload 失败时返回错误，旧进程仍在服务。
+func (h *Hosts) Purge(ctx context.Context, host loadbalancer.Host) (bool, error) {
+	api, err := h.client(host)
+	if err != nil {
+		return false, err
+	}
+	frontends, backends, err := sections(ctx, api, nil)
+	if err != nil {
+		return false, err
+	}
+	if len(managed(frontends))+len(managed(backends)) > 0 {
+		return false, transact(ctx, api, func(tx *string, frontends map[string]dataplaneapi.Frontend, backends map[string]dataplaneapi.Backend) error {
+			// 先删 frontend 再删 backend，与 Apply 相同。
+			for name := range managed(frontends) {
+				if err := check(api.DeleteFrontendWithResponse(ctx, name, &dataplaneapi.DeleteFrontendParams{TransactionId: tx})); err != nil {
+					return err
+				}
+			}
+			for name := range managed(backends) {
+				if err := check(api.DeleteBackendWithResponse(ctx, name, &dataplaneapi.DeleteBackendParams{TransactionId: tx})); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	reload, message, reloadedAt, err := lastReload(ctx, api)
+	switch {
+	case err != nil:
+		return false, err
+	case reload == loadbalancer.ReloadPending:
+		return false, nil
+	case reload == loadbalancer.ReloadFailed:
+		return false, fmt.Errorf("代理 reload 失败：%s", message)
+	}
+	response, err := api.GetStatsWithResponse(ctx, &dataplaneapi.GetStatsParams{Type: new(dataplaneapi.GetStatsParamsTypeFrontend)})
+	if err := check(response, err); err != nil {
+		return false, err
+	}
+	for _, stat := range value(value(response.JSON200).Stats) {
+		if strings.HasPrefix(value(stat.Name), managedPrefix) {
+			if h.now().Sub(reloadedAt) >= reloadSettle {
+				// 文件已清空但运行中的进程没有 reload 排期：提交空事务排期一次，与 Apply 相同。
+				return false, transact(ctx, api, func(*string, map[string]dataplaneapi.Frontend, map[string]dataplaneapi.Backend) error { return nil })
+			}
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func desired(lb *loadbalancer.LoadBalancer) (uid string, vip netip.Addr, ports []loadbalancer.Port) {
 	snapshot := lb.Snapshot()
 	return snapshot.Owner.UID, snapshot.Address, snapshot.Ports
@@ -382,7 +444,21 @@ func upsert[T any](name string, existing map[string]T, create, replace func() (r
 	return check(create())
 }
 
-func sectionPrefix(uid string) string { return "lb_" + uid + "_" }
+// managedPrefix 是 Ayatori 写入的全部 section 的前缀（部署契约：唯一写入方）。
+const managedPrefix = "lb_"
+
+func sectionPrefix(uid string) string { return managedPrefix + uid + "_" }
+
+// managed 返回 Ayatori 写入的全部 section，不论属于哪个 LoadBalancer。
+func managed[T any](sections map[string]T) map[string]T {
+	result := map[string]T{}
+	for name, section := range sections {
+		if strings.HasPrefix(name, managedPrefix) {
+			result[name] = section
+		}
+	}
+	return result
+}
 
 // owned 只保留属于该 LoadBalancer 的 section；其他 section 不观察也不修改。
 func owned[T any](sections map[string]T, uid string) map[string]T {
