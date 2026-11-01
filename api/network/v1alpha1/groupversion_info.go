@@ -13,7 +13,8 @@ var (
 	SchemeGroupVersion = schema.GroupVersion{Group: "network.ayatori.ddupan.top", Version: "v1alpha1"}
 	GroupVersion       = SchemeGroupVersion
 	SchemeBuilder      = runtime.NewSchemeBuilder(func(scheme *runtime.Scheme) error {
-		scheme.AddKnownTypes(SchemeGroupVersion, &LoadBalancer{}, &LoadBalancerList{}, &LoadBalancerHost{}, &LoadBalancerHostList{})
+		scheme.AddKnownTypes(SchemeGroupVersion, &LoadBalancer{}, &LoadBalancerList{}, &LoadBalancerHost{}, &LoadBalancerHostList{},
+			&Backend{}, &BackendList{})
 		metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 		return nil
 	})

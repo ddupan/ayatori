@@ -1,0 +1,162 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: backends.network.ayatori.ddupan.top
+spec:
+  group: network.ayatori.ddupan.top
+  names:
+    kind: Backend
+    listKind: BackendList
+    plural: backends
+    singular: backend
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Backend 是 namespace 内被 LoadBalancer 端口引用的后端集合。
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              BackendSpec 是一组后端成员及与它们说话的方式；由维护成员的一方整体写入，与 VIP、端口分开授权
+              （ADR-0015）。
+            properties:
+              drainTimeout:
+                default: 30s
+                description: |-
+                  DrainTimeout 是 endpoint 被移出集合后保留已有连接的上限；超时后剩余连接由代理
+                  旧 worker 服务至主机级 hard-stop-after。
+                type: string
+              endpoints:
+                description: Endpoints 由消费方整组替换；为空时引用它的端口拒绝连接。
+                items:
+                  description: Endpoint 是后端地址与端口；地址可以是 DNS 名称，由数据面周期解析。
+                  properties:
+                    address:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                      x-kubernetes-validations:
+                      - message: address must be an IP address or a DNS name
+                        rule: isIP(self) || self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$')
+                    port:
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                  required:
+                  - address
+                  - port
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - address
+                - port
+                x-kubernetes-list-type: map
+              healthCheck:
+                default:
+                  healthyThreshold: 2
+                  interval: 5s
+                  timeout: 3s
+                  type: TCP
+                  unhealthyThreshold: 3
+                description: HealthCheck 省略时以 TCP 探测各 endpoint 自身端口。默认值写全：apiserver
+                  校验默认值时不展开嵌套默认。
+                properties:
+                  expectedStatuses:
+                    description: ExpectedStatuses 省略时期望 200。
+                    items:
+                      format: int32
+                      maximum: 599
+                      minimum: 100
+                      type: integer
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: set
+                  healthyThreshold:
+                    default: 2
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                  interval:
+                    default: 5s
+                    type: string
+                    x-kubernetes-validations:
+                    - message: interval must be at least 1s
+                      rule: duration(self) >= duration('1s')
+                  path:
+                    maxLength: 1024
+                    pattern: ^/
+                    type: string
+                  port:
+                    description: Port 覆盖探测端口；省略时使用各 endpoint 自身端口。
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  timeout:
+                    default: 3s
+                    type: string
+                    x-kubernetes-validations:
+                    - message: timeout must be at least 1s
+                      rule: duration(self) >= duration('1s')
+                  type:
+                    default: TCP
+                    enum:
+                    - TCP
+                    - HTTP
+                    type: string
+                  unhealthyThreshold:
+                    default: 3
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                type: object
+                x-kubernetes-validations:
+                - message: path is required for HTTP and not allowed for TCP checks
+                  rule: 'self.type == ''HTTP'' ? has(self.path) : !has(self.path)
+                    && !has(self.expectedStatuses)'
+                - message: timeout must not exceed interval
+                  rule: duration(self.timeout) <= duration(self.interval)
+              proxyProtocol:
+                default: None
+                description: ProxyProtocol 向后端发送 PROXY 头以传递客户端地址；健康检查同样携带。
+                enum:
+                - None
+                - V1
+                - V2
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

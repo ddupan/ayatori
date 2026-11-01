@@ -249,7 +249,10 @@ func (h *Hosts) translate(uid, vip string, ports []loadbalancer.Port) (map[strin
 			Balance:        &dataplaneapi.Balance{Algorithm: dataplaneapi.BalanceAlgorithmLeastconn},
 			ServerTimeout:  millis(port.IdleTimeout),
 			ConnectTimeout: millis(h.ConnectTimeout),
-			CheckTimeout:   millis(check.Timeout),
+		}
+		// 引用缺失 Backend 的端口没有健康检查参数，也没有 server。
+		if check.Timeout > 0 {
+			backend.CheckTimeout = millis(check.Timeout)
 		}
 		if check.Path != "" {
 			backend.AdvCheck = new(dataplaneapi.BackendAdvCheckHttpchk)

@@ -184,14 +184,39 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 		t.Fatalf("全部主机就绪后应 Programmed 且不 Degraded: %+v", lb.Status)
 	}
 
-	t.Run("配置变化时重写", func(t *testing.T) {
-		lb.Spec.Ports[0].Endpoints = []networkv1alpha1.Endpoint{{Address: "192.168.10.127", Port: 6443}}
-		if err := c.Update(t.Context(), lb); err != nil {
+	if conditionStatus(t, c, lb, resolvedRefsType) != string(metav1.ConditionFalse) {
+		t.Fatalf("Backend 不存在时应报告 ResolvedRefs=False: %+v", lb.Status.Conditions)
+	}
+
+	backend := &networkv1alpha1.Backend{Spec: networkv1alpha1.BackendSpec{
+		Endpoints: []networkv1alpha1.Endpoint{{Address: "192.168.10.127", Port: 6443}},
+	}}
+	backend.Namespace, backend.Name = testNamespace, lb.Spec.Ports[0].BackendRef.Name
+
+	t.Run("Backend 出现后重写并解析引用", func(t *testing.T) {
+		create(t, c, backend)
+		if requests := r.referencing(t.Context(), backend); len(requests) != 1 || requests[0].Name != lb.Name {
+			t.Fatalf("Backend 变化应收敛引用它的 LoadBalancer，got %v", requests)
+		}
+		converge(t, r, lb)
+		if events := plane.take(); !slices.Equal(events, []string{applyFirst, applySecond}) {
+			t.Fatalf("got %v", events)
+		}
+		if conditionStatus(t, c, lb, resolvedRefsType) != string(metav1.ConditionTrue) || len(endpointsOf(plane, "lb1", lb)) != 1 {
+			t.Fatalf("got %+v", lb.Status.Conditions)
+		}
+	})
+
+	t.Run("删除 Backend 后端口拒绝连接", func(t *testing.T) {
+		if err := c.Delete(t.Context(), backend); err != nil {
 			t.Fatal(err)
 		}
 		converge(t, r, lb)
 		if events := plane.take(); !slices.Equal(events, []string{applyFirst, applySecond}) {
 			t.Fatalf("got %v", events)
+		}
+		if conditionStatus(t, c, lb, resolvedRefsType) != string(metav1.ConditionFalse) || len(endpointsOf(plane, "lb1", lb)) != 0 {
+			t.Fatalf("应 fail-closed: %+v", lb.Status.Conditions)
 		}
 	})
 
@@ -246,6 +271,10 @@ func TestLoadBalancerDataPlane(t *testing.T) {
 			t.Fatalf("数据面应已清空: %v", plane.configs)
 		}
 	})
+}
+
+func endpointsOf(plane *dataPlane, host string, lb *networkv1alpha1.LoadBalancer) []loadbalancer.Endpoint {
+	return plane.configs[host+"/"+string(lb.UID)].Ports[0].Endpoints
 }
 
 func TestLoadBalancerHostname(t *testing.T) {

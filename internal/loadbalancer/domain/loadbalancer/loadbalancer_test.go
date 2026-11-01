@@ -70,3 +70,16 @@ func TestPlanRelease(t *testing.T) {
 		t.Fatal("没有自身占用时应放行删除")
 	}
 }
+
+func TestResolvedRefs(t *testing.T) {
+	resolved := Port{Port: 5432, Backend: "pg"}
+	missing := Port{Port: 8008, Backend: "patroni", MissingBackend: true}
+	if ok, reason, _ := Reconstitute(Snapshot{Ports: []Port{resolved}}).ResolvedRefs(); !ok || reason != ReasonResolvedRefs {
+		t.Fatalf("got %v %s", ok, reason)
+	}
+	again := Port{Port: 8009, Backend: "patroni", MissingBackend: true}
+	ok, reason, message := Reconstitute(Snapshot{Ports: []Port{resolved, missing, again}}).ResolvedRefs()
+	if ok || reason != ReasonBackendNotFound || message != "引用的 Backend 不存在：patroni" {
+		t.Fatalf("got %v %s %q", ok, reason, message)
+	}
+}

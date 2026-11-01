@@ -33,6 +33,7 @@ const (
 	programmedType     = "Programmed"
 	degradedType       = "Degraded"
 	hostnameType       = "HostnamePublished"
+	resolvedRefsType   = "ResolvedRefs"
 	// pendingRetry 让池耗尽或冲突的对象在他人释放地址后重新尝试；释放没有指向它们的事件。
 	pendingRetry = 30 * time.Second
 	claimRetry   = time.Second
@@ -72,6 +73,7 @@ type LoadBalancerReconciler struct {
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ipaddresses,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancerhosts,verbs=get;list;watch
+// +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=backends,verbs=get;list;watch
 
 func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	object := &networkv1alpha1.LoadBalancer{}
@@ -82,7 +84,11 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	lb := loadbalancer.Reconstitute(snapshot(object))
+	backends, err := r.backends(ctx, object.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	lb := loadbalancer.Reconstitute(snapshot(object, backends))
 
 	if !object.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(object, LoadBalancerFinalizer) {
@@ -203,6 +209,19 @@ func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]hostTarget, error
 	return hosts, nil
 }
 
+// backends 返回 namespace 内的全部 Backend，按名称索引；只允许同 namespace 引用。
+func (r *LoadBalancerReconciler) backends(ctx context.Context, namespace string) (map[string]*networkv1alpha1.BackendSpec, error) {
+	list := &networkv1alpha1.BackendList{}
+	if err := r.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+	backends := make(map[string]*networkv1alpha1.BackendSpec, len(list.Items))
+	for i := range list.Items {
+		backends[list.Items[i].Name] = &list.Items[i].Spec
+	}
+	return backends, nil
+}
+
 // record 观察并至多写入一次 Hostname 的 A 记录。
 func (r *LoadBalancerReconciler) record(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) {
 	if r.DNS == nil {
@@ -261,6 +280,8 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 			Name: attachment.Host, Phase: string(attachment.Phase), Message: attachment.Message,
 		})
 	}
+	resolved, reason, message := lb.ResolvedRefs()
+	meta.SetStatusCondition(&status.Conditions, condition(resolvedRefsType, resolved, reason, message, object.Generation))
 	programmed, reason, message := lb.Programmed()
 	meta.SetStatusCondition(&status.Conditions, condition(programmedType, programmed, reason, message, object.Generation))
 	degraded := lb.Degraded()
@@ -292,7 +313,7 @@ func condition(kind string, value bool, reason, message string, generation int64
 	return metav1.Condition{Type: kind, Status: status, Reason: reason, Message: message, ObservedGeneration: generation}
 }
 
-func snapshot(object *networkv1alpha1.LoadBalancer) loadbalancer.Snapshot {
+func snapshot(object *networkv1alpha1.LoadBalancer, backends map[string]*networkv1alpha1.BackendSpec) loadbalancer.Snapshot {
 	// 地址格式由 CRD 校验；解析失败即为零值。
 	requested, _ := netip.ParseAddr(object.Spec.Address)
 	recorded, _ := netip.ParseAddr(object.Status.Address)
@@ -300,29 +321,32 @@ func snapshot(object *networkv1alpha1.LoadBalancer) loadbalancer.Snapshot {
 		Owner:     address.Owner{Namespace: object.Namespace, Name: object.Name, UID: string(object.UID)},
 		Requested: requested,
 		Address:   recorded,
-		Ports:     ports(object.Spec.Ports),
+		Ports:     ports(object.Spec.Ports, backends),
 	}
 }
 
-func ports(specs []networkv1alpha1.LoadBalancerPort) []loadbalancer.Port {
+func ports(specs []networkv1alpha1.LoadBalancerPort, backends map[string]*networkv1alpha1.BackendSpec) []loadbalancer.Port {
 	result := make([]loadbalancer.Port, 0, len(specs))
 	for _, spec := range specs {
-		check := spec.HealthCheck
-		port := loadbalancer.Port{
-			Port:          spec.Port,
-			ProxyProtocol: loadbalancer.ProxyProtocol(spec.ProxyProtocol),
-			IdleTimeout:   spec.IdleTimeout.Duration,
-			DrainTimeout:  spec.DrainTimeout.Duration,
-			HealthCheck: loadbalancer.HealthCheck{
-				Path: check.Path, ExpectedStatuses: check.ExpectedStatuses,
-				Interval: check.Interval.Duration, Timeout: check.Timeout.Duration,
-				HealthyThreshold: check.HealthyThreshold, UnhealthyThreshold: check.UnhealthyThreshold,
-			},
+		port := loadbalancer.Port{Port: spec.Port, Backend: spec.BackendRef.Name, IdleTimeout: spec.IdleTimeout.Duration}
+		backend, ok := backends[spec.BackendRef.Name]
+		if !ok {
+			port.MissingBackend = true
+			result = append(result, port)
+			continue
+		}
+		check := backend.HealthCheck
+		port.ProxyProtocol = loadbalancer.ProxyProtocol(backend.ProxyProtocol)
+		port.DrainTimeout = backend.DrainTimeout.Duration
+		port.HealthCheck = loadbalancer.HealthCheck{
+			Path: check.Path, ExpectedStatuses: check.ExpectedStatuses,
+			Interval: check.Interval.Duration, Timeout: check.Timeout.Duration,
+			HealthyThreshold: check.HealthyThreshold, UnhealthyThreshold: check.UnhealthyThreshold,
 		}
 		if check.Port != nil {
 			port.HealthCheck.Port = *check.Port
 		}
-		for _, endpoint := range spec.Endpoints {
+		for _, endpoint := range backend.Endpoints {
 			port.Endpoints = append(port.Endpoints, loadbalancer.Endpoint{Address: endpoint.Address, Port: endpoint.Port})
 		}
 		result = append(result, port)
@@ -358,6 +382,8 @@ func (r *LoadBalancerReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Watches(&networkingv1.IPAddress{}, handler.EnqueueRequestsFromMapFunc(parentOf)).
 		// 主机增删让全部 LoadBalancer 重新落地，无需重启 controller。
 		Watches(&networkv1alpha1.LoadBalancerHost{}, handler.EnqueueRequestsFromMapFunc(r.everyLoadBalancer)).
+		// Backend 的增删改（含被引用前先创建、被删除）让引用它的 LoadBalancer 重新收敛。
+		Watches(&networkv1alpha1.Backend{}, handler.EnqueueRequestsFromMapFunc(r.referencing)).
 		Complete(r)
 }
 
@@ -369,6 +395,23 @@ func (r *LoadBalancerReconciler) everyLoadBalancer(ctx context.Context, _ client
 	requests := make([]ctrl.Request, 0, len(list.Items))
 	for i := range list.Items {
 		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+	}
+	return requests
+}
+
+// referencing 返回同 namespace 中引用该 Backend 的 LoadBalancer。
+func (r *LoadBalancerReconciler) referencing(ctx context.Context, backend client.Object) []ctrl.Request {
+	list := &networkv1alpha1.LoadBalancerList{}
+	if err := r.Client.List(ctx, list, client.InNamespace(backend.GetNamespace())); err != nil {
+		return nil
+	}
+	var requests []ctrl.Request
+	for i := range list.Items {
+		if slices.ContainsFunc(list.Items[i].Spec.Ports, func(port networkv1alpha1.LoadBalancerPort) bool {
+			return port.BackendRef.Name == backend.GetName()
+		}) {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
 	}
 	return requests
 }

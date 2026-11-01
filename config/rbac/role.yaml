@@ -48,6 +48,14 @@ rules:
 - apiGroups:
   - network.ayatori.ddupan.top
   resources:
+  - backends
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - network.ayatori.ddupan.top
+  resources:
   - loadbalancerhosts
   - loadbalancers
   verbs:

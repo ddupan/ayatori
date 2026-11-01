@@ -11,6 +11,7 @@ resources:
 - bases/execution.ayatori.ddupan.top_opensandboxexecutionparameters.yaml
 - bases/network.ayatori.ddupan.top_loadbalancers.yaml
 - bases/network.ayatori.ddupan.top_loadbalancerhosts.yaml
+- bases/network.ayatori.ddupan.top_backends.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
