@@ -19,103 +19,71 @@ limitations under the License.
 package openbao_test
 
 import (
-	"context"
 	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"os/exec"
-	"regexp"
-	"strings"
+	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	bao "github.com/openbao/openbao/api/v2"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
 )
 
-// 只连接本测试创建的无持久卷 dev server，不接受生产地址或环境 token。
+// baoFixture 连接 hack/integration-test.sh 在 go test 之外启动的无持久卷 dev server（root token
+// 为 fixtureToken），并复位到 dev server 的初始状态。不接受生产地址或环境 token。
 func baoFixture(t *testing.T) *bao.Client {
 	t.Helper()
-	const image = "openbao/openbao@sha256:5b2486ab0fb90bbc788cc345b0a08616dfb375873ee8be5df3a2fd4d378a67e0"
-	prepareBaoImage(t, image)
-	// 冷缓存拉取不占用容器启动和健康检查的一分钟预算。
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "docker", "run", "--pull=never", "--rm", "-d", "-p", "127.0.0.1::8200",
-		image, "server", "-dev", "-dev-root-token-id="+fixtureToken, "-dev-listen-address=0.0.0.0:8200").Output()
-	if err != nil {
-		t.Fatalf("cannot start isolated OpenBao fixture: %s", baoCommandError(ctx, err))
-	}
-	id := strings.TrimSpace(string(output))
-	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(id) {
-		t.Fatal("unexpected fixture container ID")
-	}
-	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stop()
-		if exec.CommandContext(cleanup, "docker", "rm", "-f", id).Run() != nil {
-			t.Error("OpenBao fixture cleanup failed")
-		}
-	})
-	output, err = exec.CommandContext(ctx, "docker", "inspect", "--format",
-		`{{(index (index .NetworkSettings.Ports "8200/tcp") 0).HostPort}}`, id).Output()
-	if err != nil {
-		t.Fatalf("cannot inspect fixture port: %s", baoCommandError(ctx, err))
-	}
-	client := fixtureClient(t, "http://127.0.0.1:"+strings.TrimSpace(string(output)))
-	client.SetMaxRetries(0)
-	for {
-		if _, err := client.Sys().HealthWithContext(ctx); err == nil {
-			return client
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("OpenBao fixture startup timed out")
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
+	_, port := testenv.Container(t, "openbao", 8200)
+	client := fixtureClient(t, "http://127.0.0.1:"+strconv.Itoa(port))
+	resetBao(t, client)
+	return client
 }
 
-func prepareBaoImage(t *testing.T, image string) {
+// resetBao 卸载场景留下的 secrets engine、auth method 与 policy，重建 dev server 默认的 kv-v2 secret/。
+func resetBao(t *testing.T, root *bao.Client) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
-	defer cancel()
-	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil {
-		return
+	ctx := t.Context()
+	mounts, err := root.Sys().ListMountsWithContext(ctx)
+	if err != nil {
+		t.Fatal("cannot list fixture mounts", err)
 	}
-	t.Log("pulling isolated OpenBao fixture image (timeout: 5m)")
-	if _, err := exec.CommandContext(ctx, "docker", "pull", image).Output(); err != nil {
-		t.Fatalf("cannot pull OpenBao fixture image: %s", baoCommandError(ctx, err))
+	for path := range mounts {
+		if path != "sys/" && path != "cubbyhole/" && path != "identity/" {
+			if err := root.Sys().UnmountWithContext(ctx, path); err != nil {
+				t.Fatal("cannot reset fixture mount", err)
+			}
+		}
 	}
-}
-
-// 保留 Docker stderr 与超时原因，但不泄露测试 token/password 或完整命令参数。
-func baoCommandError(ctx context.Context, err error) string {
-	detail := err.Error()
-	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		detail += ": " + strings.TrimSpace(string(exitErr.Stderr))
+	if err := root.Sys().MountWithContext(ctx, "secret", &bao.MountInput{Type: "kv", Options: map[string]string{"version": "2"}}); err != nil {
+		t.Fatal("cannot recreate fixture KV mount", err)
 	}
-	if ctx.Err() != nil {
-		detail += ": " + ctx.Err().Error()
+	auths, err := root.Sys().ListAuthWithContext(ctx)
+	if err != nil {
+		t.Fatal("cannot list fixture auth methods", err)
 	}
-	return strings.NewReplacer(fixtureToken, "[REDACTED]", fixturePassword, "[REDACTED]").Replace(detail)
-}
-
-func TestBaoCommandError(t *testing.T) {
-	err := &exec.ExitError{Stderr: []byte("registry unavailable " + fixtureToken + " " + fixturePassword)}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	detail := baoCommandError(ctx, err)
-	if !strings.Contains(detail, "registry unavailable") || !strings.Contains(detail, "context canceled") {
-		t.Fatal("Docker diagnostic or context failure was lost")
+	for path := range auths {
+		if path != "token/" {
+			if err := root.Sys().DisableAuthWithContext(ctx, path); err != nil {
+				t.Fatal("cannot reset fixture auth method", err)
+			}
+		}
 	}
-	if strings.Contains(detail, fixtureToken) || strings.Contains(detail, fixturePassword) {
-		t.Fatal("Docker diagnostic exposed fixture credentials")
+	policies, err := root.Sys().ListPoliciesWithContext(ctx)
+	if err != nil {
+		t.Fatal("cannot list fixture policies", err)
+	}
+	for _, policy := range policies {
+		if policy != "default" && policy != "root" {
+			if err := root.Sys().DeletePolicyWithContext(ctx, policy); err != nil {
+				t.Fatal("cannot reset fixture policy", err)
+			}
+		}
 	}
 }
 

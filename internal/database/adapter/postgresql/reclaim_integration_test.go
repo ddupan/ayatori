@@ -171,7 +171,7 @@ func testReopenProvisioned(t *testing.T, f *provisioningFixture) {
 		database.Status.RoleOID != confirmed.RoleOID || database.Status.CredentialVersion != confirmed.CredentialVersion {
 		t.Fatalf("重新开放应保持 Available 与确认身份：%+v", database.Status)
 	}
-	next := &databasev1alpha1.PostgreSQLTenant{Name: "reopen-next", Namespace: controllerNamespace,
+	next := &databasev1alpha1.PostgreSQLTenant{Name: "reopen-next", Namespace: f.namespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{DatabaseRef: &databasev1alpha1.DatabaseReference{Name: databasev1alpha1.ObjectName(database.Name)}}}
 	if err := f.api.Create(f.ctx, next); err != nil {
 		t.Fatal(err)
