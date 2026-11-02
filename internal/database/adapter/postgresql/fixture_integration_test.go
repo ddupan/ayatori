@@ -21,9 +21,8 @@ package postgresql_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,63 +32,49 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
 	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
 )
 
 const (
 	fixtureAddress        = "127.0.0.1"
 	managementUsernameKey = "login"
 	managementPasswordKey = "credential"
-	unrelatedNamespace    = "unrelated"
 	fixtureHost           = "fixture.invalid"
 	fixtureUser           = "postgres"
 	fixtureExtension      = "plpgsql"
 	dockerExec            = "exec"
-	fixtureImage          = "postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
 	fixturePassword       = "AYATORI-TEST-ONLY-initial-password"
 	rotatedPassword       = "AYATORI-TEST-ONLY-rotated-password"
-	controllerNamespace   = "database-controller"
 	secretName            = "management"
 )
 
-// fixture 不接受外部 DSN，只创建自己的临时容器并按确切 ID 清理。
+// resetSQL 把共用实例复位到 initdb 之后的状态：重建 postgres 库，删除其余库与非内置角色，
+// 恢复超级用户密码、角色设置与 ALTER SYSTEM。经 stdin 交给容器内 psql，密码不进入命令参数。
+const resetSQL = `SELECT format('DROP DATABASE %I WITH (FORCE)', datname) FROM pg_database
+  WHERE datname NOT IN ('template0', 'template1') \gexec
+CREATE DATABASE postgres;
+SELECT format('DROP ROLE %I', rolname) FROM pg_roles WHERE rolname <> 'postgres' AND rolname !~ '^pg_' \gexec
+ALTER ROLE postgres RESET ALL;
+ALTER ROLE postgres PASSWORD '` + fixturePassword + `';
+ALTER SYSTEM RESET ALL;
+SELECT pg_reload_conf();
+`
+
+// postgresFixture 返回 hack/integration-test.sh 在 go test 之外启动的 PostgreSQL，并复位到初始状态。
+// 原来每个场景各起一个容器，initdb 占了场景的大部分用时；测试串行运行，场景独占该实例。
+// fixture 不接受外部 DSN，只认脚本给出的容器 ID。
 func postgresFixture(t *testing.T, ctx context.Context) (string, int) {
 	t.Helper()
-	output, err := exec.CommandContext(ctx, "docker", "run", "--rm", "-d", "-p", "127.0.0.1::5432",
-		"-e", "POSTGRES_PASSWORD="+fixturePassword, fixtureImage).Output()
-	if err != nil {
-		t.Fatalf("cannot start isolated PostgreSQL fixture: %s", fixtureCommandError(err))
-	}
-	id := strings.TrimSpace(string(output))
-	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(id) {
-		t.Fatal("unexpected container identifier")
-	}
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if exec.CommandContext(cleanup, "docker", "rm", "-f", id).Run() != nil {
-			t.Error("fixture cleanup failed")
-		}
-	})
-	output, err = exec.CommandContext(ctx, "docker", "inspect", "--format", `{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}`, id).Output()
-	if err != nil {
-		t.Fatalf("cannot inspect fixture port: %s", fixtureCommandError(err))
-	}
-	port, err := strconv.Atoi(strings.TrimSpace(string(output)))
-	if err != nil {
-		t.Fatal("invalid fixture port")
-	}
-	// 初次 init 的临时服务器只监听 Unix socket，必须等最终 TCP listener。
-	for exec.CommandContext(ctx, "docker", dockerExec, id, "pg_isready", "-h", fixtureAddress, "-U", fixtureUser).Run() != nil {
-		select {
-		case <-ctx.Done():
-			t.Fatal("fixture startup timed out")
-		case <-time.After(200 * time.Millisecond):
-		}
+	id, port := testenv.Container(t, "postgres", 5432)
+	reset := exec.CommandContext(ctx, "docker", dockerExec, "-i", id,
+		"psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", fixtureUser, "-d", "template1")
+	reset.Stdin = strings.NewReader(resetSQL)
+	if output, err := reset.CombinedOutput(); err != nil {
+		t.Fatalf("cannot reset PostgreSQL fixture: %s", fixtureCommandError(fmt.Errorf("%w: %s", err, output)))
 	}
 	return id, port
 }
@@ -186,8 +171,10 @@ func target(t *testing.T, port int, mode instance.TLSMode) instance.ObservationT
 	return value
 }
 
-// credentialFixture 为每个场景创建独立 API server、PostgreSQL 和应用服务。
+// credentialFixture 为每个场景创建独立 namespace、PostgreSQL 和应用服务，共用包级 API server。
 type credentialFixture struct {
+	namespace     string
+	unrelated     string
 	config        *rest.Config
 	ctx           context.Context
 	client        *kubernetes.Clientset
@@ -201,25 +188,20 @@ type credentialFixture struct {
 
 func newCredentialFixture(t *testing.T) *credentialFixture {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// 覆盖整个场景（含 provisioning 的全部子测试），负载高时两分钟不够；卡死由 -test.timeout 兜底。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
-	environment := &envtest.Environment{}
-	config, err := environment.Start()
-	if err != nil {
-		t.Fatal("envtest startup failed", err)
-	}
-	t.Cleanup(func() {
-		if err := environment.Stop(); err != nil {
-			t.Error("envtest cleanup failed", err)
-		}
-	})
+	config := testenv.APIServer(t)
+	scenario := testenv.Scenario()
+	namespace := fmt.Sprintf("database-controller-%d", scenario)
+	unrelated := fmt.Sprintf("unrelated-%d", scenario)
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal("cannot create test client")
 	}
-	for _, namespace := range []string{controllerNamespace, unrelatedNamespace} {
+	for _, namespace := range []string{namespace, unrelated} {
 		_, err := client.CoreV1().Namespaces().Create(
 			ctx,
 			&corev1.Namespace{Name: namespace},
@@ -234,11 +216,10 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := environment.AddUser(envtest.User{Name: "without-secret-access"}, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deniedAPIReader, err := kubeclient.New(user.Config(), kubeclient.Options{})
+	// 不带任何 RBAC 的用户；以 impersonation 代替证书用户，共用的 API server 无需签发。
+	denied := rest.CopyConfig(config)
+	denied.Impersonate.UserName = fmt.Sprintf("without-secret-access-%d", scenario)
+	deniedAPIReader, err := kubeclient.New(denied, kubeclient.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,11 +229,13 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	t.Cleanup(service.Close)
 
 	return &credentialFixture{
+		namespace:     namespace,
+		unrelated:     unrelated,
 		config:        config,
 		ctx:           ctx,
 		client:        client,
-		secrets:       databasecontroller.ManagementSecrets{Reader: apiReader, Namespace: controllerNamespace},
-		deniedSecrets: databasecontroller.ManagementSecrets{Reader: deniedAPIReader, Namespace: controllerNamespace},
+		secrets:       databasecontroller.ManagementSecrets{Reader: apiReader, Namespace: namespace},
+		deniedSecrets: databasecontroller.ManagementSecrets{Reader: deniedAPIReader, Namespace: namespace},
 		service:       service,
 		target:        target(t, port, instance.TLSDisable),
 		containerID:   containerID,
@@ -276,7 +259,7 @@ func (f *credentialFixture) createSecret(t *testing.T, namespace string) {
 
 func (f *credentialFixture) updateSecret(t *testing.T, change func(*corev1.Secret)) {
 	t.Helper()
-	secrets := f.client.CoreV1().Secrets(controllerNamespace)
+	secrets := f.client.CoreV1().Secrets(f.namespace)
 	secret, err := secrets.Get(f.ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal("cannot read fixture Secret")

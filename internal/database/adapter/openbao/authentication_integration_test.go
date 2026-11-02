@@ -46,12 +46,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
+	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
 )
 
 const (
@@ -143,16 +142,7 @@ type kubernetesAuthFixture struct {
 
 func newKubernetesAuthFixture(t *testing.T) *kubernetesAuthFixture {
 	t.Helper()
-	environment := &envtest.Environment{}
-	config, err := environment.Start()
-	if err != nil {
-		t.Fatal("cannot start authentication API fixture", err)
-	}
-	t.Cleanup(func() {
-		if err := environment.Stop(); err != nil {
-			t.Error("cannot stop authentication API fixture")
-		}
-	})
+	config := testenv.APIServer(t)
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal("cannot construct fixture API client")
@@ -167,18 +157,9 @@ func newKubernetesAuthFixture(t *testing.T) *kubernetesAuthFixture {
 		}
 	}
 	// 集群外身份只有指定 SA 的 TokenRequest 权限，不使用 envtest 管理员凭据运行会话。
-	user, err := environment.AddUser(envtest.User{Name: "systemd-controller"}, config)
-	if err != nil {
-		t.Fatal("cannot create external controller identity")
-	}
-	kubeconfig, err := user.KubeConfig()
-	if err != nil {
-		t.Fatal("cannot build external kubeconfig")
-	}
-	externalConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
-	if err != nil {
-		t.Fatal("cannot load external kubeconfig")
-	}
+	// 以 impersonation 代替证书用户：共享的 API server 不签发客户端证书，RBAC 判定相同。
+	externalConfig := rest.CopyConfig(config)
+	externalConfig.Impersonate.UserName = "systemd-controller"
 	if _, err := clientset.RbacV1().Roles(authNamespace).Create(ctx, &rbacv1.Role{
 		Name: tokenRequestRole,
 		Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"},
