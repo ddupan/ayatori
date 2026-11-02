@@ -9,6 +9,7 @@ on:
       - 'internal/database/**'
       - 'internal/infra/**'
       - 'internal/bootstrap/**'
+      - 'hack/integration-test.sh'
       - '.gitea/workflows/database-integration.yml'
   workflow_dispatch:
 
