@@ -197,7 +197,8 @@ func TestHostsContract(t *testing.T) {
 			Endpoints: []loadbalancer.Endpoint{{Address: "127.0.0.1", Port: 1}, {Address: "pg.example.invalid", Port: 5432}}},
 	}
 
-	other := []loadbalancer.Port{{Port: 7100, IdleTimeout: time.Minute, HealthCheck: check("")}}
+	// 引用缺失 Backend 的端口：没有健康检查参数与 server，回读仍须一致。
+	other := []loadbalancer.Port{{Port: 7100, IdleTimeout: time.Minute, Backend: "gone", MissingBackend: true}}
 	if err := hosts.Apply(t.Context(), f.host, aggregate(otherUID, other)); err != nil {
 		t.Fatal(err)
 	}

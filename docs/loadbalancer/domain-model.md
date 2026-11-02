@@ -67,47 +67,54 @@ agent 的报告，不自行推算，记录 Attachment。
 
 参照 AWS NLB、GCP、Azure LB、OpenStack Octavia 与 OCI NLB 的 L4 API，只采纳至少三家共有、
 且 homelab 消费者确实需要的概念。各家都把 VIP、listener、后端集合、成员与健康检查拆开；
-单个 CRD 的规模下，健康检查嵌入 port（同 AWS TargetGroup、Octavia pool、OCI backendSet），
-不做 GCP/Azure 式的独立可复用资源。
+成员与 VIP 的写入方不同，后端集合是独立的 namespaced 资源 `Backend`（ADR-0015，同 AWS
+TargetGroup、Octavia pool、OCI backendSet），端口以 `backendRef` 引用同 namespace 的 Backend。
 
 ```yaml
+kind: Backend
+metadata: {name: pg}
+spec:
+  endpoints:                   # 后端集合，消费方整组替换（Register/Deregister 的声明式版本）
+    - address: 192.168.10.127  # IP 或 DNS 名称
+      port: 5432
+    - address: pg-lxc150.example.internal
+      port: 5432
+  proxyProtocol: None          # None | V1 | V2
+  drainTimeout: 30s            # endpoint 被移出后保留已有连接的上限
+  healthCheck:
+    type: HTTP                 # TCP | HTTP
+    port: 8008                 # 为空表示使用各 endpoint 自身端口（AWS traffic-port）
+    path: /primary
+    expectedStatuses: [200]
+    interval: 5s
+    timeout: 3s
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+---
+kind: LoadBalancer
 spec:
   address: 10.62.0.10          # 可选；不可变
   ports:
     - name: postgres
       port: 5432               # VIP 端口
-      endpoints:               # 后端集合，消费方整组替换（Register/Deregister 的声明式版本）
-        - address: 192.168.10.127   # IP 或 DNS 名称
-          port: 5432
-        - address: pg-lxc150.example.internal
-          port: 5432
-      proxyProtocol: None      # None | V1 | V2
+      backendRef: {name: pg}   # 同 namespace；不存在时该端口拒绝连接
       idleTimeout: 1h
-      drainTimeout: 30s        # endpoint 被移出后保留已有连接的上限
-      healthCheck:
-        type: HTTP             # TCP | HTTP
-        port: 8008             # 为空表示使用各 endpoint 自身端口（AWS traffic-port）
-        path: /primary
-        expectedStatuses: [200]
-        interval: 5s
-        timeout: 3s
-        healthyThreshold: 2
-        unhealthyThreshold: 3
 ```
 
-每个 port 拥有自己的 endpoint 集合，endpoint 为“地址 + 端口”，同 Octavia pool/member 与 AWS
+一个 Backend 可被多个 LoadBalancer 或端口引用；HAProxy 侧仍按「LoadBalancer × 端口」各生成一个
+backend section，共享的后端被重复检查，换来每个 section 只有一个所有者。每个 Backend 拥有一组 endpoint，endpoint 为“地址 + 端口”，同 Octavia pool/member 与 AWS
 TargetGroup/Target。k8s Service 的每个端口对应一组“节点 IP + NodePort”。endpoint 地址可以是
 DNS 名称，由数据面经 LAN resolver（Blocky，`lab.ddupan.top` 条件转发至 PowerDNS）周期解析
 （HAProxy `resolvers`）；解析结果只影响
-数据面转发，不进入 Address 分配或宣告。健康检查端口覆盖作用于该 port 下的全部 endpoint。
+数据面转发，不进入 Address 分配或宣告。健康检查端口覆盖作用于该 Backend 的全部 endpoint。
 
 固定行为（各家不一致，此处明确定义并由所有 adapter 以共同 contract test 保证）：
 
-- **fail-closed**：某 port 没有健康 endpoint 时拒绝新连接，不回退到全部 endpoint。AWS/GCP
+- **fail-closed**：某 port 没有健康 endpoint（含引用的 Backend 不存在）时拒绝新连接，不回退到全部 endpoint。AWS/GCP
   默认 fail-open，与按角色选主（如 PostgreSQL primary）冲突。
 - **不健康即断开**：endpoint 被健康检查判为失败时断开其已有连接（同 AWS 默认；HAProxy
   `on-marked-down shutdown-sessions`）。
-- **移出即排空**：endpoint 从集合移除时转为 drain，停止新连接；会话归零或超过端口的
+- **移出即排空**：endpoint 从集合移除时转为 drain，停止新连接；会话归零或超过 Backend 的
   `drainTimeout`（默认 30s）后删除。超时仍有会话时删除触发 reload，剩余连接由旧 worker
   服务至 LB 主机的 `hard-stop-after`。
 - **新 server 先验证后接流量**：server 以 `init-state fully-down` 起始，连续通过检查才接收流量，
@@ -227,14 +234,16 @@ LoadBalancer status：
   但 agent 报告未宣告，说明中带原因）、`Ready`（agent 报告已把 VIP 发给路由器）、`Removed`（删除时配置已清除）、
   `Unavailable`（无法观察、reload 失败或 agent 不应答）。agent 的报告是观察：agent 不应答而实际仍在
   宣告时这里是 `Unavailable`，路由以路由器为准。
-- `ports[].endpoints[]`：各 endpoint 在该 port 健康检查下的观察，只做呈现，不参与状态迁移——
-  健康摘除由 HAProxy 在数据面完成。
+- 各 endpoint 的健康观察（ADR-0015 中的 Backend `status.endpoints`）尚未实现；只做呈现，不参与
+  状态迁移——健康摘除由 HAProxy 在数据面完成。
 
 conditions 参照 Octavia 将控制面下发（provisioning_status）与数据面健康（operating_status）
 分开，命名沿用 Gateway API：
 
 - `Programmed`：Address 已确认，且至少一台 Host 为 `Ready`。
 - `Degraded`：存在不是 `Ready` 的 Host。
+- `ResolvedRefs`：各端口引用的 Backend 都存在；为 False 时说明中列出缺失的名称，对应端口拒绝
+  连接，`Programmed` 不受影响。删除 Backend 不被阻止。
 - `Available`：每个 port 至少有一个健康 endpoint。PostgreSQL 无 primary 时为 False，但
   `Programmed` 不受影响。
 
@@ -355,3 +364,7 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
   agent `/status`，写入 `AgentReady`（HAProxy 应答、至少一个会话、`--loadbalancer-agent-stale-after`
   内收敛过）与 `status.vips`。Attachment 的 `Ready`/`Configured` 改为取 `status.vips` 中该 VIP 的报告，
   agent 不应答时为 `Unavailable`；删除 controller 侧的 `announces` 与 `ProxyFacts.Frontends`。
+- 切片 6d（ADR-0015，Backend）：endpoint、健康检查、PROXY protocol 与 `drainTimeout` 移入 namespaced
+  资源 Backend，端口改为 `backendRef`（v1alpha1 内不兼容修改）。引用缺失时端口没有 server，
+  LoadBalancer 报告 `ResolvedRefs=False`；controller watch Backend 并收敛同 namespace 中引用它的
+  LoadBalancer。

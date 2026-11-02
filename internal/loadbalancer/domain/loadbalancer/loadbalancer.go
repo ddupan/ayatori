@@ -4,6 +4,8 @@ package loadbalancer
 
 import (
 	"net/netip"
+	"slices"
+	"strings"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
 )
@@ -46,6 +48,12 @@ const (
 	ReasonAllHostsReady    = "AllHostsReady"
 )
 
+// ResolvedRefs condition 的 Reason，命名沿用 Gateway API。
+const (
+	ReasonResolvedRefs    = "ResolvedRefs"
+	ReasonBackendNotFound = "BackendNotFound"
+)
+
 type LoadBalancer struct {
 	snapshot    Snapshot
 	reason      string
@@ -86,6 +94,20 @@ func (lb *LoadBalancer) Degraded() []string {
 		}
 	}
 	return hosts
+}
+
+// ResolvedRefs 表示各端口引用的 Backend 都存在；缺失时返回说明，对应端口拒绝连接。
+func (lb *LoadBalancer) ResolvedRefs() (resolved bool, reason, message string) {
+	var missing []string
+	for _, port := range lb.snapshot.Ports {
+		if port.MissingBackend && !slices.Contains(missing, port.Backend) {
+			missing = append(missing, port.Backend)
+		}
+	}
+	if len(missing) > 0 {
+		return false, ReasonBackendNotFound, "引用的 Backend 不存在：" + strings.Join(missing, ", ")
+	}
+	return true, ReasonResolvedRefs, ""
 }
 
 // PlanAddress 根据当前占用决定 VIP 的下一步。taken 是已观察到的全部受管 Address。

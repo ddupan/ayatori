@@ -5,12 +5,16 @@ import "time"
 // Port 是期望配置中的一个 VIP 端口：controller 与代理 adapter 之间的契约。
 // 字段合法性由 CRD 保证；翻译为具体代理配置由 adapter 负责。
 type Port struct {
-	Port          int32
-	Endpoints     []Endpoint
-	ProxyProtocol ProxyProtocol
-	IdleTimeout   time.Duration
-	DrainTimeout  time.Duration
-	HealthCheck   HealthCheck
+	Port int32
+	// Backend 是引用的 Backend 名称。MissingBackend 表示它不存在：其余字段为零值，没有 endpoint，
+	// 端口拒绝连接（fail-closed）。
+	Backend        string
+	MissingBackend bool
+	Endpoints      []Endpoint
+	ProxyProtocol  ProxyProtocol
+	IdleTimeout    time.Duration
+	DrainTimeout   time.Duration
+	HealthCheck    HealthCheck
 }
 
 // Endpoint 的 Address 可以是 IP 或 DNS 名称。

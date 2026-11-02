@@ -81,7 +81,7 @@ func reload(t *testing.T, c client.Client, object client.Object) {
 func newLoadBalancer(name, requested string) *networkv1alpha1.LoadBalancer {
 	lb := &networkv1alpha1.LoadBalancer{Spec: networkv1alpha1.LoadBalancerSpec{
 		Address: requested,
-		Ports:   []networkv1alpha1.LoadBalancerPort{{Port: 6443}},
+		Ports:   []networkv1alpha1.LoadBalancerPort{{Port: 6443, BackendRef: networkv1alpha1.BackendRef{Name: name}}},
 	}}
 	lb.Namespace, lb.Name = testNamespace, name
 	return lb
