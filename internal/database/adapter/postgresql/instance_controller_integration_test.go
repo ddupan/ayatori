@@ -51,7 +51,7 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 	// 同进程 -count 重复启动测试 manager；生产继续校验 controller 名称唯一。
 	skipRepeatedName := true
 	manager, err := ctrl.NewManager(restricted, ctrl.Options{
-		Scheme: scheme, Cache: databasecontroller.InstanceCacheOptions(controllerNamespace),
+		Scheme: scheme, Cache: databasecontroller.InstanceCacheOptions(f.namespace),
 		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
 		Controller: controllerconfig.Controller{SkipNameValidation: &skipRepeatedName},
 	})
@@ -60,7 +60,7 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 	}
 	service := &postgresql.Instances{}
 	reconciler := &databasecontroller.InstanceReconciler{Client: manager.GetClient(), Reader: manager.GetAPIReader(), PostgreSQL: service,
-		Secrets: databasecontroller.ManagementSecrets{Reader: manager.GetAPIReader(), Namespace: controllerNamespace}}
+		Secrets: databasecontroller.ManagementSecrets{Reader: manager.GetAPIReader(), Namespace: f.namespace}}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestInstanceControllerWithRealPostgreSQL(t *testing.T) {
 	f.queryPostgres(t, "ALTER ROLE native_manager CREATEROLE")
 	f.updateSecret(t, func(secret *corev1.Secret) { secret.Annotations[watchRevisionAnnotation] = "recovered" })
 	awaitInstanceReason(t, f, apiClient, object, "ManagementReady")
-	if err := f.client.CoreV1().Secrets(controllerNamespace).Delete(f.ctx, secretName, metav1.DeleteOptions{}); err != nil {
+	if err := f.client.CoreV1().Secrets(f.namespace).Delete(f.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitInstanceReason(t, f, apiClient, object, "DependencyUnavailable")
@@ -176,12 +176,12 @@ func instanceControllerRBAC(t *testing.T, f *credentialFixture, apiClient client
 	if err := decoder.Decode(namespaceRole); err != nil {
 		t.Fatal(err)
 	}
-	namespaceRole.Namespace = controllerNamespace
+	namespaceRole.Namespace = f.namespace
 	if err := apiClient.Create(f.ctx, namespaceRole); err != nil {
 		t.Fatal(err)
 	}
 	namespaceBinding := &rbacv1.RoleBinding{}
-	namespaceBinding.Name, namespaceBinding.Namespace = user, controllerNamespace
+	namespaceBinding.Name, namespaceBinding.Namespace = user, f.namespace
 	namespaceBinding.RoleRef = rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: namespaceRole.Name}
 	namespaceBinding.Subjects = binding.Subjects
 	if err := apiClient.Create(f.ctx, namespaceBinding); err != nil {
@@ -194,7 +194,7 @@ func instanceControllerRBAC(t *testing.T, f *credentialFixture, apiClient client
 		t.Fatal(err)
 	}
 	secret := &corev1.Secret{}
-	err = restrictedClient.Get(f.ctx, client.ObjectKey{Namespace: unrelatedNamespace, Name: secretName}, secret)
+	err = restrictedClient.Get(f.ctx, client.ObjectKey{Namespace: f.unrelated, Name: secretName}, secret)
 	if !apierrors.IsForbidden(err) {
 		t.Fatal("Instance controller 可以跨 namespace 读取 Secret")
 	}

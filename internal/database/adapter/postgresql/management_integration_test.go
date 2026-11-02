@@ -17,7 +17,7 @@ const nativeManager = "native_manager"
 func useNativeManager(t *testing.T, f *credentialFixture) {
 	t.Helper()
 	f.queryPostgres(t, "CREATE ROLE native_manager LOGIN CREATEDB CREATEROLE PASSWORD '"+fixturePassword+"'")
-	f.createSecret(t, controllerNamespace)
+	f.createSecret(t, f.namespace)
 	f.updateSecret(t, func(secret *corev1.Secret) { secret.Data[managementUsernameKey] = []byte(nativeManager) })
 }
 

@@ -38,7 +38,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 	fixture := newCredentialFixture(t)
 	reference := fixture.target.Definition().AdminCredential()
 
-	fixture.createSecret(t, "unrelated")
+	fixture.createSecret(t, fixture.unrelated)
 	if _, err := fixture.secrets.Read(fixture.ctx, reference); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("a Secret in another namespace satisfied the reference")
 	}
@@ -46,7 +46,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 		t.Fatal("missing Secret did not fail closed")
 	}
 
-	fixture.createSecret(t, controllerNamespace)
+	fixture.createSecret(t, fixture.namespace)
 	if _, err := fixture.deniedSecrets.Read(fixture.ctx, reference); !errors.Is(err, databasecontroller.ErrCredentialsUnavailable) {
 		t.Fatal("API server did not enforce Secret RBAC")
 	}
@@ -63,7 +63,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 	})
 	fixture.observeVersion(t)
 
-	err := fixture.client.CoreV1().Secrets(controllerNamespace).Delete(fixture.ctx, secretName, metav1.DeleteOptions{})
+	err := fixture.client.CoreV1().Secrets(fixture.namespace).Delete(fixture.ctx, secretName, metav1.DeleteOptions{})
 	if err != nil {
 		t.Fatal("cannot delete fixture Secret")
 	}
@@ -74,7 +74,7 @@ func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {
 
 func TestEffectiveCredentialChangesReplaceConnection(t *testing.T) {
 	fixture := newCredentialFixture(t)
-	fixture.createSecret(t, controllerNamespace)
+	fixture.createSecret(t, fixture.namespace)
 	fixture.observeVersion(t)
 	originalBackend := fixture.backendIDs(t)
 	if originalBackend == "" {
@@ -119,7 +119,7 @@ func TestEffectiveCredentialChangesReplaceConnection(t *testing.T) {
 
 func TestConnectionReleaseAndServiceRestart(t *testing.T) {
 	fixture := newCredentialFixture(t)
-	fixture.createSecret(t, controllerNamespace)
+	fixture.createSecret(t, fixture.namespace)
 	fixture.observeVersion(t)
 
 	fixture.service.Forget(fixture.target.Identity().Name())
@@ -151,7 +151,7 @@ func TestConnectionReleaseAndServiceRestart(t *testing.T) {
 
 func TestConcurrentVersionObservations(t *testing.T) {
 	fixture := newCredentialFixture(t)
-	fixture.createSecret(t, controllerNamespace)
+	fixture.createSecret(t, fixture.namespace)
 
 	var workers sync.WaitGroup
 	for range 4 {
@@ -171,7 +171,7 @@ func TestConcurrentVersionObservations(t *testing.T) {
 
 func TestManagementConnectionRecoversAfterTimeout(t *testing.T) {
 	fixture := newCredentialFixture(t)
-	fixture.createSecret(t, controllerNamespace)
+	fixture.createSecret(t, fixture.namespace)
 	fixture.observeVersion(t)
 
 	if err := exec.CommandContext(fixture.ctx, "docker", "pause", fixture.containerID).Run(); err != nil {

@@ -125,7 +125,7 @@ func provisioningBao(t *testing.T) *openbao.Credentials {
 
 func (f *provisioningFixture) bound(t *testing.T, name string, extensions ...string) *databasev1alpha1.PostgreSQLDatabase {
 	t.Helper()
-	tenant := &databasev1alpha1.PostgreSQLTenant{Name: strings.ReplaceAll(name, "_", "-"), Namespace: controllerNamespace,
+	tenant := &databasev1alpha1.PostgreSQLTenant{Name: strings.ReplaceAll(name, "_", "-"), Namespace: f.namespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{Provision: &databasev1alpha1.DatabaseProvisionRequest{
 			InstanceRef: databasev1alpha1.InstanceReference{Name: supplyInstance},
 			Database:    databasev1alpha1.PostgreSQLIdentifier(name), LoginRole: databasev1alpha1.PostgreSQLIdentifier(name),
