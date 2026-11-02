@@ -1,0 +1,84 @@
+name: Database Integration
+
+on:
+  # 只在 Database 相关代码或本工作流变化时运行真实后端集成测试；其余 Go 改动由 Verify 覆盖。
+  # bootstrap 的集成测试同时验证 Database 装配，因此一并触发；其中只属于 LoadBalancer 装配的文件除外。
+  pull_request:
+    paths:
+      - 'api/database/**'
+      - 'internal/database/**'
+      - 'internal/infra/**'
+      - 'internal/bootstrap/**'
+      - '!internal/bootstrap/loadbalancer*.go'
+      - 'internal/testenv/**'
+      - 'hack/integration-test.sh'
+      - 'hack/apiserver/**'
+      - '.gitea/workflows/database-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: [self-hosted, pod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          go: 'true'
+          go-version-file: go.mod
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+
+      - name: Lint integration build
+        run: make lint-database-integration
+
+  test:
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 60  # 2 核 runner 冷缓存全量编译很慢；缓存只在成功时保存
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      # Go 工具链与模块、Docker Hub 镜像走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          go: 'true'
+          go-version-file: go.mod
+          docker: 'true'
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+
+      # Runner 提供本 job 可用的 Docker；workflow 只验证，不重复启动 daemon。
+      - name: Verify Docker availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          docker info --format 'Server={{.ServerVersion}} StorageDriver={{.Driver}}'
+
+      - name: Test Database integration with real backends
+        run: make test-database-integration
