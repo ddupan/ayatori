@@ -78,9 +78,9 @@ lint-database-integration: golangci-lint ## 检查集成测试构建标签下的
 		./internal/database/... ./internal/infra/... ./internal/bootstrap/... ./internal/testenv/...
 
 .PHONY: test-loadbalancer-integration
-test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API 容器验证 LoadBalancer。
+test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API、PowerDNS 容器验证 LoadBalancer；后两者在 go test 外启动一次。
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
-		go test -tags=integration -race -count=1 ./internal/loadbalancer/...
+		INTEGRATION_SERVICES="haproxy pdns" hack/integration-test.sh ./internal/loadbalancer/...
 	$(MAKE) test-lb-agent-netlink
 
 # 与 manager 镜像同一 base；测试二进制是静态链接的，root 只在容器自己的网络 namespace 内。
@@ -95,7 +95,7 @@ test-lb-agent-netlink: ## 在一次性容器的网络 namespace 中以 CAP_NET_A
 
 .PHONY: lint-loadbalancer-integration
 lint-loadbalancer-integration: golangci-lint ## 检查集成测试构建标签下的 LoadBalancer 代码。
-	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/loadbalancer/...
+	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/loadbalancer/... ./internal/testenv/...
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes

@@ -7,6 +7,8 @@ on:
       - 'api/network/**'
       - 'internal/loadbalancer/**'
       - 'cmd/lb-agent/**'
+      - 'internal/testenv/**'
+      - 'hack/integration-test.sh'
       - '.gitea/workflows/loadbalancer-integration.yml'
   workflow_dispatch:
 
@@ -41,7 +43,7 @@ jobs:
 
   test:
     runs-on: [self-hosted, pod]
-    timeout-minutes: 60  # 冷缓存 + -race 全量编译就要 ~25 分钟；缓存只在成功时保存
+    timeout-minutes: 60  # 2 核 runner 冷缓存全量编译很慢；缓存只在成功时保存
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
