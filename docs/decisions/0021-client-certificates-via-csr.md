@@ -57,8 +57,15 @@
    自行续签；续签前建立的客户端在旧证书过期后仍可访问。
    **已完成（2026-11-03）**：`internal/infra/clientcert` 的集成测试，测试中以测试 CA 代替 csrsigning。
 2. `homelab_ayatori` 的 Kitchen 中：真实的 k0s csrsigning 以其 CA 签发，各组件以签发的证书访问 API。
+   **已完成（2026-11-03）**：homelab-cookbooks `homelab_ayatori` 的 Kitchen（dokken，真实 k0s 与 podman），
+   五个身份都以 `kubernetes-ca` 签发的证书认证为自己并带 `system:ayatori:client-certificates`；第二次
+   收敛 0 更新。期间发现持有者重启或重试时会以同一 token 提交多个 CSR，部署方改为批准全部符合的 CSR。
 3. Dev 控制面上：从 `k0s kubeconfig create` 迁移到本方式（随迁入 Chef）时各组件不中断；Flux、ESO、
    kube-state-metrics 在续签后继续工作。
+   **部分完成（2026-11-03）**：ayatori-dev 随迁入 Chef 完成迁移，五个身份由 k0s csrsigning 签发，Flux、
+   ESO、kube-state-metrics、ayatori-manager 正常工作；k0s 重启期间 manager 丢失 leader 后自行恢复。
+   真实部署上的续签要等证书过 70% 有效期才会发生，目前只由集成测试覆盖；Dev 的 Flux 跟随的 release
+   尚不含批准者的 RBAC，随含本 ADR 的 release 部署后才具备续签批准。
 
 ## 结果
 
