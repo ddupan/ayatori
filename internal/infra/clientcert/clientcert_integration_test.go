@@ -206,7 +206,7 @@ func TestClientCertificates(t *testing.T) {
 	t.Run("deployer rejects a request for another identity", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if err := clientcert.ApproveBootstrap(ctx, admin, tokenID, "someone-else", nil); err == nil {
+		if err := clientcert.ApproveBootstrap(ctx, admin, tokenID, "someone-else", nil, 0); err == nil {
 			t.Fatal("approved a CSR for another identity")
 		}
 	})
@@ -216,7 +216,7 @@ func TestClientCertificates(t *testing.T) {
 		// 被拒绝后证书管理器会以同一 token 重新申请。
 		ctx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
-		if err := clientcert.ApproveBootstrap(ctx, admin, tokenID, user, nil); err != nil {
+		if err := clientcert.ApproveBootstrap(ctx, admin, tokenID, user, nil, 2*time.Second); err != nil {
 			t.Fatal(err)
 		}
 		eventually(t, 30*time.Second, func() error {

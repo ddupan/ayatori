@@ -73,6 +73,7 @@ func approveBootstrap(ctx context.Context, args []string) error {
 	var groups stringList
 	flags.Var(&groups, "group", "除 "+clientcert.Group+" 外的组（证书 O），可重复")
 	timeout := flags.Duration("timeout", 5*time.Minute, "等待 CSR 的时间")
+	settle := flags.Duration("settle", 10*time.Second, "批准第一个 CSR 后继续批准同一 token 新提交的 CSR 的时间")
 	_ = flags.Parse(args)
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
@@ -84,7 +85,7 @@ func approveBootstrap(ctx context.Context, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	return clientcert.ApproveBootstrap(ctx, admin, *tokenID, *user, groups)
+	return clientcert.ApproveBootstrap(ctx, admin, *tokenID, *user, groups, *settle)
 }
 
 type stringList []string
