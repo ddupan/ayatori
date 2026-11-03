@@ -66,8 +66,7 @@ func Start(ctx context.Context, id Identity) (stop func(), err error) {
 				return nil, err
 			}
 			if current != nil {
-				config = &rest.Config{Host: config.Host, TLSClientConfig: rest.TLSClientConfig{
-					CAData: config.CAData, CertFile: store.path, KeyFile: store.path}}
+				config = &rest.Config{Host: config.Host, CAData: config.CAData, CertFile: store.path, KeyFile: store.path}
 			}
 			return kubernetes.NewForConfig(config)
 		},

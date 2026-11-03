@@ -158,7 +158,7 @@ func TestClientCertificates(t *testing.T) {
 	authority := newCA(t)
 	env := &envtest.Environment{}
 	api := env.ControlPlane.GetAPIServer()
-	api.SecureServing.Authn = authority
+	api.Authn = authority
 	api.Configure().Set("enable-bootstrap-token-auth", "true")
 	cfg, err := env.Start()
 	if err != nil {
@@ -280,8 +280,8 @@ func applyRBAC(t *testing.T, cfg *rest.Config) {
 func writeBootstrap(t *testing.T, admin kubernetes.Interface, cfg *rest.Config, dir, tokenID string) {
 	t.Helper()
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "bootstrap-token-" + tokenID},
-		Type:       corev1.SecretTypeBootstrapToken,
+		Namespace: metav1.NamespaceSystem, Name: "bootstrap-token-" + tokenID,
+		Type: corev1.SecretTypeBootstrapToken,
 		StringData: map[string]string{
 			"token-id": tokenID, "token-secret": "0123456789abcdef",
 			"expiration":                     time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),

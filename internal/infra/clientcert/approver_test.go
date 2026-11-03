@@ -27,9 +27,9 @@ func request(t *testing.T, template x509.CertificateRequest) []byte {
 }
 
 func TestIsRenewal(t *testing.T) {
-	const user = "system:ayatori:node:node-a"
-	groups := []string{"system:ayatori:nodes", Group, "system:authenticated"}
-	subject := pkix.Name{CommonName: user, Organization: []string{Group, "system:ayatori:nodes"}}
+	const user, nodes = "system:ayatori:node:node-a", "system:ayatori:nodes"
+	groups := []string{nodes, Group, "system:authenticated"}
+	subject := pkix.Name{CommonName: user, Organization: []string{Group, nodes}}
 	usages := []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageClientAuth}
 	csr := func(mutate func(*certificatesv1.CertificateSigningRequestSpec, *x509.CertificateRequest)) *certificatesv1.CertificateSigningRequest {
 		spec := certificatesv1.CertificateSigningRequestSpec{
@@ -55,8 +55,8 @@ func TestIsRenewal(t *testing.T) {
 			r.Subject.Organization = []string{Group}
 		},
 		"requester without the marker group": func(s *certificatesv1.CertificateSigningRequestSpec, r *x509.CertificateRequest) {
-			s.Groups = []string{"system:ayatori:nodes", "system:authenticated"}
-			r.Subject.Organization = []string{"system:ayatori:nodes"}
+			s.Groups = []string{nodes, "system:authenticated"}
+			r.Subject.Organization = []string{nodes}
 		},
 		"bootstrap token": func(s *certificatesv1.CertificateSigningRequestSpec, r *x509.CertificateRequest) {
 			s.Username = "system:bootstrap:abcdef"
