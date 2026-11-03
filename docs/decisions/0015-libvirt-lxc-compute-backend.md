@@ -78,7 +78,8 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
   `type='volume'` 的源加入每个 VM 的 profile，QEMU 会被拒绝访问（PoC 02）。
 - **候选节点由 controller 计算**：domain 引用的 pool 和 network 都已下发到的节点；若引用本地
   pool 上的卷，则只有该卷所在节点。
-- **domain/LXC 共有的 Ayatori 自有字段：** `nodeName` 或候选节点、`ha`（`Restart`/`None`）、
+- **domain/LXC 共有的 Ayatori 自有字段：** 放置（`nodeName`、`nodeSelector`、`affinity`，复用
+  Kubernetes 的表达，见 ADR-0017）、`ha`（`Restart`/`None`）、
   `runState`。
   - `runState: Running` 只表示"创建后和宿主机故障后应当拉起"，不表示"任何时候都必须在运行"。
   - `ha: Restart` 只对**崩溃**生效（libvirt 原因为 `crashed`/`failed`、QEMU 或容器 init 消失）。

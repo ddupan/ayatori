@@ -136,7 +136,9 @@ VMFS 文件锁，不需要全集群 quorum。
   - VM：挂载状态卷，然后是 `ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
   - LXC：挂载 rootfs 与状态卷的 systemd `.mount` 单元（Ubuntu 没有 `ocf:heartbeat:Filesystem`），然后是
     LXC 版监管进程，不是 `lxc@<name>.service`。
-- **首选节点**：`spec.nodeName`（ADR-0017）写入 promoter 的 `preferred-nodes`，策略 `start-only`。
+- **首选节点**：`nodeAffinity.preferred`（ADR-0017）按权重排序后写入 promoter 的 `preferred-nodes`，
+  策略 `start-only`，原节点恢复后不自动切回。`required` 规则体现在副本与 diskless 的放置上，promoter 只会
+  在这些节点上竞争。
 - **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
 - **谁来启动实例**：DRBD 上 `ha: Restart` 的实例，换节点只由 promoter 决定，Agent 不得在其他节点启动
   它，否则会绕过单 Primary 互斥。
@@ -156,9 +158,9 @@ VMFS 文件锁，不需要全集群 quorum。
     因此启动失败时执行 `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试；
     全部候选节点都失败时实例停机并告警，不会来回弹跳。Agent 确认本节点问题已解决后执行 `--unmask`，屏蔽
     状态回写 status 并导出为指标（PoC 13）。
-  - **反亲和**（ADR-0017）：监管进程启动实例前检查本机是否已在运行同组成员。`Required` 时按启动失败
-    处理（`evict --keep-masked`），`Preferred` 时照常启动并告警。同组成员若在本机运行，本机一定是它的
-    候选节点，它的对象就在 Agent 的本地状态里，因此这项检查只需要本机的信息。
+  - **反亲和**（ADR-0017）：监管进程启动实例前，用本地状态中的对象和 label 计算
+    `topologyKey: kubernetes.io/hostname` 的 `instanceAntiAffinity.required`，本机已在运行被选中的实例
+    时按启动失败处理（`evict --keep-masked`）；`preferred` 照常启动并导出指标。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
     `drbd-reactorctl evict <实例>`，交给其他节点。
   - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
@@ -268,7 +270,7 @@ ADR-0015 规定采集和告警不依赖控制面。DRBD 部分：
 9. 逐副本更换存储池或副本节点期间，实例持续运行、quorum 不丢。
 10. 新底座上：NVRAM 与 vTPM 状态改为 raw volume 后随冷切换迁移；vTPM 在块设备上的在线迁移是否安全；
     重新确认依赖版本的 PoC 结论。
-11. `Required` 反亲和：同组成员所在节点故障后，冷启动不会落到另一成员的节点；没有可用节点时保持
+11. hostname 的 `required` 反亲和：被选中的实例所在节点故障后，冷启动不会落到另一成员的节点；没有可用节点时保持
     停止并告警。
 
 ## 结果

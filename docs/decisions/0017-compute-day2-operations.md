@@ -72,32 +72,53 @@ pve1 是 Intel，pve2/pve3 是 AMD。VM 100 用 `host` CPU 在线迁移失败，
 切换虽然不要求 CPU 相同，但客户机会在下次启动时看到另一颗 CPU：Linux 不受影响，Windows 可能要求
 重新激活，retro 系统对 CPUID 更敏感。
 
-- Agent 把宿主机的 CPU 厂商和型号写进 Node label，例如 `compute.ayatori.ddupan.top/cpu-vendor`，
-  取自 libvirt capabilities。
+- Agent 把宿主机的 CPU 厂商和型号写进 Node label，沿用 node-feature-discovery 的命名，例如
+  `feature.node.kubernetes.io/cpu-model.vendor_id`，取自 libvirt capabilities。
 - domain 写了具名 CPU 型号时，Agent 在下发前用 `virConnectCompareHypervisorCPU` 检查本节点能否提供；
   不能提供就写入该节点的 status，controller 将其排除出候选节点。
 - domain 使用 `host-passthrough`/`host-model`，而候选节点的 CPU 型号不一致时，controller 设置一个
   warning condition，但不拒绝，保持 ADR-0015 不限制原生配置的原则。示例和迁入工具默认使用具名型号
   （`x86-64-v2-AES` 已在 PVE 上验证过）。在线迁移要求具名型号或两端型号一致。
 
-### 4. 放置与反亲和
+### 4. 放置：Node label 加 Kubernetes 的亲和表达
 
 LB 每个环境两台分在不同节点，etcd 每个节点一个，sandbox1/2 分开，目前都靠 inventory 手工保证。
 应用自带冗余不等于不用共享存储：成员放在共享存储上，宿主机故障后仍可冷启动恢复冗余，只是不能和
 同组成员落在同一台宿主机上。
 
-- **放置由用户明确指定，否则随机**：
-  - `spec.nodeName` 写了，就是实例的首选节点：创建时放在那里，宿主机故障后仍可冷启动到其他候选
-    节点，原节点恢复后不自动切回，避免第二次中断；
-  - 不写时，controller 在满足容量和反亲和的候选节点中随机选一个，不做打分；
-  - 本地存储实例只能在卷所在节点，与 ADR-0015 相同。
-- **反亲和**：`spec.antiAffinity.group` 给出组名（namespace 内），`policy` 为 `Required` 或
-  `Preferred`，对应 vSphere 的 must/should 规则。
-  - **创建和迁移时**：controller 选择节点和副本位置时避开同组成员。3 台节点、每个资源 2 个副本时，
-    两个成员的候选节点必然有交集，因此只靠创建时的放置不够。
-  - **冷启动时，由节点本地检查，不依赖控制面**：启动实例前检查本机是否已在运行同组成员。
-    `Required` 时不启动，交给下一个候选节点，没有可用节点时实例保持停止并告警，vSphere HA 对 must
-    规则也是宁可不重启；`Preferred` 时照常启动并告警，提示人工迁开。DRBD 上的实现见 ADR-0018。
+**放置规则复用 Kubernetes 的表达**，与 ADR-0007 复用 Node 一样只采用 API contract，调度由 Ayatori
+自己实现：
+
+- **Node label**：
+  - Agent 写入 well-known label：`kubernetes.io/hostname`、`kubernetes.io/arch`、`kubernetes.io/os`，
+    CPU 厂商与型号沿用 node-feature-discovery 的命名（§3）；
+  - 管理员用 `kubectl label` 加其余 label，例如 `topology.kubernetes.io/zone` 区分 PVE 节点与笔记本。
+    Agent 以自己的 field manager 做 SSA，不会覆盖管理员的 label。
+- **实例上的字段**，类型直接使用 `k8s.io/api/core/v1`：
+  - `spec.nodeSelector`：简写，与 `LibvirtNetwork`/`LibvirtStoragePool` 已有的 `nodeSelector` 一致；
+  - `spec.affinity.nodeAffinity`（`NodeAffinity`）：`required` 限定候选节点，`preferred` 表达首选节点；
+  - `spec.affinity.instanceAffinity` / `instanceAntiAffinity`（`PodAffinityTerm`、
+    `WeightedPodAffinityTerm`）：用 `labelSelector` 选中其他实例，`topologyKey` 指定按哪个 Node label
+    分组。字段改名是因为对象不是 Pod，语义与 Pod 的亲和相同；
+  - `spec.nodeName`：与 Pod 相同，是硬绑定，不经调度，也不会冷启动到其他节点。本地存储实例相当于
+    隐式绑定在卷所在节点。
+- **都不写时**，controller 在满足容量的候选节点中随机选一个，不做打分；有 `preferred` 时按权重选。
+- **"IgnoredDuringExecution" 照样成立**：label 变化不会让运行中的实例搬走。冷启动换节点相当于一次
+  重新调度，因此 `required` 规则在冷启动时也要满足。
+- **执行位置**：
+  - 创建和迁移时，controller 按全部规则计算候选节点和副本位置；
+  - 冷启动时不依赖控制面，由节点本地检查：
+    - `nodeAffinity.required` 已体现在候选节点里；
+    - `topologyKey: kubernetes.io/hostname` 的 `instanceAntiAffinity.required`：启动前检查本机是否已在
+      运行被选中的实例。被选中的实例若在本机运行，本机一定是它的候选节点，它的对象和 label 就在
+      Agent 的本地状态里，因此只需要本机的信息。命中时不启动，交给下一个候选节点，没有可用节点时
+      实例保持停止并告警，vSphere HA 对 must 规则也是宁可不重启。DRBD 上的实现见 ADR-0018；
+    - 其他 `topologyKey`（例如 zone）无法在单个节点上判断，controller 在创建时把成员的候选节点划分到
+      不同的拓扑域，冷启动只会落在各自的域内；
+    - `preferred` 的反亲和照常启动，违反时导出指标并告警，提示人工迁开。
+- 3 台节点、每个资源 2 个副本时，两个按 hostname 反亲和的成员，候选节点必然有交集，所以 hostname
+  反亲和必须靠冷启动时的本地检查，不能只靠创建时的放置。
+- 不采用 tolerations：维护 taint（§2）对所有实例生效，留在节点上的方式由 `evacuate` 表达。
 
 ### 5. 故障切换容量
 
@@ -175,7 +196,8 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
   失败时实例留在源节点，不会触发冷启动。
 - 计算控制台的"迁移"按钮、维护排空（§2）都只是创建这个对象；RBAC 按对 `instancemigrations` 的
   create 权限授权，审计照常记录。已完成对象的保留参照 ADR-0005。
-- ADR-0015 已规定实例换节点不算漂移。要让实例长期以新节点为首选，另外修改 git 中的 `nodeName`（§4）。
+- ADR-0015 已规定实例换节点不算漂移。要让实例长期以新节点为首选，另外修改 git 中的
+  `nodeAffinity.preferred`（§4）。迁移不得违反 `required` 规则；`nodeName` 硬绑定的实例不能计算迁移。
 
 #### 计算迁移
 
@@ -183,13 +205,13 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 |---|---|---|
 | 共享存储上的 VM | 关机后在目标节点启动；DRBD 上由 promoter 接管，见 ADR-0018 | libvirt live migration；DRBD 上见 ADR-0018 |
 | 共享存储上的 LXC | 同上 | 不支持 |
-| 本地存储的 VM | 关机后由 Agent 之间复制卷，在目标节点建同名卷后启动；`nodeName` 随之修改 | libvirt `--copy-storage-all`，经 NBD 边迁内存边复制磁盘；目标节点先建好同样大小的卷 |
+| 本地存储的 VM | 关机后由 Agent 之间复制卷，在目标节点建同名卷后启动；随后在 git 中改为新节点 | libvirt `--copy-storage-all`，经 NBD 边迁内存边复制磁盘；目标节点先建好同样大小的卷 |
 | 本地存储的 LXC | 同本地 VM 的冷迁移 | 不支持 |
 
 - **LXC 不做在线迁移**：需要 CRIU，Incus 文档说只支持"没有 systemd、没有网卡"的容器；PVE 也只有
   `pct migrate --restart`。
 - **前置检查**（与冷启动共用）：目标节点是候选节点、CPU 兼容（§3）、容量按保障量足够并先压低目标
-  节点 `k8s.slice` 的上限、`Required` 反亲和（§4）。
+  节点 `k8s.slice` 的上限、`required` 亲和与反亲和（§4）。
 - **libvirt 参数**：目标节点上 Agent 预先 define 了同名 domain，libvirt 允许迁入并沿用这份持久定义；
   auto-converge 默认开启（与 Incus 相同），post-copy 不开启，因为中途失败会丢失客户机。
 - **迁移通道**：控制连接走 Agent 之间的 SPIFFE mTLS 中继（与控制台相同），节点之间不交换 root
@@ -213,7 +235,7 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 
 1. **VyOS 的网关中断**：可选做法：
    - 接受冷启动的中断（客户机启动时间，约数十秒）；
-   - 改为两台 VyOS 跑 VRRP，按 §4 设 `Required` 反亲和（推荐，与 LB 的做法一致）；
+   - 改为两台 VyOS 跑 VRRP，按 §4 设 hostname 的 `required` 反亲和（推荐，与 LB 的做法一致）；
    - 依靠 §10 的在线迁移：计划内维护不中断，但宿主机故障时仍是冷启动。
 2. **备份系统选型**：见 §1。
 
@@ -221,16 +243,18 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 
 1. libvirt pull 模式备份在 raw 块设备上的全量与增量，以及 QEMU 重启后 bitmap 丢失的处理；恢复到
    新卷后启动实例。
-2. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
-3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
-4. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
-5. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
+2. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0018）；zone 的反亲和由候选节点划分
+   保证。
+3. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
+4. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
+5. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
+6. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
 
 DRBD 上的冷切换、在线迁移、换池、接管与反亲和的验证见 ADR-0018。
 
 ## 结果
 
-- 新增的 API：`nodeName` 改为首选节点、`antiAffinity`、`evacuate`、维护 taint 和 `SafeToRemove`、
+- 新增的 API：`nodeSelector`、`affinity`（复用 Kubernetes 类型）、`evacuate`、维护 taint 和 `SafeToRemove`、
   `InstanceMigration`、`LibvirtStorageVolume` 的 `size` 扩容与 `source.volume`。
 - VM 支持在线迁移，修订 ADR-0007；LXC 只做冷迁移。
 - 备份交给专门的备份系统，Ayatori 只提供一致点、读取和增量的集成点，不保存备份数据。
