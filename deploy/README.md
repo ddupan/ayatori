@@ -77,6 +77,9 @@ ayatori_loadbalancer:
     - name: lb-dev-1
       data_plane_url: https://lb-dev-1.lab.ddupan.top:5555
       agent_url: http://lb-dev-1.lab.ddupan.top:9641   # agent 的 metricsAddress，manager 须能访问
+  dns:  # 可选：在 PowerDNS 中 Ayatori 独占的 zone 里维护 LoadBalancer 的 Hostname
+    url: http://192.168.10.127:8053
+    zone: dev-lb.lab.ddupan.top
 ```
 
 role 在控制面容器启动、Flux 同步 CRD 之后应用这些 LoadBalancerHost，并按标签
@@ -85,7 +88,9 @@ controller 先清理该主机上的全部 LoadBalancer 配置再放行，主机�
 
 此时 Flux 另同步 `deploy/flux/loadbalancer`：ESO 把 Data Plane API 客户端证书（`pki-loadbalancer-<env>`
 每天签发）、服务端 CA（`pki/cert/ca`）与 Basic 凭据（`kv/infra/loadbalancer/<env>`）写入
-`ayatori-system/loadbalancer-credentials`。首次部署时 Secret 同步前 manager 启动失败并重试。
+`ayatori-system/loadbalancer-credentials`。PowerDNS API key 也写进同一个 Secret，默认读取 Bao 的
+`kv/k8s/powerdns` 的 `api_key`，可用 `loadbalancer_dns_api_key` 改为其他位置；不声明 `dns` 时同样会读取，
+所以 ESO 角色始终需要它的读权限。首次部署时，Secret 同步完成之前 manager 会启动失败并不断重试。
 
 首次部署后，OpenBao 的 Kubernetes auth mount 需要本环境 API 的公开 CA
 （`/var/lib/k0s/pki/ca.crt`），由 homelab-infra 的 OpenBao Terraform 管理；合并前 ESO 与
