@@ -1,4 +1,4 @@
-# ADR-0017：计算后端的日常运维：存储失效、备份、维护与迁入
+# ADR-0017：计算后端的日常运维：存储失效、备份接入、放置、维护与迁入
 
 - 状态：Proposed（含待维护者确认的问题，见文末）
 - 日期：2026-11-03
@@ -8,8 +8,8 @@
 ## 问题
 
 ADR-0015/0016 解决了实例的创建、冷启动、身份和控制台，但对照 vSphere 后，以下有现状证据的需求
-还没有设计：存储暂时不可用时的处理、备份与恢复、宿主机维护与计划内迁移、异构 CPU、应用自带冗余
-的实例摆放、故障切换容量、与现有 PVE 告警对等的监控、磁盘扩容、从 PVE 迁入现有客户机，以及镜像
+还没有设计：存储暂时不可用时的处理、备份、宿主机维护与计划内迁移、异构 CPU、放置与反亲和、
+故障切换容量、与现有 PVE 告警对等的监控、磁盘扩容、从 PVE 迁入现有客户机，以及镜像
 和介质分发。证据见缺口分析。
 
 本 ADR 只补这些缺口，不改变 ADR-0015 的分层：配置在中央，故障判定和启动在节点，防双开靠 DRBD。
@@ -33,27 +33,30 @@ ADR-0015/0016 解决了实例的创建、冷启动、身份和控制台，但对
 - **限制初始同步与重同步的带宽**：事故的触发因素是两块新卷同时初始同步。在 VM 卷使用的 LINSTOR
   resource group 上设置 DRBD 的重同步速率上限（`c-max-rate` 等），并调查新建空卷能否跳过初始同步。
 
-### 2. 备份与恢复
+### 2. 备份：接入备份系统，Ayatori 只提供集成点
 
 PVE 上的 9 个客户机和笔记本上的 dc1 目前都没有任何备份。
 
+- **快照不是备份**：快照和数据在同一套存储上，存储坏了快照一起坏，也没有保留策略、异地副本和
+  目录。vSphere 同样不自己做备份，而是提供 VADP（一致点、磁盘读取、changed block tracking），由
+  Veeam 等第三方产品完成备份。本后端照此分工：
+  - **备份系统**负责调度、保留策略、去重、加密、异地副本、目录和恢复；Ayatori 不保存备份数据；
+  - **Ayatori 提供集成点**，对应 VADP。
 - **分层**：
-  - 有应用级备份的服务（PostgreSQL 的 pgBackRest、etcd 快照、OpenBao 快照）继续以应用级备份为准，
-    它们是一致的，恢复路径也已存在；
-  - 镜像级备份覆盖没有应用级备份的 pet 实例：dc1、Windows、retro、VyOS 等。
-- **机制优先用 LINSTOR 自带的快照与 backup shipping**（`linstor backup create`、按计划执行的
-  `linstor schedule`），上传到 SeaweedFS 的 S3 bucket。bucket 由 CI Terraform 管理（ADR-0011）。
-  它同时覆盖 VM 和 LXC，增量备份基于快照，不需要自己实现。
-  - **前提是 thin 存储**。现有 LINSTOR pool 是 thick LVM（`driver: lvm`），不能快照，需要改为
-    LVM thin。thin pool 写满会让所有卷出错，必须有使用率告警（见 §7）。是否切换待维护者确认。
-  - 不采用 libvirt `backup-begin`：它只覆盖 VM；增量备份依赖持久化的 dirty bitmap，而 bitmap 需要
-    qcow2，DRBD 上的 raw 块设备只能做全量。
-- 有 qemu-guest-agent 的 VM 在快照前执行 fsfreeze；其他实例是崩溃一致的。
-- **API**：`LibvirtStorageVolume` 增加 `backup.schedule`，引用 LINSTOR 中的 schedule 名，由 controller
-  对该卷启用。不新增 Backup CRD，恢复也不经过 Ayatori：`linstor backup restore` 到新 resource 后，
-  用 §9 的 adopt 方式让卷引用它。出现频繁恢复的需求时再做恢复 API。
-- **恢复必须演练**，并写成 runbook。告警按实例的最近一次成功备份时间，替代现在的
-  `pve_not_backed_up_total`。
+  - 有应用级备份的服务（PostgreSQL 的 pgBackRest、etcd 快照、OpenBao 快照）继续以应用级备份为准；
+  - **VM** 在宿主机侧做镜像级备份，经下文的集成点；
+  - **LXC** 是完整的 OS，按物理机的方式在容器内运行备份系统的 agent 做文件级备份。宿主机侧拿不到
+    容器 rootfs 的一致时间点：thick LVM 不能快照，冻结容器读完整个卷的停顿又太长。
+- **VM 的集成点**：
+  - 一致点：有 qemu-guest-agent 的 VM 先 fsfreeze，其他 VM 是崩溃一致的；
+  - 读取：libvirt 的 pull 模式备份（`virDomainBackupBegin`），QEMU 把时间点镜像经 NBD 导出给备份
+    系统读取，不依赖底层存储能否快照；
+  - 增量：libvirt checkpoint（QEMU dirty bitmap），对应 CBT。bitmap 的持久化依赖 qcow2，DRBD 上的
+    raw 块设备只能用非持久 bitmap，QEMU 重启后需要一次全量，待验证；
+  - 恢复：备份系统写入一个新卷，用 §9 的接管方式让 domain 引用它。
+- **备份系统的选型待调研**，候选需要支持 libvirt/QEMU 的增量备份接口和 Linux/Windows 的客户机 agent。
+  集成点的 API 形态（由谁触发、如何授权、在哪个节点读取）取决于选定的产品，选型后再定。
+- 告警按实例的最近一次成功备份时间，替代现在的 `pve_not_backed_up_total`，数据来自备份系统。
 
 ### 3. 宿主机维护与计划内迁移
 
@@ -69,9 +72,7 @@ PVE 上的 9 个客户机和笔记本上的 dc1 目前都没有任何备份。
   - 排空完成后，Agent 在 Node 上设置 condition `SafeToRemove=True`（roadmap 已有的名字），运维再
     重启或重装；
   - 去掉 taint 后，Agent 执行 `--unmask`。
-- **指定首选节点**：`spec.preferredNodes` 写入 promoter 的 `preferred-nodes`，策略为 `start-only`，
-  也就是只在启动时偏好，不会在首选节点恢复后自动切回，避免第二次中断。改变首选节点后 evict 一次，
-  就是计划内冷迁移。
+- **计划内冷迁移**：修改 `spec.nodeName`（§5）后 evict 一次。
 - **冷迁移有停机**：等于客户机关机加启动。这对 VyOS 意味着网关中断，是否需要例外见文末待决问题 2。
 - 宿主机的升级本身仍由 Chef/apt 负责，Ayatori 只提供排空和 `SafeToRemove`。不做 Lifecycle Manager
   式的滚动编排，逐台执行写进 runbook。
@@ -90,17 +91,29 @@ pve1 是 Intel，pve2/pve3 是 AMD。VM 100 用 `host` CPU 在线迁移失败，
   warning condition，但不拒绝，保持 ADR-0015 不限制原生配置的原则。示例和迁入工具默认使用具名型号
   （`x86-64-v2-AES` 已在 PVE 上验证过）。
 
-### 5. 应用自带冗余的实例：用本地存储，不做冷启动
+### 5. 放置与反亲和
 
 LB 每个环境两台分在不同节点，etcd 每个节点一个，sandbox1/2 分开，目前都靠 inventory 手工保证。
+应用自带冗余不等于不用共享存储：成员放在 DRBD 上，宿主机故障后仍可冷启动恢复冗余，只是不能和同组
+成员落在同一台宿主机上。
 
-- 3 台节点、每个资源 2 个副本时，两个 DRBD 实例的候选节点必然有交集：一台宿主机故障后，冷启动可能
-  把同一对的两个成员放到同一台宿主机上，这正是反亲和要避免的。vSphere 的 must 反亲和规则同样会让
-  HA 放弃重启，而不是违反规则。
-- 因此**应用自带冗余的实例使用本地 pool 和固定的 `nodeName`，`ha: None`**。冗余由应用承担，宿主机
-  故障时少一个成员；摆放写在 git 里，一目了然。这与 PVE 上现有的 `pve-rg-local` 用法一致。
-- 先靠约定，不实现反亲和规则。需要自动检查时，再加一个分组 label，由 controller 检查同组成员不在
-  同一节点。
+- **放置由用户明确指定，否则随机**：
+  - `spec.nodeName` 写了，就是实例的首选节点：创建时放在那里，并写入 promoter 的
+    `preferred-nodes`，策略为 `start-only`，即不在首选节点恢复后自动切回，避免第二次中断。宿主机
+    故障后仍可冷启动到其他候选节点；
+  - 不写时，controller 在满足容量和反亲和的候选节点中随机选一个，不做打分；
+  - 本地存储实例只能在卷所在节点，与 ADR-0015 相同。
+- **反亲和**：`spec.antiAffinity.group` 给出组名（namespace 内），`policy` 为 `Required` 或
+  `Preferred`，对应 vSphere 的 must/should 规则。
+  - **创建时**：controller 选择节点和 LINSTOR 副本位置时避开同组成员。3 台节点、每个资源 2 个副本时，
+    两个成员的候选节点必然有交集，因此只靠创建时的放置不够。
+  - **冷启动时，由节点本地检查，不依赖控制面**：监管进程启动实例前检查本机是否已在运行同组成员。
+    同组成员若在本机运行，本机一定是它的候选节点，它的对象就在 Agent 的本地状态里，因此这项检查
+    只需要本机的信息。
+    - `Required`：本机已有同组成员时不启动，按启动失败处理（`evict --keep-masked`），由下一个候选
+      节点尝试；没有可用节点时实例保持停止并告警。vSphere HA 对 must 规则也是宁可不重启。
+    - `Preferred`：照常启动，导出指标并告警，提示需要人工把实例迁开。
+  - 同组成员恢复到不同节点后，屏蔽由 Agent 解除，与 ADR-0015 启动失败的解除方式相同。
 
 ### 6. 故障切换容量
 
@@ -117,11 +130,11 @@ ADR-0015 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警�
 
 | 现有告警 | 替代 |
 |---|---|
-| `StorageAlmostFull` | LINSTOR controller 自带的 `/metrics`（storage pool 容量）；本地 libvirt pool 由 Agent 导出；thin pool 的 data/metadata 使用率（§2 切换后必需） |
+| `StorageAlmostFull` | LINSTOR controller 自带的 `/metrics`（storage pool 容量）；本地 libvirt pool 由 Agent 导出 |
 | `OnbootGuestDown` | ADR-0015 已有的"应运行的实例没有任何节点在运行" |
 | `GuestLockedLong` | Agent 导出每个对象最后一次 reconcile 成功的时间，长时间失败告警 |
 | `NodeOffline` | node-exporter 抓取失败；Lease 过期由 controller 导出 |
-| `pve_not_backed_up_total` | §2 的最近一次成功备份时间 |
+| `pve_not_backed_up_total` | 备份系统给出的最近一次成功备份时间（§2） |
 
 - **实例资源指标**（CPU、内存、balloon、磁盘和网络 I/O）由 Agent 从
   `virConnectGetAllDomainStats` 和 LXC 的 cgroup 导出，实例名同样使用 `name` 标签。不另装 libvirt
@@ -161,28 +174,31 @@ ADR-0015 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警�
 
 ## 待维护者确认
 
-1. **LINSTOR 存储从 thick LVM 改为 LVM thin**：这是 §2 用 LINSTOR 快照和 backup shipping 的前提。
-   代价是现有 resource 需要迁移，并新增 thin pool 写满的风险。不切换的话，镜像级备份只能做全量。
-2. **VyOS 冷迁移的网关中断**：VM 100 原本在线迁移过。可选做法：
+1. **VyOS 冷迁移的网关中断**：VM 100 原本在线迁移过。可选做法：
    - 接受冷迁移的中断（客户机启动时间，约数十秒）；
-   - 改为两台 VyOS 跑 VRRP，按 §5 用本地存储、各自固定节点（推荐，与 LB 的做法一致）；
+   - 改为两台 VyOS 跑 VRRP，按 §5 设 `Required` 反亲和（推荐，与 LB 的做法一致）；
    - 为它单独支持 libvirt 在线迁移：需要迁移期间临时允许 DRBD 双 Primary，与 promoter 的单 Primary
      模型冲突，复杂度最高，ADR-0007 也明确不以此为目标。
+2. **备份系统选型**：见 §2。
 
 ## 待验证（Accepted 之前必须完成）
 
 1. `on-quorum-loss = "freeze"`：模拟 quorum 短暂丢失后恢复，VM 和 LXC 都能解冻并继续运行；其他分区
    接管时旧 Primary 停止服务，不会双开；客户机在冻结期间的时钟跳变可以接受。
-2. LVM thin 上的 LINSTOR 快照、backup shipping 到 SeaweedFS，以及恢复到新 resource 后启动实例。
-3. 维护 taint 的排空：DRBD 实例 evict 到其他节点，本地实例关机后在宿主机重启时被拉起；
+2. libvirt pull 模式备份在 DRBD raw 块设备上的全量与增量，以及 QEMU 重启后 bitmap 丢失的处理；
+   恢复到新卷后启动实例。
+3. `Required` 反亲和：同组成员所在节点故障后，冷启动不会落到另一成员的节点；没有可用节点时保持
+   停止并告警。
+4. 维护 taint 的排空：DRBD 实例 evict 到其他节点，本地实例关机后在宿主机重启时被拉起；
    `SafeToRemove` 的时机正确。
-4. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
-5. 接管一个由 PVE 创建的 LINSTOR resource 并启动，PVE 侧不再引用它。
+5. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
+6. 接管一个由 PVE 创建的 LINSTOR resource 并启动，PVE 侧不再引用它。
 
 ## 结果
 
 - 存储抖动不再把客户机变成只读，填补了 2026-09-25 事故暴露的缺口。
-- 新增的 API 只有 `LibvirtStorageVolume` 的 `backup.schedule` 与 `size` 扩容、`preferredNodes`、
-  维护 taint 和 `SafeToRemove`。备份、快照和调度都交给 LINSTOR，不自己实现。
-- 应用自带冗余的实例明确不走冷启动，避免冷启动破坏它们的冗余。
+- 新增的 API：`nodeName` 改为首选节点、`antiAffinity`、维护 taint 和 `SafeToRemove`、
+  `LibvirtStorageVolume` 的 `size` 扩容。
+- 备份交给专门的备份系统，Ayatori 只提供一致点、读取和增量的集成点，不保存备份数据。
+- 反亲和由节点在冷启动时本地检查，冷启动不会破坏应用自带的冗余。
 - 迁入走一次性工具加 runbook，不为 PVE 迁移写长期运行的 controller。

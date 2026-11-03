@@ -15,7 +15,7 @@
 |---|---|---|
 | VMCP（APD：存储暂时不可用时冻结，恢复后继续） | 2026-09-25 事故：新卷初始同步期间多个 DRBD 资源 quorum 抖动 43 次，`on-no-quorum io-error` 让 sandbox1、etcd CT150 的 rootfs 变为只读，控制面中断 33 分钟（wiki `incidents/2026-09-25-drbd-quorum-sandbox.md`）。ADR-0015 沿用了同样的 `io-error` | ADR-0017 §1 |
 | SIOC / 存储 I/O 争用 | 同上：触发因素是两块新卷的初始同步 | ADR-0017 §1 |
-| 备份（VADP/CBT）与恢复 | PVE 上 9 个客户机全部没有备份，未设告警；dc1 无任何备份（`platform/observability/COVERAGE.md:120-121`）。LINSTOR 用的是 thick LVM（`pve_linstor/tasks/linstor.yml:82`），没有快照能力 | ADR-0017 §2 |
+| 备份（VADP/CBT）与恢复 | PVE 上 9 个客户机全部没有备份，未设告警；dc1 无任何备份（`platform/observability/COVERAGE.md:120-121`） | ADR-0017 §2 |
 | 维护模式与 evacuation | 2026-07-25 三台节点全部经 PXE 重装；升级按 `serial: 1` 逐台进行，需要重启时只报告不执行（`pve_post_install`、`pve_kernel_params`）；roadmap 的 Laptop Rebuild 验收场景 | ADR-0017 §3 |
 | 冷迁移（指定目标节点） | VM 101 先建在 pve1 再手工挪走（`pve_vm/defaults/main.yml:11,52`）；`qm migrate` 离线迁移 | ADR-0017 §3 |
 | EVC（CPU 兼容基线） | pve1 是 Intel，pve2/pve3 是 AMD；VM 100 用 `host` CPU 在线迁移失败，改为 `x86-64-v2-AES`（`pve_ha/defaults/main.yml:27-30`） | ADR-0017 §4 |
@@ -47,7 +47,7 @@
 
 | vSphere | 理由 |
 |---|---|
-| 快照（作为用户功能） | 没有任何 `qm/pct snapshot` 使用；快照只作为备份的实现手段 |
+| 快照 | 没有任何 `qm/pct snapshot` 使用；快照也不作为备份手段（ADR-0017 §2） |
 | 模板、链接克隆、即时克隆 | 没有模板和克隆的使用；实例从镜像加 cloud-init 创建 |
 | 重启优先级与编排 | 只有 sandbox 用过 `startup order`；依赖顺序由应用重试承担。全站断电恢复成为问题时再评估 |
 | DRS 负载均衡、DPM、资源池层级 | 3 台节点，没有自动平衡的需求 |
