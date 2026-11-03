@@ -12,8 +12,7 @@ jobs:
     runs-on: [self-hosted, pod]
     timeout-minutes: 30
     env:
-      PUSH_REGISTRY: zot-push.lab.ddupan.top
-      PULL_REGISTRY: zot.lab.ddupan.top
+      REGISTRY: zot.lab.ddupan.top
       IMAGE_REPOSITORY: panxiao81/ayatori-manager
       SPIRE_AGENT_SOCKET: /run/spire/agent-sockets/spire-agent.sock
     steps:
@@ -50,14 +49,14 @@ jobs:
           export DOCKER_CONFIG="$(mktemp -d)"
           trap 'docker buildx rm ci-builder >/dev/null 2>&1 || true; rm -rf -- "$DOCKER_CONFIG"' EXIT
           /opt/spire/bin/spire-agent api fetch jwt -audience zot -socketPath "$SPIRE_AGENT_SOCKET" -output json |
-            jq -er '.[0].svids[0].svid' | docker login "$PUSH_REGISTRY" --username zot --password-stdin
+            jq -er '.[0].svids[0].svid' | docker login "$REGISTRY" --username zot --password-stdin
           docker buildx create --name ci-builder --driver docker-container --use >/dev/null
           docker buildx build --platform linux/amd64 \
-            --tag "${PUSH_REGISTRY}/${IMAGE_REPOSITORY}:${TAG}" \
+            --tag "${REGISTRY}/${IMAGE_REPOSITORY}:${TAG}" \
             --build-arg GOPROXY --build-arg GOPRIVATE \
             --provenance=mode=max --sbom=true \
             --metadata-file metadata.json --push .
-          image="${PULL_REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"
+          image="${REGISTRY}/${IMAGE_REPOSITORY}@$(jq -er '."containerimage.digest"' metadata.json)"
           echo "ayatori_image: $image"
           printf '## Published image\n\n- `%s`\n- tag `%s`, source `%s`\n' "$image" "$TAG" "$GITHUB_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo "image=$image" >> "$GITHUB_OUTPUT"
