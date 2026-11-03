@@ -24,7 +24,7 @@ LXC（2 CPU、2 GiB），在其中运行 kubelet、容器 runtime 与 CNI 既不
 - Flux 在各自 LXC 上运行，只同步本仓库 release tag 的清单与部署方仓库中的 Tenant 目录；
   不由其他集群（homelab k3s）的 Flux 远程推送，以免消费方集群持有 Dev/Prod 两套近 admin
   凭据，也避免控制面的 GitOps 依赖消费方集群。Flux 不选主，每台单实例。
-- 部署 role 在本仓库 `deploy/ansible`，环境声明（主机、环境名、PostgreSQL 实例、GitOps 目录）
+- 部署 role 在本仓库 `deploy/ansible`（2026-11-03 起改由 homelab-cookbooks 的 `homelab_ayatori` cookbook 部署，role 已删除，见 ADR-0021），环境声明（主机、环境名、PostgreSQL 实例、GitOps 目录）
   在 homelab-infra；cloud-init 只负责创建 LXC。一个 git tag 即一个 release：部署 role、Flux
   清单与 manager 镜像同版本。Dev 可直接试验，Prod 只经 release 与 promotion。
 - OpenBao kubernetes auth 不持有 reviewer JWT，以登录 JWT 自身调用 TokenReview，因此 manager

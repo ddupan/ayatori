@@ -4,7 +4,7 @@
 
 Verify 工作流在 PR 上执行全量测试、lint 和 Database 集成测试；合并到 main 后不通过 push
 事件重复运行。只改文档（`docs/**`、`*.md`）、部署 role 与 Flux 清单（`deploy/**`）或 Release
-工作流的 PR 不触发 Verify；`deploy/**` 的变更由 Deploy 工作流做 ansible-lint，Flux 清单在 Dev 同步时验证。
+工作流的 PR 不触发 Verify；Flux 清单（`deploy/**`）在 Dev 同步时验证。
 需要排障或验证直接推送的紧急修复时，可通过 workflow_dispatch 手动运行。此约定不减少代码变更
 的检查项目，也不修改分支保护设置；常规变更必须经过 PR，直接推送 main 不会自动验证。
 
