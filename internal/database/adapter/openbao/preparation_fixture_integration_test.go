@@ -13,10 +13,10 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
+	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
 )
 
 const preparationNamespace = "credential-preparation"
@@ -30,16 +30,8 @@ type preparationFixture struct {
 
 func newPreparationFixture(t *testing.T) *preparationFixture {
 	t.Helper()
-	environment := &envtest.Environment{CRDDirectoryPaths: []string{"../../../../config/crd/bases"}, ErrorIfCRDPathMissing: true}
-	config, err := environment.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := environment.Stop(); err != nil {
-			t.Error(err)
-		}
-	})
+	// CRD 已由 hack/apiserver 启动时安装。
+	config := testenv.APIServer(t)
 	scheme := runtime.NewScheme()
 	if err := databasev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)

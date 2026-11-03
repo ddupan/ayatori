@@ -3,7 +3,6 @@
 package haproxy_test
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -11,8 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,11 +18,10 @@ import (
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
 )
 
 const (
-	// 与部署的 dataplaneapi v3.4.3 一致。
-	fixtureImage    = "haproxytech/haproxy-debian@sha256:6e919b0fe19314bd36a4f67f42743af5a6a01067dfd26f4502de0f88b2c445e4"
 	fixtureUser     = "admin"
 	fixturePassword = "AYATORI-TEST-ONLY"
 	// 测试 VIP 绑定所有地址，以便从宿主机经发布端口连接。
@@ -38,92 +35,23 @@ const (
 	closedPort     = 7001
 )
 
-const haproxyConfig = `global
-    master-worker
-    stats socket /var/run/haproxy.sock mode 600 level admin expose-fd listeners
-    hard-stop-after 30s
-
-defaults
-    mode tcp
-    timeout connect 5s
-    timeout client 1m
-    timeout server 1m
-
-userlist dataplaneapi
-    user ` + fixtureUser + ` insecure-password ` + fixturePassword + `
-`
-
-const dataplaneConfig = `config_version: 2
-name: fixture
-dataplaneapi:
-  host: 0.0.0.0
-  port: 5555
-  userlist:
-    userlist: dataplaneapi
-  transaction:
-    transaction_dir: /tmp/haproxy-transactions
-haproxy:
-  config_file: /usr/local/etc/haproxy/haproxy.cfg
-  haproxy_bin: /usr/local/sbin/haproxy
-  master_worker_mode: true
-  master_runtime: /var/run/haproxy-master.sock
-  reload:
-    reload_delay: 1
-    reload_strategy: custom
-    reload_cmd: /bin/sh -c 'kill -USR2 $(cat /var/run/haproxy.pid)'
-    restart_cmd: /bin/sh -c 'kill -USR2 $(cat /var/run/haproxy.pid)'
-`
-
-// 生产由 systemd 分别运行 haproxy 与 dataplaneapi；fixture 在同一容器内模拟。
-const startScript = `#!/bin/sh
-set -e
-cp /fixture/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
-cp /fixture/dataplaneapi.yml /usr/local/etc/haproxy/dataplaneapi.yml
-haproxy -W -D -S /var/run/haproxy-master.sock -p /var/run/haproxy.pid -f /usr/local/etc/haproxy/haproxy.cfg
-# 循环运行：测试可重启 dataplaneapi，模拟其重启后丢失已排期的 reload。
-while :; do dataplaneapi -f /usr/local/etc/haproxy/dataplaneapi.yml; done
-`
-
 type fixture struct {
 	id    string
 	host  loadbalancer.Host
 	ports map[int]string
 }
 
-// startFixture 只创建自己的临时容器并按确切 ID 清理。
+// startFixture 连接 hack/integration-test.sh 在 go test 之外启动的 HAProxy + Data Plane API
+// （testdata/fixture），并复位到刚启动的状态。只认脚本给出的容器 ID。
 func startFixture(t *testing.T) fixture {
 	t.Helper()
-	dir := t.TempDir()
-	for name, content := range map[string]string{"haproxy.cfg": haproxyConfig, "dataplaneapi.yml": dataplaneConfig, "start.sh": startScript} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	output, err := exec.CommandContext(t.Context(), "docker", "run", "--rm", "-d", "--user", "root",
-		"--sysctl", "net.ipv4.ip_nonlocal_bind=1", "-v", dir+":/fixture:ro", "--entrypoint", "/fixture/start.sh",
-		"-p", "127.0.0.1::5555", "-p", fmt.Sprintf("127.0.0.1::%d", passPort), "-p", fmt.Sprintf("127.0.0.1::%d", closedPort),
-		fixtureImage).Output()
-	if err != nil {
-		t.Fatalf("cannot start HAProxy fixture: %v", err)
-	}
-	id := strings.TrimSpace(string(output))
-	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(id) {
-		t.Fatal("unexpected container identifier")
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if exec.CommandContext(ctx, "docker", "rm", "-f", id).Run() != nil {
-			t.Error("fixture cleanup failed")
-		}
-	})
-	f := fixture{id: id, ports: map[int]string{}}
+	f := fixture{ports: map[int]string{}}
 	for _, port := range []int{5555, passPort, closedPort} {
-		out, err := exec.CommandContext(t.Context(), "docker", "port", id, fmt.Sprint(port)).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.ports[port] = strings.TrimSpace(strings.Split(string(out), "\n")[0])
+		id, published := testenv.Container(t, "haproxy", port)
+		f.id, f.ports[port] = id, net.JoinHostPort(loopback, strconv.Itoa(published))
+	}
+	if out, err := exec.CommandContext(t.Context(), "docker", "exec", f.id, "/fixture/reset.sh").CombinedOutput(); err != nil {
+		t.Fatalf("cannot reset HAProxy fixture: %v: %s", err, out)
 	}
 	f.host = loadbalancer.Host{Name: "fixture", ProxyURL: "http://" + f.ports[5555]}
 	waitFor(t, func() bool {

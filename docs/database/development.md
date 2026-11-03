@@ -44,10 +44,13 @@ make lint-database-integration
 make test-database-integration
 ```
 
-最后一项要求本机 Docker 可用。它启动 envtest 的真实 API server/etcd 和固定镜像摘要的临时
-PostgreSQL 容器，随机绑定回环端口，不读取 kubeconfig，也不接受指向现有数据库的 DSN。
-每个凭据场景使用独立环境；测试清理仅关闭自己的进程和按确切 ID 删除自己的容器。
-TLS 测试在临时目录生成一次性证书与私钥，不使用生产 CA。
+最后一项要求本机 Docker 可用。`hack/integration-test.sh` 先编译全部集成测试二进制，同时在
+go test 之外启动一次 envtest 的真实 API server/etcd（`hack/apiserver`）和固定镜像摘要的临时
+PostgreSQL、OpenBao dev 容器，随机绑定回环端口；再逐包串行运行测试，结束时删除这些容器与进程。
+测试只认脚本给出的 kubeconfig 与容器 ID（`AYATORI_IT_*`，见 `internal/testenv`），不读取默认
+kubeconfig，也不接受指向现有数据库的 DSN。每个场景独占这些实例：开始前复位 PostgreSQL 与
+OpenBao，使用自己的 namespace，结束时清除 cluster 级对象。直接 `go test -tags=integration`
+不会启动这些后端。TLS 测试在临时目录生成一次性证书与私钥，不使用生产 CA。
 
 当前覆盖固定 namespace 的 Secret 读取与 RBAC、缺失/无效凭据恢复、有效凭据变化后的重连、
 无关字段更新不重连、中途轮换时丢弃观察、会话重建、并发读取、本地连接释放和 TLS 验证。

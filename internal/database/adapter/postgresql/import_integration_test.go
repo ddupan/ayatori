@@ -83,7 +83,7 @@ func testImport(t *testing.T, f *provisioningFixture) {
 	_ = application.Close(f.ctx)
 
 	// Tenant 显式申请已导入资源，并在 status 公布凭据位置。
-	tenant := &databasev1alpha1.PostgreSQLTenant{Name: "imported-tenant", Namespace: controllerNamespace,
+	tenant := &databasev1alpha1.PostgreSQLTenant{Name: "imported-tenant", Namespace: f.namespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{DatabaseRef: &databasev1alpha1.DatabaseReference{Name: databasev1alpha1.ObjectName(database.Name)}}}
 	if err := f.api.Create(f.ctx, tenant); err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func testImport(t *testing.T, f *provisioningFixture) {
 		database.Status.DatabaseOID != confirmed.DatabaseOID || database.Status.CredentialVersion != confirmed.CredentialVersion {
 		t.Fatalf("重新开放应回到 Available 并保留确认身份：%+v", database.Status)
 	}
-	next := &databasev1alpha1.PostgreSQLTenant{Name: "imported-next", Namespace: controllerNamespace,
+	next := &databasev1alpha1.PostgreSQLTenant{Name: "imported-next", Namespace: f.namespace,
 		Spec: databasev1alpha1.PostgreSQLTenantSpec{DatabaseRef: &databasev1alpha1.DatabaseReference{Name: databasev1alpha1.ObjectName(database.Name)}}}
 	if err := f.api.Create(f.ctx, next); err != nil {
 		t.Fatal(err)

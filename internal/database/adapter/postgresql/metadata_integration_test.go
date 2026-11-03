@@ -29,7 +29,7 @@ import (
 
 func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 	f := newCredentialFixture(t)
-	f.createSecret(t, controllerNamespace)
+	f.createSecret(t, f.namespace)
 	if installed := f.queryPostgres(t, "SELECT count(*) FROM pg_catalog.pg_extension WHERE extname = 'hstore'"); installed != "0" {
 		t.Fatal("fixture unexpectedly has hstore installed")
 	}
@@ -78,7 +78,7 @@ func TestMetadataObservesAvailableExtensionsWithoutInstalling(t *testing.T) {
 
 func TestMetadataPermissionFailureAndRecovery(t *testing.T) {
 	f := newCredentialFixture(t)
-	f.createSecret(t, controllerNamespace)
+	f.createSecret(t, f.namespace)
 	// 低权限账号也能读取可用列表；这不能证明具备 role/database/extension 管理权限。
 	f.queryPostgres(t, "CREATE ROLE metadata_reader LOGIN PASSWORD '"+fixturePassword+"'")
 	f.updateSecret(t, func(secret *corev1.Secret) {
