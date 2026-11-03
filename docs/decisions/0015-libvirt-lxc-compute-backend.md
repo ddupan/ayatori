@@ -55,7 +55,7 @@
 | 组件 | 位置 | 负责 |
 |---|---|---|
 | compute controller | 中央，一个进程 | 检查配置能否解析；按 pool/network/volume 的分布计算候选节点；创建时检查容量；调用 LINSTOR API 创建卷并按候选节点放置；finalizer 和删除编排 |
-| Compute Agent | 每台宿主机 | 写 Node/Lease（ADR-0007）；watch 与本节点相关的对象；在本机定义 pool、network、volume、domain；调用 liblxc；定义 libvirt secret；生成 drbd-reactor 配置；回写实际运行位置和状态 |
+| Compute Agent | 每台宿主机 | 写 Node 中 compute 角色的部分与 `<node>-compute` Lease（ADR-0007、ADR-0022）；watch 与本节点相关的对象；在本机定义 pool、network、volume、domain；调用 liblxc；定义 libvirt secret；生成 drbd-reactor 配置；回写实际运行位置和状态 |
 | drbd-reactor（LINBIT） | 每台宿主机 | 运行时决定由哪个节点运行实例 |
 
 ### 节点底座
@@ -140,9 +140,15 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 - **Agent 主动 watch Ayatori API**，和 kubelet 的做法一样。节点不开放入站端口，控制面也不持有
   宿主机凭据。
 - **controller 给每个候选节点打一个 label**，Agent 按 label selector 只 watch 与自己相关的对象。
-- **Agent 身份**：用 SPIRE JWT-SVID 登录 apiserver，沿用 ADR-0014 的 structured authentication。
-- **写权限**：用 ValidatingAdmissionPolicy 根据 `request.userInfo`，只允许 Agent 修改候选节点
-  包含自己的对象的 status。
+- **Agent 身份**：客户端证书，照 kubelet 的 TLS bootstrap 以 CSR 签发并自行续签（ADR-0021）。用户名
+  `system:ayatori:node:<node>`，组 `system:ayatori:nodes` 与角色组 `system:ayatori:role:compute`，
+  与 LB agent 共用同一套节点身份与注册逻辑（`internal/infra/node`，ADR-0022）：一台主机一个 Node，
+  compute Agent 只写其中 compute 角色的部分（label `node-role.kubernetes.io/compute`、condition
+  `compute.ayatori.ddupan.top/Ready`、容量），心跳续约 `kube-node-lease/<node>-compute`。控制面按
+  角色 label 正向选择计算节点。
+- **写权限**：RBAC 把节点通用的权限授予 `system:ayatori:nodes`，compute 的权限只授予角色组；
+  ValidatingAdmissionPolicy 根据 `request.userInfo` 约束 Agent 只写自己的 Node、Lease 与角色字段，
+  只修改分配给自己的对象的 status（`deploy/flux/nodes`、`deploy/flux/compute`）。
 - **读权限无法按节点限制。** 每个 Agent 都能读到所有配置，因此配置（包括 cloud-init user-data）中
   不得包含密钥；实例通过 SPIFFE 身份自行向 Bao 取用（ADR-0016）。Ceph key 等
   一律通过 Bao 交付。

@@ -29,6 +29,8 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/node"
 )
 
 const (
@@ -40,8 +42,10 @@ const (
 // Config 是节点部署写入的本地配置。
 type Config struct {
 	NodeName string `json:"nodeName"`
-	// Kubeconfig 是访问 Ayatori apiserver 的凭据。
-	// ponytail: 先用 kubeconfig；SPIFFE JWT-SVID 登录待 apiserver 的 structured authentication 就绪（ADR-0014）。
+	// CredentialsDir 是 Agent 的客户端证书身份目录（ADR-0021）：部署方写入 bootstrap-kubeconfig，
+	// Agent 以 system:ayatori:node:<nodeName> 申请证书并自行续签。节点上使用它。
+	CredentialsDir string `json:"credentialsDir"`
+	// Kubeconfig 与 CredentialsDir 二选一，用于开发与测试。
 	Kubeconfig string `json:"kubeconfig"`
 	StateDir   string `json:"stateDir"`
 	// LibvirtURI 缺省为 qemu:///system。
@@ -72,8 +76,8 @@ func LoadConfig(path string) (Config, error) {
 	if c.NodeName == "" {
 		errs = append(errs, errors.New("nodeName is required"))
 	}
-	if c.Kubeconfig == "" {
-		errs = append(errs, errors.New("kubeconfig is required"))
+	if (c.CredentialsDir == "") == (c.Kubeconfig == "") {
+		errs = append(errs, errors.New("exactly one of credentialsDir and kubeconfig is required"))
 	}
 	if c.StateDir == "" {
 		errs = append(errs, errors.New("stateDir is required"))
@@ -85,10 +89,14 @@ type Agent struct {
 	config Config
 	store  *state.Store
 	hv     *libvirt.Client
-	rest   *rest.Config
 	scheme *runtime.Scheme
-	kube   client.Client
 	logger *slog.Logger
+	// restConfig 读取访问 API 的配置。用证书身份时，证书签发之前它会失败。
+	restConfig func() (*rest.Config, error)
+	// kube 在拿到 API 配置之后才设置；之前对 API 的写入跳过，留到下一轮。
+	kube atomic.Pointer[client.Client]
+	// stopCredentials 停止证书续签；使用 Kubeconfig 时为空操作。
+	stopCredentials func()
 
 	// observed 是最近一轮 reconcile 的结果，reported 是已经写入 API 的结果；两者不同时才写。
 	observed map[string]observation
@@ -98,15 +106,21 @@ type Agent struct {
 	facts     atomic.Pointer[nodeFacts]
 }
 
-// New 只加载本地状态并构造客户端，不访问 API：控制面不可用时 Agent 也必须能启动。
+// New 只加载本地状态，不访问 API：控制面不可用、证书尚未签发时 Agent 也必须能启动。证书在后台
+// 申请与续签（ADR-0021）。
 func New(config Config, logger *slog.Logger) (*Agent, error) {
 	store, err := state.Open(config.StateDir)
 	if err != nil {
 		return nil, err
 	}
-	restConfig, err := clientcmd.BuildConfigFromFlags("", config.Kubeconfig)
-	if err != nil {
-		return nil, err
+	stopCredentials := func() {}
+	restConfig := func() (*rest.Config, error) { return clientcmd.BuildConfigFromFlags("", config.Kubeconfig) }
+	if config.CredentialsDir != "" {
+		identity := node.Identity(config.CredentialsDir, config.NodeName, Role)
+		if stopCredentials, err = clientcert.Start(context.Background(), identity); err != nil {
+			return nil, err
+		}
+		restConfig = func() (*rest.Config, error) { return clientcert.RESTConfig(config.CredentialsDir) }
 	}
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -115,12 +129,9 @@ func New(config Config, logger *slog.Logger) (*Agent, error) {
 	if err := computev1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	kube, err := client.New(restConfig, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, err
-	}
-	a := &Agent{config: config, store: store, rest: restConfig, scheme: scheme, kube: kube, logger: logger,
-		observed: map[string]observation{}, reported: map[string]observation{}}
+	a := &Agent{config: config, store: store, scheme: scheme, logger: logger, restConfig: restConfig,
+		stopCredentials: stopCredentials,
+		observed:        map[string]observation{}, reported: map[string]observation{}}
 	a.facts.Store(&nodeFacts{})
 	return a, nil
 }
@@ -128,8 +139,7 @@ func New(config Config, logger *slog.Logger) (*Agent, error) {
 // Run 先按本地状态收敛一轮，再开始 watch API；之后在本地状态变化或到达间隔时收敛。
 func (a *Agent) Run(ctx context.Context) {
 	a.reconcile()
-	go a.watch(ctx)
-	go a.heartbeat(ctx)
+	go a.connectAPI(ctx)
 	ticker := time.NewTicker(a.config.ResyncInterval.Duration)
 	defer ticker.Stop()
 	for {
@@ -138,6 +148,7 @@ func (a *Agent) Run(ctx context.Context) {
 			if a.hv != nil {
 				_ = a.hv.Close()
 			}
+			a.stopCredentials()
 			return
 		case <-a.store.Changed():
 		case <-ticker.C:
@@ -147,11 +158,36 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
+// connectAPI 等到能构造 API 配置（证书已签发）后，开始 watch 与心跳。
+func (a *Agent) connectAPI(ctx context.Context) {
+	var config *rest.Config
+	for {
+		var err error
+		if config, err = a.restConfig(); err == nil {
+			break
+		}
+		a.logger.Debug("API credentials not ready", "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+	kube, err := client.New(config, client.Options{Scheme: a.scheme})
+	if err != nil {
+		a.logger.Error("build API client", "error", err)
+		return
+	}
+	a.kube.Store(&kube)
+	go a.watch(ctx, config)
+	a.heartbeat(ctx, kube)
+}
+
 // watch 把 API 中属于本节点的对象写入本地状态。首次同步完成之前不做任何删除判断：
 // 只有拿到 API 的完整结果，"对象已不存在"才是事实。
-func (a *Agent) watch(ctx context.Context) {
+func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 	node := a.config.NodeName
-	c, err := cache.New(a.rest, cache.Options{Scheme: a.scheme, ByObject: map[client.Object]cache.ByObject{
+	c, err := cache.New(config, cache.Options{Scheme: a.scheme, ByObject: map[client.Object]cache.ByObject{
 		&computev1alpha1.LibvirtDomain{}: {Field: fields.OneTermEqualSelector("spec.nodeName", node)},
 		&corev1.Node{}:                   {Field: fields.OneTermEqualSelector("metadata.name", node)},
 	}})
@@ -200,8 +236,8 @@ func (a *Agent) watch(ctx context.Context) {
 // sync 以 API 为准更新本地状态：属于本节点的对象写入，已不属于本节点（删除，或 nodeSelector、
 // nodeName 不再匹配）的标记删除。
 func (a *Agent) sync(ctx context.Context, c client.Reader) error {
-	var node corev1.Node
-	if err := c.Get(ctx, client.ObjectKey{Name: a.config.NodeName}, &node); client.IgnoreNotFound(err) != nil {
+	var self corev1.Node
+	if err := c.Get(ctx, client.ObjectKey{Name: a.config.NodeName}, &self); client.IgnoreNotFound(err) != nil {
 		return err
 	}
 	var nets computev1alpha1.LibvirtNetworkList
@@ -232,7 +268,7 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 		errs = append(errs, err)
 	}
 	matches := func(selector map[string]string) bool {
-		return labels.SelectorFromSet(selector).Matches(labels.Set(node.Labels))
+		return labels.SelectorFromSet(selector).Matches(labels.Set(self.Labels))
 	}
 	for i := range nets.Items {
 		if matches(nets.Items[i].Spec.NodeSelector) {

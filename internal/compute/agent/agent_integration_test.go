@@ -25,6 +25,7 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 	"go.ddupan.top/ayatori/internal/compute/agent"
+	nodeagent "go.ddupan.top/ayatori/internal/infra/node"
 )
 
 const (
@@ -158,14 +159,14 @@ func (s *suite) registerNode(t *testing.T) {
 		if err := s.k.Get(ctx, client.ObjectKey{Name: node}, &n); err != nil {
 			return err
 		}
-		if n.Labels[agent.ManagedByLabel] == "" || len(n.Status.Conditions) == 0 || n.Status.Conditions[0].Status != corev1.ConditionTrue {
+		if _, ok := n.Labels[nodeagent.RoleLabelPrefix+agent.Role]; !ok || !ready(n) {
 			return fmt.Errorf("node not ready yet: %+v", n.Status.Conditions)
 		}
 		n.Labels["rack"] = "a"
 		return s.k.Update(ctx, &n)
 	})
 	eventually(t, 30*time.Second, func() error {
-		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node}, &coordinationv1.Lease{})
+		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node + "-" + agent.Role}, &coordinationv1.Lease{})
 	})
 }
 
@@ -349,6 +350,16 @@ func (s *suite) waitState(t *testing.T, d *computev1alpha1.LibvirtDomain, ok fun
 		}
 		return nil
 	})
+}
+
+// ready 报告 Node 上 compute 角色的就绪 condition。
+func ready(n corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == nodeagent.ConditionType(agent.Role) {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 func domainXML(memoryKiB int, devices string) string {
