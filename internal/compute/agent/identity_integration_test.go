@@ -97,14 +97,14 @@ func TestAgentIdentity(t *testing.T) {
 	})
 
 	t.Run("writes the status of what is assigned to it", func(t *testing.T) {
-		create(t, k, &computev1alpha1.LibvirtNetwork{Name: "ident-net", Spec: computev1alpha1.LibvirtNetworkSpec{
+		create(t, k, &computev1alpha1.LibvirtNetwork{Name: identNet, Spec: computev1alpha1.LibvirtNetworkSpec{
 			XML: `<network><forward mode='bridge'/><bridge name='br-ident'/></network>`}})
-		mine := &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "ident-mine", Spec: computev1alpha1.LibvirtDomainSpec{
-			NodeName: node, DomainXML: domainXML(65536, "")}}
+		mine := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "ident-mine", Spec: computev1alpha1.LibvirtDomainSpec{
+			NodeName: node, DomainXML: domainXML("")}}
 		create(t, k, mine)
 		eventually(t, time.Minute, func() error {
 			var n computev1alpha1.LibvirtNetwork
-			if err := k.Get(ctx, client.ObjectKey{Name: "ident-net"}, &n); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Name: identNet}, &n); err != nil {
 				return err
 			}
 			if err := k.Get(ctx, client.ObjectKeyFromObject(mine), mine); err != nil {
@@ -127,19 +127,19 @@ func TestAgentIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := client.FieldOwner("intruder")
-	theirs := &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "ident-theirs", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: "node-b", DomainXML: domainXML(65536, "")}}
+	theirs := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "ident-theirs", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: other, DomainXML: domainXML("")}}
 	create(t, k, theirs)
 
 	denied := map[string]func() error{
 		"another Node": func() error {
-			return as.Apply(ctx, corev1ac.Node("node-b").WithLabels(map[string]string{"x": "y"}), owner)
+			return as.Apply(ctx, corev1ac.Node(other).WithLabels(map[string]string{"x": "y"}), owner)
 		},
 		"the lease named after the node only": func() error {
 			return as.Apply(ctx, lease(node), owner)
 		},
 		"another node's role lease": func() error {
-			return as.Apply(ctx, lease("node-b-"+agent.Role), owner)
+			return as.Apply(ctx, lease(other+"-"+agent.Role), owner)
 		},
 		"another role's label": func() error {
 			return as.Apply(ctx, corev1ac.Node(node).WithLabels(map[string]string{nodeagent.RoleLabelPrefix + "loadbalancer": ""}), owner)
@@ -155,23 +155,23 @@ func TestAgentIdentity(t *testing.T) {
 		},
 		"another node as the running node of its own domain": func() error {
 			var d computev1alpha1.LibvirtDomain
-			if err := k.Get(ctx, client.ObjectKey{Namespace: "default", Name: "ident-mine"}, &d); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: "ident-mine"}, &d); err != nil {
 				return err
 			}
-			d.Status.NodeName = "node-b"
+			d.Status.NodeName = other
 			return as.Status().Update(ctx, &d)
 		},
 		"another node's entry in a network status": func() error {
 			var n computev1alpha1.LibvirtNetwork
-			if err := k.Get(ctx, client.ObjectKey{Name: "ident-net"}, &n); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Name: identNet}, &n); err != nil {
 				return err
 			}
-			n.Status.Nodes = append(n.Status.Nodes, computev1alpha1.NodeObjectStatus{NodeName: "node-b", Active: true})
+			n.Status.Nodes = append(n.Status.Nodes, computev1alpha1.NodeObjectStatus{NodeName: other, Active: true})
 			return as.Status().Update(ctx, &n)
 		},
 		"a domain spec": func() error {
 			var d computev1alpha1.LibvirtDomain
-			if err := k.Get(ctx, client.ObjectKey{Namespace: "default", Name: "ident-mine"}, &d); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: "ident-mine"}, &d); err != nil {
 				return err
 			}
 			d.Spec.RunState = computev1alpha1.RunStateStopped
@@ -198,6 +198,11 @@ func TestAgentIdentity(t *testing.T) {
 		})
 	}
 }
+
+const (
+	identNet = "ident-net"
+	other    = "node-b"
+)
 
 func lease(name string) *coordinationv1ac.LeaseApplyConfiguration {
 	return coordinationv1ac.Lease(name, corev1.NamespaceNodeLease).

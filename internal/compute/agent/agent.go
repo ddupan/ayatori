@@ -186,10 +186,10 @@ func (a *Agent) connectAPI(ctx context.Context) {
 // watch 把 API 中属于本节点的对象写入本地状态。首次同步完成之前不做任何删除判断：
 // 只有拿到 API 的完整结果，"对象已不存在"才是事实。
 func (a *Agent) watch(ctx context.Context, config *rest.Config) {
-	node := a.config.NodeName
+	self := a.config.NodeName
 	c, err := cache.New(config, cache.Options{Scheme: a.scheme, ByObject: map[client.Object]cache.ByObject{
-		&computev1alpha1.LibvirtDomain{}: {Field: fields.OneTermEqualSelector("spec.nodeName", node)},
-		&corev1.Node{}:                   {Field: fields.OneTermEqualSelector("metadata.name", node)},
+		&computev1alpha1.LibvirtDomain{}: {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
+		&corev1.Node{}:                   {Field: fields.OneTermEqualSelector("metadata.name", self)},
 	}})
 	if err != nil {
 		a.logger.Error("build API cache", "error", err)

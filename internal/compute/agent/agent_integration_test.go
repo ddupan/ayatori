@@ -106,8 +106,8 @@ func TestAgent(t *testing.T) {
 	t.Run("defines objects selected for this node and starts the domain", s.definesSelected)
 	t.Run("restores configuration changed outside Ayatori", s.restoresDrift)
 	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
-	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(65536, `<interface type='network'><source network='lan'/></interface>`)}}
+	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
 	create(t, s.k, s.vm2)
 	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
@@ -189,8 +189,8 @@ func (s *suite) createObjects(t *testing.T) {
 		}
 		return err
 	})
-	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(65536, `<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
+	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
 	create(t, s.k, s.vm1)
 }
 
@@ -362,8 +362,8 @@ func ready(n corev1.Node) bool {
 	return false
 }
 
-func domainXML(memoryKiB int, devices string) string {
-	return fmt.Sprintf(`<domain type='test'><name>x</name><memory unit='KiB'>%d</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, memoryKiB, devices)
+func domainXML(devices string) string {
+	return fmt.Sprintf(`<domain type='test'><name>x</name><memory unit='KiB'>65536</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, devices)
 }
 
 func create(t *testing.T, k client.Client, obj client.Object) {
