@@ -188,6 +188,10 @@ rules:
 - apiGroups: [database.ayatori.ddupan.top]
   resources: [postgresqltenants, postgresqldatabases]
   verbs: [get, list, watch, create, update, patch, delete]
+# LoadBalancerHost 由部署方登记，不给 gitops；LB CRD 总会安装，所以这条规则不按开关条件渲染。
+- apiGroups: [network.ayatori.ddupan.top]
+  resources: [loadbalancers, backends]
+  verbs: [get, list, watch, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
