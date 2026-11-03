@@ -7,7 +7,7 @@
 # 可覆盖；Flux 清单中的环境相关值一律经 postBuild 替换，改地址不需要发版。
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，
 # Release 工作流校验它与 galaxy.yml、git tag 一致。
-ayatori_version: v0.2.0
+ayatori_version: v0.3.0-rc.0
 # 完全不可用的 release 不升版本而是重发同名 tag，部署时重新拉取并按镜像 ID 变化重启。
 ayatori_image: zot.lab.ddupan.top/panxiao81/ayatori-manager:{{ ayatori_version }}
 

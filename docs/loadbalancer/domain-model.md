@@ -219,7 +219,7 @@ neighbors:
   - address: 10.60.0.1
     asn: 65002
 vipPool: 10.62.0.0/24
-haproxySocket: /run/haproxy/admin.sock
+haproxySocket: /run/haproxy/agent.sock   # 只读（level user），cookbook 单独给 agent 用户开放
 interval: 2s
 metricsAddress: 10.60.0.30:9641
 ```
