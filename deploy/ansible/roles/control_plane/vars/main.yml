@@ -85,8 +85,12 @@ containers:
 loadbalancer_args: >-
   {{ [] if ayatori_loadbalancer is not defined else
      ['--loadbalancer-address-pool=' ~ ayatori_loadbalancer.address_pool,
-      '--loadbalancer-credentials=' ~ control_namespace ~ '/loadbalancer-credentials'] }}
+      '--loadbalancer-credentials=' ~ control_namespace ~ '/loadbalancer-credentials'] +
+     ([] if not loadbalancer_dns else
+      ['--loadbalancer-dns-url=' ~ loadbalancer_dns.url,
+       '--loadbalancer-dns-zone=' ~ loadbalancer_dns.zone]) }}
 
 loadbalancer_hosts: "{{ ayatori_loadbalancer.hosts | default([]) }}"
+loadbalancer_dns: "{{ (ayatori_loadbalancer | default({})).dns | default({}) }}"
 # role 创建的 LoadBalancerHost 带此标签（selector 形式），据此删除 inventory 中已移除的主机。
 loadbalancer_host_label: app.kubernetes.io/managed-by=ayatori-deploy

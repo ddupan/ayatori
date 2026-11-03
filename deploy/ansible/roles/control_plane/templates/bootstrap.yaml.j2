@@ -164,6 +164,8 @@ spec:
       OPENBAO_ADDRESS: {{ openbao_address | to_json }}
       OPENBAO_KUBERNETES_MOUNT: {{ openbao_kubernetes_mount | to_json }}
       OPENBAO_EXTERNAL_SECRETS_ROLE: {{ openbao_external_secrets_role | to_json }}
+      POWERDNS_API_KEY_PATH: {{ loadbalancer_dns_api_key.path | to_json }}
+      POWERDNS_API_KEY_PROPERTY: {{ loadbalancer_dns_api_key.property | to_json }}
 {% endif %}
 {% if ayatori_gitops is defined %}
 ---

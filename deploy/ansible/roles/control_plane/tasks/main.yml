@@ -10,7 +10,11 @@
       - loadbalancer_hosts | rejectattr('name', 'match', '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') | list | length == 0
       - loadbalancer_hosts | rejectattr('data_plane_url', 'match', '^https://') | list | length == 0
       - loadbalancer_hosts | rejectattr('agent_url', 'match', '^https?://') | list | length == 0
-    fail_msg: 需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance；ayatori_loadbalancer.hosts 每项为 {name, data_plane_url, agent_url}
+      - not loadbalancer_dns or loadbalancer_dns.url is match('^https?://')
+      - not loadbalancer_dns or loadbalancer_dns.zone is match('^[a-z0-9.-]+[a-z0-9]$')
+    fail_msg: >-
+      需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance；ayatori_loadbalancer.hosts
+      每项为 {name, data_plane_url, agent_url}；ayatori_loadbalancer.dns 为 {url, zone}
 
 - name: 创建部署状态目录
   ansible.builtin.file:

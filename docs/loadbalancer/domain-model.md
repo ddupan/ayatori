@@ -292,7 +292,7 @@ LB 主机部署（homelab-infra）须保证：
 | 参数 | 含义 |
 | --- | --- |
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
-| `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）与 `tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS） |
+| `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）、`tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS）与 `powerdns-api-key`（维护 Hostname 时使用） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
 | `--loadbalancer-agent-stale-after`（默认 1m） | agent 最近一次成功收敛距今超过此值即 `AgentReady=False` |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |

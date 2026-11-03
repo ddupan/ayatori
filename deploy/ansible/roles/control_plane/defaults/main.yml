@@ -2,7 +2,8 @@
 #   ayatori_environment: dev | prod
 #   ayatori_postgresql_instance: {name, host, hostaddr, port}
 #   ayatori_gitops（可选）: {url, path, branch=main}，Flux 同步其中的 namespace、Tenant 与 Database
-#   ayatori_loadbalancer（可选）: {address_pool, hosts: [{name, data_plane_url, agent_url}]}，启用 LoadBalancer
+#   ayatori_loadbalancer（可选）: {address_pool, hosts: [{name, data_plane_url, agent_url}], dns: {url, zone}}，
+#     启用 LoadBalancer；声明 dns 时在 PowerDNS 中 Ayatori 独占的 zone 里维护 Hostname
 # 站点端点（openbao_address、ayatori_repository、ayatori_image 的 registry）只是默认值，部署方
 # 可覆盖；Flux 清单中的环境相关值一律经 postBuild 替换，改地址不需要发版。
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，
@@ -19,6 +20,9 @@ openbao_controller_role: ayatori-{{ ayatori_environment }}-controller
 openbao_external_secrets_role: ayatori-{{ ayatori_environment }}-external-secrets
 database_credential_prefix: ayatori/{{ ayatori_environment }}/applications
 management_credential_path: infra/postgresql/ayatori/{{ ayatori_environment }}
+# PowerDNS API key 在 Bao KV 中的位置（ESO 原地读取，不复制）。不声明 dns 时也会读取：
+# 凭据 Secret 只有一份，ESO 无法按条件省略其中的字段。
+loadbalancer_dns_api_key: {path: k8s/powerdns, property: api_key}
 
 # 两个环境共用的第三方组件版本；升级在 Dev 验证后随同一提交进入 Prod。
 k0s_version: v1.36.4+k0s.1
