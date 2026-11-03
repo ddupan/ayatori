@@ -1,0 +1,51 @@
+# 节点 agent 以证书用户 system:ayatori:node:<node> 访问 API，组为 system:ayatori:nodes 与
+# system:ayatori:role:<role>（internal/infra/node）。这里只授予节点通用的权限：Node 与按角色命名的
+# Lease；"只能写自己、只能写自己的角色"由 admission.yaml 约束。角色相关的权限只授予角色组。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori:node
+rules:
+- apiGroups: [""]
+  resources: [nodes]
+  verbs: [get, list, watch, create, patch, update]
+- apiGroups: [""]
+  resources: [nodes/status]
+  verbs: [patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori:node
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ayatori:node
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:ayatori:nodes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori:node
+  namespace: kube-node-lease
+rules:
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, create, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori:node
+  namespace: kube-node-lease
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori:node
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:ayatori:nodes
