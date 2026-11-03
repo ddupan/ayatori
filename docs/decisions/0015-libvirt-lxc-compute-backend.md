@@ -161,8 +161,8 @@ pool 中的卷，经 libvirt 删除或直接挂载它们会绕过 DRBD（PoC 10�
 `rootfs` 引用的 volume 从 libvirt 取得路径；`networks` 引用的 network 从其定义中查出 bridge，
 填入 `lxc.net.N.link`。VM 与 LXC 因此共用同一份 pool/network 声明。
 
-LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.org 的镜像。卷克隆和镜像
-管理以后再做。
+LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.org 的镜像。镜像与介质的
+分发见 [ADR-0017](0017-compute-day2-operations.md)，卷克隆以后再做。
 
 ### 网络
 
@@ -182,7 +182,8 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
   - 候选节点竞争 promote，赢的节点启动 `start` 中列出的单元；
   - 失去 quorum 的节点停止服务。
 - **DRBD 参数**：`quorum majority`、`auto-promote no`、`on-no-quorum io-error`，
-  `on-no-data-accessible` 与 `on-no-quorum` 取相同的值。至少 3 个副本，或者 2 个副本加
+  `on-no-data-accessible` 与 `on-no-quorum` 取相同的值。[ADR-0017](0017-compute-day2-operations.md)
+  提议改为 `suspend-io` 配合 promoter 的 `freeze`，避免 quorum 抖动让客户机进入只读。至少 3 个副本，或者 2 个副本加
   diskless tiebreaker。drbd-reactor 不做节点级 STONITH，完全依赖 DRBD quorum。
 - **tiebreaker 必须在故障发生前就在线**：故障后才接入的 tiebreaker 没有见证旧 Primary 的最后
   状态，DRBD 不会因此恢复 quorum（PoC 04）。PoC 中有两个资源的 tiebreaker 掉线 11 小时无人察觉。
@@ -433,16 +434,11 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 | 端口组 / dvSwitch | `LibvirtNetwork` + Chef 管理的 bridge |
 | datastore | `LibvirtStoragePool` |
 
-以下能力目前没有真实需求，出现需求时参照对应的 vSphere 设计：
+逐项对照 vSphere 功能集的结果见[缺口分析](../compute/vsphere-gap-analysis.md)。其中有现状证据的
+反亲和、维护模式、VMCP、故障切换容量、备份、迁入等，设计见
+[ADR-0017](0017-compute-day2-operations.md)。仍无需求的：
 
-- **DRS 亲和/反亲和规则**：例如 etcd 成员不得落在同一宿主机。作为候选节点的过滤条件实现，
-  不做 DRS 式的自动负载均衡迁移。
-- **维护模式**：Node 设为 unschedulable，并按实例的存储类型冷迁或停机，对应 vSphere 进入维护
-  模式时的 evacuation。
-- **VMCP（APD/PDL）**：存储路径失效但主机存活时如何处理实例。对应 DRBD 失去 quorum 后
-  `io-error` 与 `suspend-io` 的取舍，PoC 时一并观察。
-- **按故障切换容量的 admission control**：目前只在创建时检查容量。需要保证"任一宿主机故障后
-  剩余容量仍够用"时，参照 vSphere 的槽位或百分比策略。
-- **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。
+- **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。全站断电恢复成为问题时，
+  参照 vSphere 的 orchestrated restart。
 
 明确不参照的部分：vMotion 式热迁移和 Fault Tolerance 不是本后端的目标（ADR-0007）。
