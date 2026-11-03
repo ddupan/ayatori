@@ -27,7 +27,11 @@ import (
 	"go.ddupan.top/ayatori/internal/compute/agent"
 )
 
-const node = "node-a"
+const (
+	node    = "node-a"
+	lan     = "lan"
+	running = "running"
+)
 
 // test:///default 在进程内由所有连接共享；最后一个连接关闭后状态清空，用来模拟宿主机重启。
 const uri = "test:///default"
@@ -56,6 +60,9 @@ func eventually(t *testing.T, timeout time.Duration, check func() error) {
 	}
 }
 
+// free 释放 libvirt 对象的引用。
+func free(f func() error) { _ = f() }
+
 type runningAgent struct {
 	cancel func()
 	done   chan struct{}
@@ -79,8 +86,36 @@ func runAgent(t *testing.T, config agent.Config) runningAgent {
 	return runningAgent{cancel, done}
 }
 
+// suite 是各场景共享的环境。场景按顺序依次运行，后一个建立在前一个的结果之上。
+type suite struct {
+	k           client.Client
+	l           *golibvirt.Connect
+	config      agent.Config
+	unreachable string
+	agent       runningAgent
+	vm1, vm2    *computev1alpha1.LibvirtDomain
+}
+
 func TestAgent(t *testing.T) {
-	ctx := t.Context()
+	s := setup(t)
+	defer func() { _, _ = s.l.Close() }()
+	s.agent = runAgent(t, s.config)
+	s.registerNode(t)
+	s.createObjects(t)
+	t.Run("defines objects selected for this node and starts the domain", s.definesSelected)
+	t.Run("restores configuration changed outside Ayatori", s.restoresDrift)
+	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
+	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(65536, `<interface type='network'><source network='lan'/></interface>`)}}
+	create(t, s.k, s.vm2)
+	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
+	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
+	t.Run("removes objects only once the API confirms deletion", s.removesAfterConfirmation)
+	s.agent.stop()
+}
+
+func setup(t *testing.T) *suite {
+	t.Helper()
 	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd", "bases")}}
 	cfg, err := env.Start()
 	if err != nil {
@@ -94,9 +129,6 @@ func TestAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := connect(t)
-	defer func() { _, _ = l.Close() }()
-
 	dir := t.TempDir()
 	kubeconfig := filepath.Join(dir, "kubeconfig")
 	if err := os.WriteFile(kubeconfig, env.KubeConfig, 0o600); err != nil {
@@ -108,233 +140,215 @@ func TestAgent(t *testing.T) {
 	if err := os.WriteFile(unreachable, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := agent.Config{
-		NodeName: node, Kubeconfig: kubeconfig, StateDir: filepath.Join(dir, "state"),
-		LibvirtURI:     uri,
-		ResyncInterval: metav1.Duration{Duration: time.Second},
+	return &suite{
+		k: k, l: connect(t), unreachable: unreachable,
+		config: agent.Config{
+			NodeName: node, Kubeconfig: kubeconfig, StateDir: filepath.Join(dir, "state"),
+			LibvirtURI:     uri,
+			ResyncInterval: metav1.Duration{Duration: time.Second},
+		},
 	}
+}
 
-	running := runAgent(t, config)
-	// Agent 注册 Node；管理员再打上 label，network/pool 的 nodeSelector 据此选择节点。
+// registerNode 等 Agent 注册 Node；管理员再打上 label，network/pool 的 nodeSelector 据此选择节点。
+func (s *suite) registerNode(t *testing.T) {
+	ctx := t.Context()
 	eventually(t, 30*time.Second, func() error {
 		var n corev1.Node
-		if err := k.Get(ctx, client.ObjectKey{Name: node}, &n); err != nil {
+		if err := s.k.Get(ctx, client.ObjectKey{Name: node}, &n); err != nil {
 			return err
 		}
 		if n.Labels[agent.ManagedByLabel] == "" || len(n.Status.Conditions) == 0 || n.Status.Conditions[0].Status != corev1.ConditionTrue {
 			return fmt.Errorf("node not ready yet: %+v", n.Status.Conditions)
 		}
 		n.Labels["rack"] = "a"
-		return k.Update(ctx, &n)
+		return s.k.Update(ctx, &n)
 	})
 	eventually(t, 30*time.Second, func() error {
-		return k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node}, &coordinationv1.Lease{})
+		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node}, &coordinationv1.Lease{})
 	})
+}
 
-	create(t, k, &computev1alpha1.LibvirtNetwork{ObjectMeta: metav1.ObjectMeta{Name: "lan"}, Spec: computev1alpha1.LibvirtNetworkSpec{
+func (s *suite) createObjects(t *testing.T) {
+	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: lan, Spec: computev1alpha1.LibvirtNetworkSpec{
 		XML: `<network><name>ignored</name><forward mode='bridge'/><bridge name='br-lan'/></network>`, NodeSelector: map[string]string{"rack": "a"}}})
-	create(t, k, &computev1alpha1.LibvirtNetwork{ObjectMeta: metav1.ObjectMeta{Name: "elsewhere"}, Spec: computev1alpha1.LibvirtNetworkSpec{
+	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: "elsewhere", Spec: computev1alpha1.LibvirtNetworkSpec{
 		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{"rack": "b"}}})
-	create(t, k, &computev1alpha1.LibvirtStoragePool{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Spec: computev1alpha1.LibvirtStoragePoolSpec{
+	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: "local", Spec: computev1alpha1.LibvirtStoragePoolSpec{
 		XML: `<pool type='dir'><target><path>/images</path></target></pool>`}})
-
 	eventually(t, 30*time.Second, func() error {
-		pool, err := l.LookupStoragePoolByName("local")
+		pool, err := s.l.LookupStoragePoolByName("local")
 		if err != nil {
 			return err
 		}
-		defer pool.Free()
+		defer free(pool.Free)
 		vol, err := pool.StorageVolCreateXML(`<volume><name>disk1</name><capacity>1048576</capacity></volume>`, 0)
 		if err == nil {
-			vol.Free()
+			free(vol.Free)
 		}
 		return err
 	})
-	vm1 := &computev1alpha1.LibvirtDomain{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "vm1"}, Spec: computev1alpha1.LibvirtDomainSpec{
+	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
 		NodeName: node, DomainXML: domainXML(65536, `<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
-	create(t, k, vm1)
+	create(t, s.k, s.vm1)
+}
 
-	t.Run("defines objects selected for this node and starts the domain", func(t *testing.T) {
-		eventually(t, 30*time.Second, func() error {
-			if err := k.Get(ctx, client.ObjectKeyFromObject(vm1), vm1); err != nil {
-				return err
-			}
-			if vm1.Status.State != "running" || vm1.Status.NodeName != node {
-				return fmt.Errorf("domain status = %+v", vm1.Status)
-			}
-			return nil
-		})
-		dom, err := l.LookupDomainByName("default_vm1")
-		if err != nil {
-			t.Fatal(err)
+func (s *suite) definesSelected(t *testing.T) {
+	s.waitState(t, s.vm1, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running && st.NodeName == node })
+	dom := s.domain(t, "default_vm1")
+	defer free(dom.Free)
+	xml, _ := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
+	for _, want := range []string{"<uuid>" + string(s.vm1.UID) + "</uuid>", "<source file='/images/disk1'", "<target dev='ay" + strings.ReplaceAll(string(s.vm1.UID), "-", "")[:8] + "n0'"} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("domain XML lacks %s:\n%s", want, xml)
 		}
-		defer dom.Free()
-		xml, _ := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
-		for _, want := range []string{"<uuid>" + string(vm1.UID) + "</uuid>", "<source file='/images/disk1'", "<target dev='ay" + strings.ReplaceAll(string(vm1.UID), "-", "")[:8] + "n0'"} {
-			if !strings.Contains(xml, want) {
-				t.Errorf("domain XML lacks %s:\n%s", want, xml)
-			}
-		}
-		if autostart, _ := dom.GetAutostart(); autostart {
-			t.Error("domain autostart must be off")
-		}
-		var n computev1alpha1.LibvirtNetwork
-		eventually(t, 10*time.Second, func() error {
-			if err := k.Get(ctx, client.ObjectKey{Name: "lan"}, &n); err != nil {
-				return err
-			}
-			if len(n.Status.Nodes) != 1 || n.Status.Nodes[0].NodeName != node || !n.Status.Nodes[0].Active {
-				return fmt.Errorf("network status = %+v", n.Status)
-			}
-			return nil
-		})
-		if _, err := l.LookupNetworkByName("elsewhere"); !libvirt.IsNotFound(err) {
-			t.Errorf("network for another rack was defined here: %v", err)
-		}
-	})
-
-	t.Run("restores configuration changed outside Ayatori", func(t *testing.T) {
-		dom, err := l.LookupDomainByName("default_vm1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer dom.Free()
-		xml, _ := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
-		if d, err := l.DomainDefineXML(strings.Replace(xml, "<memory unit='KiB'>65536</memory>", "<memory unit='KiB'>131072</memory>", 1)); err != nil {
-			t.Fatal(err)
-		} else {
-			d.Free()
-		}
-		eventually(t, 15*time.Second, func() error {
-			xml, err := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
-			if err != nil || !strings.Contains(xml, "<memory unit='KiB'>65536</memory>") {
-				return fmt.Errorf("memory not restored (err=%v)", err)
-			}
-			return nil
-		})
-	})
-
-	t.Run("does not restart an instance shut down on purpose", func(t *testing.T) {
-		dom, err := l.LookupDomainByName("default_vm1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer dom.Free()
-		if err := dom.Shutdown(); err != nil {
-			t.Fatal(err)
-		}
-		eventually(t, 15*time.Second, func() error {
-			if err := k.Get(ctx, client.ObjectKeyFromObject(vm1), vm1); err != nil {
-				return err
-			}
-			if vm1.Status.Reason != "shutdown" {
-				return fmt.Errorf("domain status = %+v", vm1.Status)
-			}
-			return nil
-		})
-		time.Sleep(3 * time.Second) // 几轮 reconcile
-		if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_SHUTOFF {
-			t.Fatalf("domain restarted after an intentional shutdown: state %d", state)
-		}
-		// 运行时开机（ADR-0016 的控制台操作）之后，意图回到"运行"。
-		if err := dom.Create(); err != nil {
-			t.Fatal(err)
-		}
-		eventually(t, 15*time.Second, func() error {
-			if err := k.Get(ctx, client.ObjectKeyFromObject(vm1), vm1); err != nil {
-				return err
-			}
-			if vm1.Status.State != "running" {
-				return fmt.Errorf("domain status = %+v", vm1.Status)
-			}
-			return nil
-		})
-	})
-
-	vm2 := &computev1alpha1.LibvirtDomain{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "vm2"}, Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(65536, `<interface type='network'><source network='lan'/></interface>`)}}
-	create(t, k, vm2)
-	eventually(t, 30*time.Second, func() error {
-		if err := k.Get(ctx, client.ObjectKeyFromObject(vm2), vm2); err != nil {
+	}
+	if autostart, _ := dom.GetAutostart(); autostart {
+		t.Error("domain autostart must be off")
+	}
+	var n computev1alpha1.LibvirtNetwork
+	eventually(t, 10*time.Second, func() error {
+		if err := s.k.Get(t.Context(), client.ObjectKey{Name: lan}, &n); err != nil {
 			return err
 		}
-		if vm2.Status.State != "running" {
-			return fmt.Errorf("vm2 status = %+v", vm2.Status)
+		if len(n.Status.Nodes) != 1 || n.Status.Nodes[0].NodeName != node || !n.Status.Nodes[0].Active {
+			return fmt.Errorf("network status = %+v", n.Status)
 		}
 		return nil
 	})
+	if _, err := s.l.LookupNetworkByName("elsewhere"); !libvirt.IsNotFound(err) {
+		t.Errorf("network for another rack was defined here: %v", err)
+	}
+}
 
-	t.Run("converges from local state when the control plane is unreachable", func(t *testing.T) {
-		// 宿主机重启：关闭所有连接，test 驱动的状态随之清空。
-		running.stop()
-		_, _ = l.Close()
-		l = connect(t)
-		if _, err := l.LookupNetworkByName("lan"); !libvirt.IsNotFound(err) {
-			t.Fatalf("libvirt state survived the simulated reboot: %v", err)
+func (s *suite) restoresDrift(t *testing.T) {
+	dom := s.domain(t, "default_vm1")
+	defer free(dom.Free)
+	xml, _ := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
+	d, err := s.l.DomainDefineXML(strings.Replace(xml, "<memory unit='KiB'>65536</memory>", "<memory unit='KiB'>131072</memory>", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	free(d.Free)
+	eventually(t, 15*time.Second, func() error {
+		xml, err := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
+		if err != nil || !strings.Contains(xml, "<memory unit='KiB'>65536</memory>") {
+			return fmt.Errorf("memory not restored (err=%v)", err)
 		}
-		offline := config
-		offline.Kubeconfig = unreachable
-		running = runAgent(t, offline)
-		eventually(t, 30*time.Second, func() error {
-			n, err := l.LookupNetworkByName("lan")
-			if err != nil {
-				return err
-			}
-			defer n.Free()
-			if active, _ := n.IsActive(); !active {
-				return fmt.Errorf("network lan not active")
-			}
-			p, err := l.LookupStoragePoolByName("local")
-			if err != nil {
-				return err
-			}
-			p.Free()
-			dom, err := l.LookupDomainByName("default_vm2")
-			if err != nil {
-				return err
-			}
-			defer dom.Free()
-			if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_RUNNING {
-				return fmt.Errorf("vm2 not running: state %d", state)
-			}
-			return nil
-		})
-		// vm1 的卷随宿主机"丢失"了：无法下发，但不会因此被删除。
-		if _, err := l.LookupDomainByName("default_vm1"); !libvirt.IsNotFound(err) {
-			t.Fatalf("vm1 should not be defined without its volume: %v", err)
-		}
+		return nil
 	})
+}
 
-	t.Run("removes objects only once the API confirms deletion", func(t *testing.T) {
-		// 控制面仍不可用：删除 API 中的对象，Agent 看不到，什么也不会发生。
-		if err := k.Delete(ctx, vm2); err != nil {
-			t.Fatal(err)
+func (s *suite) keepsIntentionalShutdown(t *testing.T) {
+	dom := s.domain(t, "default_vm1")
+	defer free(dom.Free)
+	if err := dom.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	s.waitState(t, s.vm1, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.Reason == "shutdown" })
+	time.Sleep(3 * time.Second) // 几轮 reconcile
+	if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_SHUTOFF {
+		t.Fatalf("domain restarted after an intentional shutdown: state %d", state)
+	}
+	// 运行时开机（ADR-0016 的控制台操作）之后，意图回到"运行"。
+	if err := dom.Create(); err != nil {
+		t.Fatal(err)
+	}
+	s.waitState(t, s.vm1, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
+}
+
+func (s *suite) convergesOffline(t *testing.T) {
+	// 宿主机重启：关闭所有连接，test 驱动的状态随之清空。
+	s.agent.stop()
+	_, _ = s.l.Close()
+	s.l = connect(t)
+	if _, err := s.l.LookupNetworkByName(lan); !libvirt.IsNotFound(err) {
+		t.Fatalf("libvirt state survived the simulated reboot: %v", err)
+	}
+	offline := s.config
+	offline.Kubeconfig = s.unreachable
+	s.agent = runAgent(t, offline)
+	eventually(t, 30*time.Second, func() error {
+		n, err := s.l.LookupNetworkByName(lan)
+		if err != nil {
+			return err
 		}
-		time.Sleep(3 * time.Second)
-		if _, err := l.LookupDomainByName("default_vm2"); err != nil {
-			t.Fatalf("vm2 removed while the API was unreachable: %v", err)
+		defer free(n.Free)
+		if active, _ := n.IsActive(); !active {
+			return fmt.Errorf("network lan not active")
 		}
-		// 控制面恢复：首次同步后发现 vm2 已不存在，清理。
-		running.stop()
-		running = runAgent(t, config)
-		eventually(t, 30*time.Second, func() error {
-			if _, err := l.LookupDomainByName("default_vm2"); !libvirt.IsNotFound(err) {
-				return fmt.Errorf("vm2 still defined: %v", err)
-			}
-			return nil
-		})
-		// 在线时删除：watch 到删除后清理。
-		if err := k.Delete(ctx, &computev1alpha1.LibvirtNetwork{ObjectMeta: metav1.ObjectMeta{Name: "lan"}}); err != nil {
-			t.Fatal(err)
+		p, err := s.l.LookupStoragePoolByName("local")
+		if err != nil {
+			return err
 		}
-		eventually(t, 30*time.Second, func() error {
-			if _, err := l.LookupNetworkByName("lan"); !libvirt.IsNotFound(err) {
-				return fmt.Errorf("network lan still defined: %v", err)
-			}
-			return nil
-		})
+		free(p.Free)
+		dom, err := s.l.LookupDomainByName("default_vm2")
+		if err != nil {
+			return err
+		}
+		defer free(dom.Free)
+		if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_RUNNING {
+			return fmt.Errorf("vm2 not running: state %d", state)
+		}
+		return nil
 	})
-	running.stop()
+	// vm1 的卷随宿主机"丢失"了：无法下发，但不会因此被删除。
+	if _, err := s.l.LookupDomainByName("default_vm1"); !libvirt.IsNotFound(err) {
+		t.Fatalf("vm1 should not be defined without its volume: %v", err)
+	}
+}
+
+func (s *suite) removesAfterConfirmation(t *testing.T) {
+	ctx := t.Context()
+	// 控制面仍不可用：删除 API 中的对象，Agent 看不到，什么也不会发生。
+	if err := s.k.Delete(ctx, s.vm2); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	if _, err := s.l.LookupDomainByName("default_vm2"); err != nil {
+		t.Fatalf("vm2 removed while the API was unreachable: %v", err)
+	}
+	// 控制面恢复：首次同步后发现 vm2 已不存在，清理。
+	s.agent.stop()
+	s.agent = runAgent(t, s.config)
+	eventually(t, 30*time.Second, func() error {
+		if _, err := s.l.LookupDomainByName("default_vm2"); !libvirt.IsNotFound(err) {
+			return fmt.Errorf("vm2 still defined: %v", err)
+		}
+		return nil
+	})
+	// 在线时删除：watch 到删除后清理。
+	if err := s.k.Delete(ctx, &computev1alpha1.LibvirtNetwork{Name: lan}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 30*time.Second, func() error {
+		if _, err := s.l.LookupNetworkByName(lan); !libvirt.IsNotFound(err) {
+			return fmt.Errorf("network lan still defined: %v", err)
+		}
+		return nil
+	})
+}
+
+func (s *suite) domain(t *testing.T, name string) *golibvirt.Domain {
+	t.Helper()
+	dom, err := s.l.LookupDomainByName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dom
+}
+
+func (s *suite) waitState(t *testing.T, d *computev1alpha1.LibvirtDomain, ok func(computev1alpha1.LibvirtDomainStatus) bool) {
+	t.Helper()
+	eventually(t, 30*time.Second, func() error {
+		if err := s.k.Get(t.Context(), client.ObjectKeyFromObject(d), d); err != nil {
+			return err
+		}
+		if !ok(d.Status) {
+			return fmt.Errorf("%s status = %+v", d.Name, d.Status)
+		}
+		return nil
+	})
 }
 
 func domainXML(memoryKiB int, devices string) string {
