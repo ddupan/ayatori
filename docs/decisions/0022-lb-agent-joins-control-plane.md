@@ -60,10 +60,10 @@ Backend，在本机计算期望配置并收敛 HAProxy**，再把结果写回 AP
 | 项 | 值 |
 | --- | --- |
 | 用户名 | `system:ayatori:node:<主机名>`，与 compute 节点同一前缀；主机名即 Node 与 LoadBalancerHost 的名称 |
-| 组 | `system:ayatori:nodes`（所有节点）、`system:ayatori:lb-hosts`（LB 角色）、`system:ayatori:client-certificates` |
+| 组 | `system:ayatori:nodes`（所有节点）、`system:ayatori:role:loadbalancer`（LB 角色）、`system:ayatori:client-certificates` |
 | 私钥 | 每个 agent 一份。同一台主机上的 compute Agent 与 LB agent 用户名相同，证书、私钥和角色组各自独立 |
 | 证书文件 | `/etc/ayatori/lb-agent/client.pem`（证书与私钥合一，原子替换），`kubeconfig` 按相对路径引用 |
-| 续签 | agent 进程内使用 `internal/infra/clientcert`，由 ayatori-manager 的批准者按 ADR-0021 批准 |
+| 续签 | agent 进程内使用 `internal/infra/clientcert`，由 ayatori-manager 的批准者按 ADR-0021 批准；身份由共用库 `node.Identity(dir, node, "loadbalancer")` 管理 |
 
 - **一台主机可以同时承担多个角色。** 架构不限制 compute 与 LB 部署在同一台物理机上，所以身份按主机
   命名，角色由组表达。同一台主机上的每个 agent 只持有自己那个角色的组，一个 agent 被攻破，拿不到同机
@@ -83,12 +83,24 @@ Backend，在本机计算期望配置并收敛 HAProxy**，再把结果写回 AP
 
 ### 注册为 Node
 
-LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册逻辑：
+LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册逻辑，即共用库 `internal/infra/node`
+（LB agent 用 `node.Registrar{Role: "loadbalancer"}`）。各角色的命名都从角色名推出：
+
+| | 规则 | LB |
+| --- | --- | --- |
+| 证书组 | `system:ayatori:nodes` + `system:ayatori:role:<role>` | `system:ayatori:role:loadbalancer` |
+| Node label | `node-role.kubernetes.io/<role>` | `node-role.kubernetes.io/loadbalancer` |
+| condition | `<role>.ayatori.ddupan.top/Ready` | `loadbalancer.ayatori.ddupan.top/Ready` |
+| Lease | `kube-node-lease/<node>-<role>` | `<node>-loadbalancer` |
+| field manager | `<role>-agent` | `loadbalancer-agent` |
+
+因为都能从角色名推出，准入策略只需一条规则约束「只改自己角色的 label、condition 和 Lease」，不必每个
+角色另写（见「权限」）。
 
 - **一台主机一个 Node，可以有多个角色。** 同一台主机上的各个 agent 用各自的 field manager（如
-  `lb-agent`、`compute-agent`）对同一个 Node 做 SSA，每个 agent 只 apply 自己的字段：
+  `loadbalancer-agent`、`compute-agent`）对同一个 Node 做 SSA，每个 agent 只 apply 自己的字段：
   - 自己的角色 label，例如 `node-role.kubernetes.io/loadbalancer`；
-  - 自己角色的 condition，例如 `ayatori.ddupan.top/LoadBalancerReady`；
+  - 自己角色的 condition，例如 `loadbalancer.ayatori.ddupan.top/Ready`；
   - 地址、`nodeInfo` 等主机级字段。各 agent 写入相同的值，SSA 允许多个 field manager 共同持有。
 
   Node 由先启动的 agent 创建。agent 不删除 Node，主机退出由部署方处理。
@@ -101,7 +113,7 @@ LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册�
 
 ### LoadBalancerHost 由 agent 注册
 
-- agent 以 SSA（field manager `lb-agent`）创建并维护与自己同名的 LoadBalancerHost。spec 中不再有
+- agent 以 SSA（field manager `loadbalancer-agent`）创建并维护与自己同名的 LoadBalancerHost。spec 中不再有
   `dataPlaneURL` 和 `agentURL`，这个对象只承载本机状态和删除语义。
 - 部署方的 inventory 只保留 `address_pool`，部署 role 不再创建或删除 LoadBalancerHost。
 - **删除仍由人或部署方发起：** controller 持有 finalizer，等 agent 报告本机配置已全部清空后才放行。
@@ -133,19 +145,18 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
 
 ### 权限
 
-- RBAC：
-  - `system:ayatori:nodes`：`get/create/patch/update` Node 和 `nodes/status`；在 `kube-node-lease` 中
-    `get/create/update` Lease。与 compute 共用，具体能写哪些字段由 VAP 收窄。
-  - `system:ayatori:lb-hosts`：
-    - `get/list/watch` LoadBalancer、Backend；
-    - `get/list/watch/create/patch` LoadBalancerHost，`patch/update` `loadbalancerhosts/status`；
-    - 不能 `delete`，也不能写 LoadBalancer 和 Backend。
-- ValidatingAdmissionPolicy（做法同 dev/compute 上 compute 的 PoC 09）按 `request.userInfo` 收窄：
-  - 节点通用规则，与 compute 共用：
-    - 只能写与自己同名的 Node；
-    - 角色 label 与角色 condition 只能增删、修改自己角色组对应的那一个；
-    - Lease 只能是 `<自己>-<自己的角色>`。
-  - LB 规则：只能创建、修改与自己同名的 LoadBalancerHost，不能动 spec 和 finalizer，只能写 status。
+- **节点通用部分已在 `deploy/flux/nodes`，与 compute 共用：**
+  - RBAC：`system:ayatori:nodes` 可以 `get/create/patch/update` Node 和 `nodes/status`，在
+    `kube-node-lease` 中 `get/create/update` Lease；
+  - ValidatingAdmissionPolicy（`deploy/flux/nodes/admission.yaml`）按 `request.userInfo` 收窄：只能写与
+    自己同名的 Node；角色 label、角色 condition 和 Lease 只能是从自己的 `system:ayatori:role:<role>`
+    组推出的那一个。
+- **LB 只需给角色组 `system:ayatori:role:loadbalancer` 授予自己的资源：**
+  - `get/list/watch` LoadBalancer、Backend；
+  - `get/list/watch/create/patch` LoadBalancerHost，`patch/update` `loadbalancerhosts/status`；
+  - 不能 `delete`，也不能写 LoadBalancer 和 Backend；
+  - LB 自己的 VAP 规则：只能创建、修改与自己同名的 LoadBalancerHost，不能动 spec 和 finalizer，只能写
+    status。
 - 读权限无法按主机限制：每台 LB 主机都能读到所有 LoadBalancer 与 Backend。这些对象只有地址和端口，
   不得包含密钥；PROXY protocol、TLS 等以后如果需要密钥，要另行设计交付方式。
 
