@@ -5,6 +5,28 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests/approval
+  verbs:
+  - update
+- apiGroups:
+  - certificates.k8s.io
+  resourceNames:
+  - kubernetes.io/kube-apiserver-client
+  resources:
+  - signers
+  verbs:
+  - approve
+- apiGroups:
   - database.ayatori.ddupan.top
   resources:
   - postgresqldatabases

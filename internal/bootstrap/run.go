@@ -8,6 +8,8 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
 )
 
 var setupLog = ctrl.Log.WithName("setup")
@@ -35,6 +37,9 @@ func Run() error {
 	defer closeDatabaseConnections()
 	if err := registerLoadBalancerControllers(context.Background(), manager, options.lb); err != nil {
 		return err
+	}
+	if err := (&clientcert.RenewalApprover{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		return fmt.Errorf("set up client certificate renewal approver: %w", err)
 	}
 
 	setupLog.Info("Starting manager")
