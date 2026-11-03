@@ -1,16 +1,16 @@
-# ADR-0018：LINSTOR/DRBD 存储集成：卷、自动冷启动与在线迁移
+# ADR-0020：LINSTOR/DRBD 存储集成：卷、自动冷启动与在线迁移
 
 - 状态：Proposed（需先完成下文"待验证"的事项）
 - 日期：2026-11-03
 - 依据：维护者讨论；从 [ADR-0015](0015-libvirt-lxc-compute-backend.md) 拆出存储一节的 LINSTOR
-  部分、"自动冷启动"与 DRBD 可观测性，从 [ADR-0017](0017-compute-day2-operations.md) 拆出存储失效、
+  部分、"自动冷启动"与 DRBD 可观测性，从 [ADR-0019](0019-compute-day2-operations.md) 拆出存储失效、
   卷接管与 DRBD 上的迁移；对照了 LINBIT 的各个 hypervisor 集成与 LINSTOR 1.35 的源码。
 
 ## 问题
 
 LINSTOR/DRBD 是计算后端中唯一的非原生部分：libvirt 没有 LINSTOR pool 驱动，卷的创建和放置要调用
 LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移需要临时双 Primary。这些内容原先
-散在 ADR-0015 的存储、自动冷启动、可观测性三节和 ADR-0017 的三节中，并让计算核心与 DRBD 绑在了
+散在 ADR-0015 的存储、自动冷启动、可观测性三节和 ADR-0019 的三节中，并让计算核心与 DRBD 绑在了
 一起。
 
 本 ADR 把它写成一个独立的存储集成：计算核心只认 ADR-0015 定义的**存储能力**，LINSTOR/DRBD 怎样
@@ -92,7 +92,7 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 - `LibvirtStorageVolume` 的 `backend: linstor` 分支由 controller 调用 LINSTOR API 创建，在候选节点上
   放置副本；不放副本的候选节点按需以 diskless 方式接入。
 - domain 中写 `<disk type='block'>` 和 `/dev/drbd/by-res/<res>/<vol>`，该路径本身就是稳定引用。
-- **扩容**：controller 扩大 volume definition，之后的处理与 ADR-0017 相同。
+- **扩容**：controller 扩大 volume definition，之后的处理与 ADR-0019 相同。
 - **换存储池（SSD↔HDD）或换副本所在节点**：修改卷的 spec，controller 经 LINSTOR 逐个副本重放（加新
   副本、同步完成后再删旧副本，`toggle-disk`），全程保持 quorum。设备路径不变，domain 不需要改，
   VM 与 LXC 都不停机。
@@ -135,7 +135,7 @@ VMFS 文件锁，不需要全集群 quorum。
   - VM：挂载状态卷，然后是 `ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
   - LXC：挂载 rootfs 与状态卷的 systemd `.mount` 单元（不依赖 Pacemaker 的 `ocf:heartbeat:Filesystem`），然后是
     LXC 版监管进程，不是 `lxc@<name>.service`。
-- **首选节点**：`nodeAffinity.preferred`（ADR-0017）按权重排序后写入 promoter 的 `preferred-nodes`，
+- **首选节点**：`nodeAffinity.preferred`（ADR-0019）按权重排序后写入 promoter 的 `preferred-nodes`，
   策略 `start-only`，原节点恢复后不自动切回。`required` 规则体现在副本与 diskless 的放置上，promoter 只会
   在这些节点上竞争。
 - **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
@@ -157,7 +157,7 @@ VMFS 文件锁，不需要全集群 quorum。
     因此启动失败时执行 `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试；
     全部候选节点都失败时实例停机并告警，不会来回弹跳。Agent 确认本节点问题已解决后执行 `--unmask`，屏蔽
     状态回写 status 并导出为指标（PoC 13）。
-  - **反亲和**（ADR-0017）：监管进程启动实例前，用本地状态中的对象和 label 计算
+  - **反亲和**（ADR-0019）：监管进程启动实例前，用本地状态中的对象和 label 计算
     `topologyKey: kubernetes.io/hostname` 的 `instanceAntiAffinity.required`，本机已在运行被选中的实例
     时按启动失败处理（`evict --keep-masked`）；`preferred` 照常启动并导出指标。
   - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
@@ -182,7 +182,7 @@ VMFS 文件锁，不需要全集群 quorum。
 
 ### VM 在线迁移
 
-迁移对象与前置检查见 ADR-0017。DRBD 上的步骤：
+迁移对象与前置检查见 ADR-0019。DRBD 上的步骤：
 
 1. controller 对目标节点调用 LINSTOR `make-available`，带 `auto_manage_dual_primary`：目标节点没有副本时
    以 diskless 接入；LINSTOR 以资源当前是 Primary 的节点为迁移源，只在源与目标之间设置

@@ -1,10 +1,10 @@
-# ADR-0017：计算后端的日常运维：备份接入、放置、维护、迁移与迁入
+# ADR-0019：计算后端的日常运维：备份接入、放置、维护、迁移与迁入
 
 - 状态：Proposed（需先完成下文"待验证"的事项）
 - 日期：2026-11-03
 - 依据：[对照 vSphere 功能集的设计缺口](../compute/vsphere-gap-analysis.md)；建立在
   [ADR-0015](0015-libvirt-lxc-compute-backend.md)、[ADR-0016](0016-instance-node-services.md) 之上；
-  DRBD 相关的部分见 [ADR-0018](0018-linstor-drbd-storage-integration.md)；§10 修订
+  DRBD 相关的部分见 [ADR-0020](0020-linstor-drbd-storage-integration.md)；§10 修订
   [ADR-0007](0007-compute-node-and-vm-boundary.md) 中"不以透明 live migration 为目标"。
 
 ## 问题
@@ -14,7 +14,7 @@ ADR-0015/0016 解决了实例的创建、冷启动、身份和控制台，但对
 告警对等的监控、磁盘扩容、从 PVE 迁入现有客户机，以及镜像和介质分发。证据见缺口分析。
 
 本 ADR 只写与具体存储无关的部分。各项在 LINSTOR/DRBD 上怎样实现，以及存储暂时不可用时的处理，见
-ADR-0018。
+ADR-0020。
 
 ## 决策
 
@@ -38,7 +38,7 @@ PVE 上的 9 个客户机和笔记本上的 dc1 目前都没有任何备份。
     系统读取，不依赖底层存储能否快照；
   - 增量：libvirt checkpoint（QEMU dirty bitmap），对应 CBT。bitmap 的持久化依赖 qcow2，raw 块设备
     只能用非持久 bitmap，QEMU 重启后需要一次全量，待验证；
-  - 恢复：备份系统写入一个新卷，由 domain 引用它；LINSTOR 上的接管方式见 ADR-0018。
+  - 恢复：备份系统写入一个新卷，由 domain 引用它；LINSTOR 上的接管方式见 ADR-0020。
 - **备份系统的选型以后再定，不阻塞本 ADR 和当前实现**。候选需要支持 libvirt/QEMU 的增量备份接口和
   Linux/Windows 的客户机 agent。集成点的 API 形态（由谁触发、如何授权、在哪个节点读取）取决于选定的
   产品，选型时另行决定并验证。
@@ -116,7 +116,7 @@ LB 每个环境两台分在不同节点，etcd 每个节点一个，sandbox1/2 �
     - `topologyKey: kubernetes.io/hostname` 的 `instanceAntiAffinity.required`：启动前检查本机是否已在
       运行被选中的实例。被选中的实例若在本机运行，本机一定是它的候选节点，它的对象和 label 就在
       Agent 的本地状态里，因此只需要本机的信息。命中时不启动，交给下一个候选节点，没有可用节点时
-      实例保持停止并告警，vSphere HA 对 must 规则也是宁可不重启。DRBD 上的实现见 ADR-0018；
+      实例保持停止并告警，vSphere HA 对 must 规则也是宁可不重启。DRBD 上的实现见 ADR-0020；
     - 其他 `topologyKey`（例如 zone）无法在单个节点上判断，controller 在创建时把成员的候选节点划分到
       不同的拓扑域，冷启动只会落在各自的域内；
     - `preferred` 的反亲和照常启动，违反时导出指标并告警，提示人工迁开。
@@ -135,7 +135,7 @@ LB 每个环境两台分在不同节点，etcd 每个节点一个，sandbox1/2 �
 
 ### 6. 与现有 PVE 告警对等的监控
 
-ADR-0015 和 ADR-0018 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警需要对应项：
+ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警需要对应项：
 
 | 现有告警 | 替代 |
 |---|---|
@@ -160,7 +160,7 @@ ADR-0015 和 ADR-0018 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 
 ### 8. 从 PVE 迁入现有客户机
 
-现有客户机最终都要迁过来，它们的磁盘已经在 LINSTOR 上，原地接管而不复制，见 ADR-0018。
+现有客户机最终都要迁过来，它们的磁盘已经在 LINSTOR 上，原地接管而不复制，见 ADR-0020。
 
 - **配置转换是一次性工具，不是 controller**：读取 `/etc/pve/qemu-server/<vmid>.conf` 和
   `/etc/pve/lxc/<vmid>.conf`，生成 `LibvirtDomain`/`LXCContainer` 的 YAML 提交到 git，由人检查。
@@ -207,7 +207,7 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 
 | | 冷迁移 | 在线迁移 |
 |---|---|---|
-| 共享存储上的 VM | 关机后在目标节点启动；DRBD 上由 promoter 接管，见 ADR-0018 | libvirt live migration；DRBD 上见 ADR-0018 |
+| 共享存储上的 VM | 关机后在目标节点启动；DRBD 上由 promoter 接管，见 ADR-0020 | libvirt live migration；DRBD 上见 ADR-0020 |
 | 共享存储上的 LXC | 同上 | 不支持 |
 | 本地存储的 VM | 关机后由 Agent 之间复制卷，在目标节点建同名卷后启动；随后在 git 中改为新节点 | libvirt `--copy-storage-all`，经 NBD 边迁内存边复制磁盘；目标节点先建好同样大小的卷 |
 | 本地存储的 LXC | 同本地 VM 的冷迁移 | 不支持 |
@@ -220,13 +220,13 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
   auto-converge 默认开启（与 Incus 相同），post-copy 不开启，因为中途失败会丢失客户机。
 - **迁移通道**：控制连接走 Agent 之间的 SPIFFE mTLS 中继（与控制台相同），节点之间不交换 root
   凭据；内存和磁盘数据由 QEMU 直连传输。所有节点只有一条 1G 链路，与 DRBD 复制共用，迁移必须限速，
-  否则会重演 2026-09-25 的 quorum 抖动（ADR-0018）。
+  否则会重演 2026-09-25 的 quorum 抖动（ADR-0020）。
 
 #### 磁盘迁移
 
 | 场景 | 做法 | 实例是否停机 |
 |---|---|---|
-| DRBD 卷换存储池或副本节点 | 修改卷的 spec，LINSTOR 逐副本重放，见 ADR-0018 | 不停机 |
+| DRBD 卷换存储池或副本节点 | 修改卷的 spec，LINSTOR 逐副本重放，见 ADR-0020 | 不停机 |
 | 卷换 pool 或类型（本地↔本地、本地↔DRBD） | 新建 `LibvirtStorageVolume`，用 `source.volume` 声明从旧卷复制内容，再把 domain 的引用改为新卷 | VM：Agent 发现运行中的 domain 某块盘的引用改为"从当前盘复制"的新卷时，用 libvirt `blockcopy`（transient job，与 oVirt 相同）镜像到新卷，同步后 pivot，再重新 define；LXC：停机复制（`qemu-img convert` 或 rsync）后启动 |
 | 跨节点的本地卷 | 见计算迁移中的本地存储行 | 视计算迁移方式 |
 
@@ -244,14 +244,14 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 
 ## 待验证（Accepted 之前必须完成）
 
-1. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0018）；zone 的反亲和由候选节点划分
+1. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0020）；zone 的反亲和由候选节点划分
    保证。
 2. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
 3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
 4. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
 5. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
 
-DRBD 上的冷切换、在线迁移、换池、接管与反亲和的验证见 ADR-0018。
+DRBD 上的冷切换、在线迁移、换池、接管与反亲和的验证见 ADR-0020。
 
 ## 结果
 

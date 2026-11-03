@@ -1,7 +1,7 @@
 # PoC 13：启动失败时 `evict --keep-masked`
 
 - 日期：2026-10-31
-- 对应：[ADR-0018](../decisions/0018-linstor-drbd-storage-integration.md) 待验证第 6 项（原 ADR-0015 第 13 项）
+- 对应：[ADR-0020](../decisions/0020-linstor-drbd-storage-integration.md) 待验证第 6 项（原 ADR-0015 第 13 项）
 - 环境：沿用 [PoC 01](poc-01-drbd-reactor-failover.md) 的嵌套 VM，drbd-reactor 1.12。
 - 结论：**通过**。节点本地的启动失败会自动换到下一个节点；所有候选节点都失败时，各节点都被屏蔽，
   实例停机，不会来回弹跳；问题修好后解除屏蔽即可恢复。

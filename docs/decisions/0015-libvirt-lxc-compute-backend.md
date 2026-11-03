@@ -6,7 +6,7 @@
   与 HA 的部分，与 [ADR-0013](0013-api-only-control-plane-on-lxc.md)、
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
 - 修订：2026-11-03 LINSTOR/DRBD 的部分（卷、自动冷启动的机制、DRBD 可观测性）拆到
-  [ADR-0018](0018-linstor-drbd-storage-integration.md)，本 ADR 只保留计算核心与存储能力的契约。
+  [ADR-0020](0020-linstor-drbd-storage-integration.md)，本 ADR 只保留计算核心与存储能力的契约。
 
 ## 问题
 
@@ -64,7 +64,7 @@
   - 与 PVE 9 同一底座，cgo 编译的 Agent（libvirt、liblxc）一份构建可同时用于 PVE 节点和计算节点，
     PVE 节点将来也能原地卸掉 PVE 转为计算节点（ADR-0007）；
   - libvirt 11.3、swtpm 0.7.1，满足 NVRAM 与 vTPM 状态放在块设备上的要求（libvirt ≥ 10.10，
-    ADR-0018）。
+    ADR-0020）。
 - PoC 在 Ubuntu 24.04（libvirt 10.0、systemd 255）上完成，依赖版本的结论需要在 Debian 13 上重新确认。
 
 ### 资源
@@ -88,7 +88,7 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 - **候选节点由 controller 计算**：domain 引用的 pool 和 network 都已下发到的节点；若引用本地
   pool 上的卷，则只有该卷所在节点。
 - **domain/LXC 共有的 Ayatori 自有字段：** 放置（`nodeName`、`nodeSelector`、`affinity`，复用
-  Kubernetes 的表达，见 ADR-0017）、`ha`（`Restart`/`None`）、
+  Kubernetes 的表达，见 ADR-0019）、`ha`（`Restart`/`None`）、
   `runState`。
   - `runState: Running` 只表示"创建后和宿主机故障后应当拉起"，不表示"任何时候都必须在运行"。
   - `ha: Restart` 只对**崩溃**生效（libvirt 原因为 `crashed`/`failed`、QEMU 或容器 init 消失）。
@@ -155,14 +155,14 @@ Ayatori 不抽象磁盘格式。存储能力尽量通过 libvirt 原生 pool 表
 |---|---|---|---|
 | Ceph RBD | `rbd` 类型 pool，各节点定义同一个 pool，卷共享；Ceph key 通过 libvirt secret 交付 | Agent krbd map 后挂载 | 能（HA 待定） |
 | 本地 | `dir`/`logical`/`zfs` 类型 pool | Agent 取卷路径直接使用或挂载 | 不能，固定在卷所在节点 |
-| LINSTOR/DRBD | **例外**，见 ADR-0018 | 挂载 DRBD 设备 | 能 |
+| LINSTOR/DRBD | **例外**，见 ADR-0020 | 挂载 DRBD 设备 | 能 |
 
 **LINSTOR 没有 libvirt pool 驱动**，是本设计中唯一的非原生部分，由 Ayatori 直接集成，见
-[ADR-0018](0018-linstor-drbd-storage-integration.md)。
+[ADR-0020](0020-linstor-drbd-storage-integration.md)。
 
 **存储能力**：计算核心不认识具体存储，只按卷所在存储声明的能力决定实例能做什么：
 
-| 能力 | 本地 pool | LINSTOR/DRBD（ADR-0018） | Ceph RBD |
+| 能力 | 本地 pool | LINSTOR/DRBD（ADR-0020） | Ceph RBD |
 |---|---|---|---|
 | 换节点 | 复制卷后才能换 | 能 | 能 |
 | 自动冷启动 | 不能，只在原节点拉起 | 能 | 待设计 |
@@ -174,7 +174,7 @@ Ayatori 不抽象磁盘格式。存储能力尽量通过 libvirt 原生 pool 表
 填入 `lxc.net.N.link`。VM 与 LXC 因此共用同一份 pool/network 声明。
 
 LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.org 的镜像。镜像与介质的
-分发见 [ADR-0017](0017-compute-day2-operations.md)，卷克隆以后再做。
+分发见 [ADR-0019](0019-compute-day2-operations.md)，卷克隆以后再做。
 
 ### 网络
 
@@ -191,14 +191,14 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
 双开的是存储锁（VMFS 文件锁），不需要全集群 quorum。
 
 - **防止双开由存储提供**，因此自动冷启动是存储能力：LINSTOR/DRBD 用单 Primary + quorum 与
-  drbd-reactor promoter 实现，见 [ADR-0018](0018-linstor-drbd-storage-integration.md)；Ceph 的 RBD
+  drbd-reactor promoter 实现，见 [ADR-0020](0020-linstor-drbd-storage-integration.md)；Ceph 的 RBD
   exclusive-lock 是协作式的，fencing 需要加入黑名单（blocklist），出现真实需求时再设计。
 - **谁来启动实例**：
   - 具备自动冷启动能力的存储上、`ha: Restart` 的实例，换节点只由该存储集成的机制决定，Agent 不得
     在其他节点启动它；
   - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地拉起。
 - **电源意图**：有意关机的实例不应被重新拉起。本地实例记在 Agent 的本地状态中；可换节点的实例必须
-  记在随实例迁移的位置，DRBD 上是实例的状态卷（ADR-0018）。
+  记在随实例迁移的位置，DRBD 上是实例的状态卷（ADR-0020）。
 - **控制面只观察**实例实际跑在哪个节点，并写入 status。实际位置由存储集成判定（DRBD 以 Primary 且有
   quorum 为准）。实例换了节点不算漂移，控制面不得把它"纠正"回去。
 - **容量预留**在创建时由控制面按实例保障量检查（对应 vSphere 的 admission control），见"资源模型"。
@@ -212,7 +212,7 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 - **采集和告警路径与 HA 一样不依赖控制面**：中央 VictoriaMetrics 直接抓取节点上的 exporter，沿用
   现有的规则与 Telegram 通知。Ayatori apiserver、controller 和前端都不在这条路径上。
 - Agent 导出各实例的状态；"应运行的实例没有任何节点在运行"按 `runState` 判断并告警。存储相关的
-  告警由各存储集成定义，DRBD 见 ADR-0018。
+  告警由各存储集成定义，DRBD 见 ADR-0020。
 - Agent 指标的实例名用 `name` 标签，不用 `instance`：后者是 Prometheus 的抓取目标标签，重名会被
   改写为 `exported_instance`，按实例聚合的规则会全部算错（PoC 06）。
 - 控制面可用时，Agent 同时把这些状态写进 status 和 Event，供前端和 `kubectl` 查看；告警不依赖
@@ -287,8 +287,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 
 ## 待验证（Accepted 之前必须完成）
 
-1. drbd-reactor 冷切换：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 1 项。
-2. 与 PVE 现有 LINSTOR resource group 共存：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 2 项。
+1. drbd-reactor 冷切换：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 1 项。
+2. 与 PVE 现有 LINSTOR resource group 共存：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 2 项。
 3. 各节点下发同名 `rbd`、`logical` pool 和 bridge 型 network 后，domain 使用原生引用，冷启动换
    节点仍能正常解析；LXC 能通过 Agent 解析同一份 pool/network。
    **大部分完成（2026-10-31）**：`logical` pool 与 bridge 型 network 通过，见
@@ -300,7 +300,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态；能否取得容器 init 的 wait status（PoC 04）。
    **已完成（2026-10-31）**：见 [PoC 08](../compute/poc-08-go-lxc.md)。go-lxc 动态链接 liblxc，Agent
    按节点发行版构建。liblxc 的 API、monitor 和 hook 都拿不到停止原因；因此 LXC 改为只看电源意图
-   标记，不解析日志（见 ADR-0018"自动冷启动"）。
+   标记，不解析日志（见 ADR-0020"自动冷启动"）。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **已完成（2026-10-31）**：网络机制见 PoC 03；kubelet 共存见
    [PoC 11](../compute/poc-11-kubelet-coexistence.md)；内存分层与动态上限见
@@ -309,12 +309,12 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    **已完成（2026-10-31）**：可行，见 [PoC 09](../compute/poc-09-agent-status-vap.md)。按节点分开的
    status 字段待 API 设计时确定。
 8. 控制面完全丢失后的手工恢复演练。
-9. `OnFailure=` 触发 evict：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 3 项。
+9. `OnFailure=` 触发 evict：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 3 项。
 10. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
-11. 实例状态卷：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 4 项。
-12. 第一批告警：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 5 项。
-13. 启动失败时 `evict --keep-masked`：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 6 项。
+11. 实例状态卷：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 4 项。
+12. 第一批告警：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 5 项。
+13. 启动失败时 `evict --keep-masked`：已移至 [ADR-0020](0020-linstor-drbd-storage-integration.md) 第 6 项。
 14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理。
     **已决定（2026-10-31）**：不做专门处理，按宿主机故障对待。DRBD 连接随之中断时与断电相同，自动冷切换
     （PoC 13 中真实发生）；DRBD 仍连着时依赖告警（`ExporterDown`、`InstanceDown`）与人工经 PVE/IPMI
@@ -353,10 +353,10 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 
 逐项对照 vSphere 功能集的结果见[缺口分析](../compute/vsphere-gap-analysis.md)。其中有现状证据的
 反亲和、维护模式、VMCP、故障切换容量、备份、迁入等，设计见
-[ADR-0017](0017-compute-day2-operations.md)，LINSTOR/DRBD 上的实现见
-[ADR-0018](0018-linstor-drbd-storage-integration.md)。仍无需求的：
+[ADR-0019](0019-compute-day2-operations.md)，LINSTOR/DRBD 上的实现见
+[ADR-0020](0020-linstor-drbd-storage-integration.md)。仍无需求的：
 
 - **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。全站断电恢复成为问题时，
   参照 vSphere 的 orchestrated restart。
 
-明确不参照的部分：Fault Tolerance。VM 的在线迁移与磁盘迁移见 ADR-0017。
+明确不参照的部分：Fault Tolerance。VM 的在线迁移与磁盘迁移见 ADR-0019。
