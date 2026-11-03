@@ -17,7 +17,8 @@
 | SIOC / 存储 I/O 争用 | 同上：触发因素是两块新卷的初始同步 | ADR-0017 §1 |
 | 备份（VADP/CBT）与恢复 | PVE 上 9 个客户机全部没有备份，未设告警；dc1 无任何备份（`platform/observability/COVERAGE.md:120-121`） | ADR-0017 §2 |
 | 维护模式与 evacuation | 2026-07-25 三台节点全部经 PXE 重装；升级按 `serial: 1` 逐台进行，需要重启时只报告不执行（`pve_post_install`、`pve_kernel_params`）；roadmap 的 Laptop Rebuild 验收场景 | ADR-0017 §3 |
-| 冷迁移（指定目标节点） | VM 101 先建在 pve1 再手工挪走（`pve_vm/defaults/main.yml:11,52`）；`qm migrate` 离线迁移 | ADR-0017 §3 |
+| 冷迁移、vMotion | VM 101 先建在 pve1 再手工挪走（`pve_vm/defaults/main.yml:11,52`），`qm migrate` 离线迁移；VM 100 做过在线迁移（`pve_vm/defaults/main.yml:31-33`） | ADR-0017 §11 |
+| Storage vMotion | etcd rootfs 用 `pct move-volume` 在存储之间搬迁，要求停机（`etcd/ansible/move-storage.yml:56-67`） | ADR-0017 §11 |
 | EVC（CPU 兼容基线） | pve1 是 Intel，pve2/pve3 是 AMD；VM 100 用 `host` CPU 在线迁移失败，改为 `x86-64-v2-AES`（`pve_ha/defaults/main.yml:27-30`） | ADR-0017 §4 |
 | VM-VM 反亲和 | LB 每个环境两台分在不同节点、etcd 每节点一个、sandbox1/2 分开，全部靠 inventory 手工保证 | ADR-0017 §5 |
 | HA admission control（故障切换容量） | 宿主机为 16G/8G/8G，单台故障后剩余容量能否承接没有任何检查 | ADR-0017 §6 |
@@ -51,8 +52,7 @@
 | 模板、链接克隆、即时克隆 | 没有模板和克隆的使用；实例从镜像加 cloud-init 创建 |
 | 重启优先级与编排 | 只有 sandbox 用过 `startup order`；依赖顺序由应用重试承担。全站断电恢复成为问题时再评估 |
 | DRS 负载均衡、DPM、资源池层级 | 3 台节点，没有自动平衡的需求 |
-| vMotion | ADR-0007 不作为目标；是否为 VyOS 例外见 ADR-0017 §3 的待决问题 |
-| Fault Tolerance、vSphere Replication/SRM | 单站点；冗余由应用层或 DRBD 承担 |
+| Fault Tolerance、vSphere Replication/SRM、LXC 在线迁移 | 单站点；冗余由应用层或 DRBD 承担 |
 | 防火墙、安全组、PVLAN、端口镜像、NIOC、LACP | PVE 防火墙未使用，VyOS 也未配置防火墙（`README-monitoring.md:76`） |
 | VM 加密与 KMS | 没有使用；bao1 的 TPM 直通在笔记本的 libvirt 上，由原生 XML 覆盖 |
 | 计划任务（定时开关机） | 没有使用 |

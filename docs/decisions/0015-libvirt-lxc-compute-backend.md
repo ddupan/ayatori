@@ -441,4 +441,4 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 - **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。全站断电恢复成为问题时，
   参照 vSphere 的 orchestrated restart。
 
-明确不参照的部分：vMotion 式热迁移和 Fault Tolerance 不是本后端的目标（ADR-0007）。
+明确不参照的部分：Fault Tolerance。VM 的在线迁移与磁盘迁移见 ADR-0017。

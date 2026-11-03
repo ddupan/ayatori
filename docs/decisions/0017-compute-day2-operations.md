@@ -1,14 +1,15 @@
-# ADR-0017：计算后端的日常运维：存储失效、备份接入、放置、维护与迁入
+# ADR-0017：计算后端的日常运维：存储失效、备份接入、放置、维护、迁移与迁入
 
 - 状态：Proposed（含待维护者确认的问题，见文末）
 - 日期：2026-11-03
 - 依据：[对照 vSphere 功能集的设计缺口](../compute/vsphere-gap-analysis.md)；建立在
-  [ADR-0015](0015-libvirt-lxc-compute-backend.md)、[ADR-0016](0016-instance-node-services.md) 之上。
+  [ADR-0015](0015-libvirt-lxc-compute-backend.md)、[ADR-0016](0016-instance-node-services.md) 之上；
+  §11 修订 [ADR-0007](0007-compute-node-and-vm-boundary.md) 中"不以透明 live migration 为目标"。
 
 ## 问题
 
 ADR-0015/0016 解决了实例的创建、冷启动、身份和控制台，但对照 vSphere 后，以下有现状证据的需求
-还没有设计：存储暂时不可用时的处理、备份、宿主机维护与计划内迁移、异构 CPU、放置与反亲和、
+还没有设计：存储暂时不可用时的处理、备份、宿主机维护、计算与磁盘迁移、异构 CPU、放置与反亲和、
 故障切换容量、与现有 PVE 告警对等的监控、磁盘扩容、从 PVE 迁入现有客户机，以及镜像
 和介质分发。证据见缺口分析。
 
@@ -66,14 +67,14 @@ PVE 上的 9 个客户机和笔记本上的 dc1 目前都没有任何备份。
 - **沿用 Node API 的语义**（ADR-0007）：
   - `kubectl cordon`（`spec.unschedulable`）：controller 不再把新实例放到该节点；
   - **维护**：给 Node 打 taint `compute.ayatori.ddupan.top/maintenance:NoExecute`，Agent 据此排空本节点：
-    - DRBD 上的受保护实例：`drbd-reactorctl evict --keep-masked`，由其他候选节点接管；
-    - 本地存储实例无法迁走：正常关机，**不写**电源意图标记，宿主机重启后由 Agent 按 `runState`
-      拉起；
+    - 能在线迁移的 VM（§11）在线迁走；
+    - 其余 DRBD 上的受保护实例：`drbd-reactorctl evict --keep-masked`，由其他候选节点冷启动；
+    - 本地存储实例：正常关机，**不写**电源意图标记，宿主机重启后由 Agent 按 `runState` 拉起。
+      需要在维护期间继续运行的，先按 §11 迁走；
   - 排空完成后，Agent 在 Node 上设置 condition `SafeToRemove=True`（roadmap 已有的名字），运维再
     重启或重装；
   - 去掉 taint 后，Agent 执行 `--unmask`。
-- **计划内冷迁移**：修改 `spec.nodeName`（§5）后 evict 一次。
-- **冷迁移有停机**：等于客户机关机加启动。这对 VyOS 意味着网关中断，是否需要例外见文末待决问题 2。
+- 计划内迁移见 §11。
 - 宿主机的升级本身仍由 Chef/apt 负责，Ayatori 只提供排空和 `SafeToRemove`。不做 Lifecycle Manager
   式的滚动编排，逐台执行写进 runbook。
 
@@ -172,13 +173,65 @@ ADR-0015 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警�
 - LXC 不再使用 `download` 模板，改为从同一个 bucket 中预先同步的 rootfs 归档创建，取代 ADR-0015
   中"第一版使用 `download` 模板"的做法。
 
+### 11. 迁移
+
+现状：VM 101 先建在 pve1 再用 `qm migrate` 离线挪走；VM 100 做过在线迁移（因 CPU 型号失败，见 §4）；
+etcd 的 rootfs 用 `pct move-volume` 在存储之间搬过，要求容器停机并限速。
+
+**原则：实例在哪个节点运行是运行时状态，磁盘放在哪里是配置。**
+
+- 计算迁移不改 spec，与 ADR-0016 的开关机一样是运行时操作：经计算控制台（子资源
+  `libvirtdomains/migrate`，SubjectAccessReview）交给源节点 Agent 执行，在实例上记 Event。ADR-0015
+  已规定实例换节点不算漂移。要让实例长期以新节点为首选，另外修改 git 中的 `nodeName`（§5）。
+- 磁盘迁移改变的是卷的位置，属于配置，经 git 修改 spec。vSphere 的 Storage vMotion 同样会改写
+  VM 的配置文件。
+
+#### 计算迁移
+
+| | 冷迁移 | 在线迁移 |
+|---|---|---|
+| DRBD 上的 VM | `evict`，目标节点由 promoter 竞争得出，可先屏蔽其他节点以指定目标 | libvirt live migration，见下 |
+| DRBD 上的 LXC | 同上 | 不支持：需要 CRIU，对完整系统容器限制很多，Incus 的容器在线迁移同样受此限制 |
+| 本地存储的 VM | 关机后由 Agent 之间复制卷，在目标节点建同名卷后启动；`nodeName` 随之修改 | libvirt `--copy-storage-all`，经 NBD 边迁内存边复制磁盘；目标节点先建好同样大小的卷 |
+| 本地存储的 LXC | 同本地 VM 的冷迁移 | 不支持 |
+
+- **前置检查**（源节点 Agent 发起前，与冷启动共用）：目标节点是候选节点、CPU 兼容（§4，在线迁移
+  要求具名型号或两端型号一致）、容量按保障量足够并先压低目标节点 `k8s.slice` 的上限、`Required`
+  反亲和（§5）。
+- **DRBD 上的在线迁移**：迁移期间两个节点都要能打开设备。做法与 PVE 的 LINSTOR 插件相同：迁移前
+  对该资源临时设置 `allow-two-primaries`，目标节点 promote，迁移完成后源节点 demote 并恢复单 Primary。
+  难点在于这与 promoter 的所有权冲突：
+  - 源节点的监管进程收到 `STOPPED`/`MIGRATED` 事件，不得当作崩溃；
+  - 目标节点的 promoter 需要接手一个已经在运行的实例，监管进程启动时发现 domain 已在运行，就
+    认领它而不是再次启动；
+  - 实例状态卷是 ext4，不能两边同时挂载。NVRAM 可以改为单独的 DRBD 块设备
+    （`<nvram type='block'>`），随双 Primary 一起切换；vTPM 状态经 libvirt 的迁移流传输，迁移后
+    再写回状态卷。
+  - 这几点都没有验证过，是在线迁移的主要风险。第一版可以只支持不带 vTPM 的 VM。
+- **迁移通道**：控制连接走 Agent 之间的 SPIFFE mTLS 中继（与控制台相同），节点之间不交换 root
+  凭据；内存和磁盘数据由 QEMU 直连传输。所有节点只有一条 1G 链路，与 DRBD 复制共用，迁移必须限速
+  （`--bandwidth`），否则会重演 §1 的 quorum 抖动。
+- 维护排空（§3）对能在线迁移的 VM 优先在线迁移，其余冷迁移或关机。
+
+#### 磁盘迁移
+
+| 场景 | 做法 | 实例是否停机 |
+|---|---|---|
+| DRBD 卷换存储池（SSD↔HDD）或换副本所在节点 | 修改 `LibvirtStorageVolume` 的 storage pool 或副本放置，controller 经 LINSTOR 逐个副本重放（`toggle-disk`，加新副本、同步完成后再删旧副本），全程保持 quorum。设备路径 `/dev/drbd/by-res/...` 不变，domain 不需要改 | 不停机，VM 与 LXC 都适用 |
+| 卷换 pool 或类型（本地↔本地、本地↔DRBD） | 新建 `LibvirtStorageVolume`，用 `source.volume` 声明从旧卷复制内容，再把 domain 的引用改为新卷 | VM：Agent 发现运行中的 domain 某块盘的引用改为"从当前盘复制"的新卷时，用 libvirt `blockcopy`（transient job）镜像到新卷，同步后 pivot，再重新 define；LXC：停机复制（`qemu-img convert` 或 rsync）后启动 |
+| 跨节点的本地卷 | 见上表计算迁移中的本地存储行 | 视计算迁移方式 |
+
+- 旧卷不会被自动删除：没有实例引用后，按它的 `reclaimPolicy` 处理（ADR-0015 的卷保护 finalizer）。
+- DRBD 重同步与 `blockcopy` 同样占用复制链路，与 §1 共用限速设置。
+- 只声明新卷而不写 `source.volume` 时，新卷是空盘，Agent 不会复制任何数据，避免误把"换一块新盘"
+  当成迁移。
+
 ## 待维护者确认
 
-1. **VyOS 冷迁移的网关中断**：VM 100 原本在线迁移过。可选做法：
+1. **VyOS 的网关中断**：可选做法：
    - 接受冷迁移的中断（客户机启动时间，约数十秒）；
    - 改为两台 VyOS 跑 VRRP，按 §5 设 `Required` 反亲和（推荐，与 LB 的做法一致）；
-   - 为它单独支持 libvirt 在线迁移：需要迁移期间临时允许 DRBD 双 Primary，与 promoter 的单 Primary
-     模型冲突，复杂度最高，ADR-0007 也明确不以此为目标。
+   - 依靠 §11 的在线迁移：计划内维护不中断，但宿主机故障时仍是冷启动。
 2. **备份系统选型**：见 §2。
 
 ## 待验证（Accepted 之前必须完成）
@@ -193,12 +246,18 @@ ADR-0015 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exporter 告警�
    `SafeToRemove` 的时机正确。
 5. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
 6. 接管一个由 PVE 创建的 LINSTOR resource 并启动，PVE 侧不再引用它。
+7. DRBD 上 VM 的在线迁移：`allow-two-primaries` 切换、promoter 与监管进程的所有权交接、NVRAM 块设备
+   与 vTPM 状态；迁移中途失败时实例仍只在一个节点运行。
+8. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
+9. LINSTOR 逐副本更换存储池期间实例持续运行、quorum 不丢；运行中 VM 的 `blockcopy` 换卷后重新
+   define，冷启动使用新卷。
 
 ## 结果
 
 - 存储抖动不再把客户机变成只读，填补了 2026-09-25 事故暴露的缺口。
 - 新增的 API：`nodeName` 改为首选节点、`antiAffinity`、维护 taint 和 `SafeToRemove`、
-  `LibvirtStorageVolume` 的 `size` 扩容。
+  `LibvirtStorageVolume` 的 `size` 扩容与 `source.volume`、计算控制台的 `migrate` 操作。
+- VM 支持在线迁移，修订 ADR-0007；LXC 只做冷迁移。
 - 备份交给专门的备份系统，Ayatori 只提供一致点、读取和增量的集成点，不保存备份数据。
 - 反亲和由节点在冷启动时本地检查，冷启动不会破坏应用自带的冗余。
 - 迁入走一次性工具加 runbook，不为 PVE 迁移写长期运行的 controller。

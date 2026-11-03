@@ -5,6 +5,8 @@
 - 实施优先级：Deferred；当前优先 Database、LoadBalancer 与 Bucket
 - 修订：2026-10-30 [ADR-0015](0015-libvirt-lxc-compute-backend.md)（Proposed）提议把北向改为透传
   原生配置的 `LibvirtDomain`/`LXCContainer`，HA 运行时下沉到节点（DRBD + drbd-reactor）。
+- 修订：2026-11-03 [ADR-0017](0017-compute-day2-operations.md)（Proposed）提议 VM 支持在线迁移，
+  作为宿主机维护的日常操作；HA 仍是冷启动。
 
 ## 背景
 
