@@ -5,14 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
 func TestPrepareDomain(t *testing.T) {
 	d := &computev1alpha1.LibvirtDomain{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "dns1", UID: "1b2c3d4e-0000-4000-8000-000000000001"},
+		Namespace: "infra", Name: "dns1", UID: "1b2c3d4e-0000-4000-8000-000000000001",
 		Spec: computev1alpha1.LibvirtDomainSpec{DomainXML: `<domain type='kvm'>
   <name>whatever</name><uuid>00000000-0000-0000-0000-000000000000</uuid><memory>524288</memory>
   <os><type arch='x86_64' machine='q35'>hvm</type></os>

@@ -44,7 +44,7 @@ func (c *Client) Network(name string) (Object, error) {
 	} else if err != nil {
 		return Object{}, err
 	}
-	defer n.Free()
+	defer free(n.Free)
 	xml, err := inactiveXML(func(inactive bool) (string, error) {
 		if inactive {
 			return n.GetXMLDesc(golibvirt.NETWORK_XML_INACTIVE)
@@ -72,7 +72,7 @@ func (c *Client) StartNetwork(name string) error {
 	if err != nil {
 		return err
 	}
-	defer n.Free()
+	defer free(n.Free)
 	if err := n.SetAutostart(true); err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func (c *Client) RemoveNetwork(name string) error {
 	} else if err != nil {
 		return err
 	}
-	defer n.Free()
+	defer free(n.Free)
 	if active, err := n.IsActive(); err != nil {
 		return err
 	} else if active {
@@ -108,7 +108,7 @@ func (c *Client) Pool(name string) (Object, error) {
 	} else if err != nil {
 		return Object{}, err
 	}
-	defer p.Free()
+	defer free(p.Free)
 	xml, err := inactiveXML(func(inactive bool) (string, error) {
 		if inactive {
 			return p.GetXMLDesc(golibvirt.STORAGE_XML_INACTIVE)
@@ -136,7 +136,7 @@ func (c *Client) StartPool(name string) error {
 	if err != nil {
 		return err
 	}
-	defer p.Free()
+	defer free(p.Free)
 	if err := p.SetAutostart(true); err != nil {
 		return err
 	}
@@ -154,7 +154,7 @@ func (c *Client) RemovePool(name string) error {
 	} else if err != nil {
 		return err
 	}
-	defer p.Free()
+	defer free(p.Free)
 	if active, err := p.IsActive(); err != nil {
 		return err
 	} else if active {
@@ -171,12 +171,12 @@ func (c *Client) Volume(pool, volume string) (path string, block bool, err error
 	if err != nil {
 		return "", false, err
 	}
-	defer p.Free()
+	defer free(p.Free)
 	v, err := p.LookupStorageVolByName(volume)
 	if err != nil {
 		return "", false, err
 	}
-	defer v.Free()
+	defer free(v.Free)
 	info, err := v.GetInfo()
 	if err != nil {
 		return "", false, err
@@ -202,7 +202,7 @@ func (c *Client) Domain(name string) (Domain, error) {
 	} else if err != nil {
 		return Domain{}, err
 	}
-	defer d.Free()
+	defer free(d.Free)
 	xml, err := d.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
 	if err != nil {
 		return Domain{}, err
@@ -221,7 +221,7 @@ func (c *Client) DefineDomain(xml string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Free()
+	defer free(d.Free)
 	return d.SetAutostart(false)
 }
 
@@ -230,7 +230,7 @@ func (c *Client) StartDomain(name string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Free()
+	defer free(d.Free)
 	return d.Create()
 }
 
@@ -242,7 +242,7 @@ func (c *Client) RemoveDomain(name string) error {
 	} else if err != nil {
 		return err
 	}
-	defer d.Free()
+	defer free(d.Free)
 	state, _, err := d.GetState()
 	if err != nil {
 		return err
@@ -296,6 +296,11 @@ func isUnsupportedFlags(err error) bool {
 	return errors.As(err, &e) && e.Code == golibvirt.ERR_INVALID_ARG
 }
 
+const (
+	unknown = "unknown"
+	crashed = "crashed"
+)
+
 func stateNames(state golibvirt.DomainState, reason int) (string, string) {
 	switch state {
 	case golibvirt.DOMAIN_RUNNING:
@@ -303,29 +308,32 @@ func stateNames(state golibvirt.DomainState, reason int) (string, string) {
 	case golibvirt.DOMAIN_SHUTOFF:
 		return "shut off", pick(shutoffReasons, reason)
 	case golibvirt.DOMAIN_PAUSED:
-		return "paused", "unknown"
+		return "paused", unknown
 	case golibvirt.DOMAIN_SHUTDOWN:
-		return "in shutdown", "unknown"
+		return "in shutdown", unknown
 	case golibvirt.DOMAIN_CRASHED:
-		return "crashed", "unknown"
+		return crashed, unknown
 	case golibvirt.DOMAIN_PMSUSPENDED:
-		return "pmsuspended", "unknown"
+		return "pmsuspended", unknown
 	case golibvirt.DOMAIN_BLOCKED:
-		return "idle", "unknown"
+		return "idle", unknown
 	}
-	return "no state", "unknown"
+	return "no state", unknown
 }
 
 var (
-	runningReasons = []string{"unknown", "booted", "migrated", "restored", "from snapshot", "unpaused",
-		"migration canceled", "save canceled", "event wakeup", "crashed", "post-copy", "post-copy failed"}
-	shutoffReasons = []string{"unknown", "shutdown", "destroyed", "crashed", "migrated", "saved", "failed",
+	runningReasons = []string{unknown, "booted", "migrated", "restored", "from snapshot", "unpaused",
+		"migration canceled", "save canceled", "event wakeup", crashed, "post-copy", "post-copy failed"}
+	shutoffReasons = []string{unknown, "shutdown", "destroyed", crashed, "migrated", "saved", "failed",
 		"from snapshot", "daemon"}
 )
 
+// free 释放 libvirt 对象的引用；只在返回前调用，失败也无事可做。
+func free(f func() error) { _ = f() }
+
 func pick(names []string, i int) string {
 	if i < 0 || i >= len(names) {
-		return "unknown"
+		return unknown
 	}
 	return names[i]
 }

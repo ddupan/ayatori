@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,7 +135,7 @@ func (s *Store) List(kind string) []Record {
 			out = append(out, r)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	slices.SortFunc(out, func(a, b Record) int { return strings.Compare(a.Key, b.Key) })
 	return out
 }
 
@@ -149,13 +149,13 @@ func (s *Store) write(r Record) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -166,7 +166,7 @@ func (s *Store) write(r Record) error {
 	}
 	if d, err := os.Open(s.dir); err == nil {
 		_ = d.Sync()
-		d.Close()
+		_ = d.Close()
 	}
 	s.records[id(r.Kind, r.Key)] = r
 	s.notify()
