@@ -63,6 +63,7 @@ containers:
       - --database-credential-prefix={{ database_credential_prefix }}
       - --database-provision-resources
       - --database-credential-url-base={{ openbao_address }}
+    extra_args: "{{ loadbalancer_args }}"
     memory: 256M
 
   # 只导出 CR 状态（Flux 对象与 Ayatori Instance/Database/Tenant），不导出内置资源。
@@ -79,3 +80,13 @@ containers:
       - --telemetry-host=127.0.0.1
       - --telemetry-port=8086
     memory: 128M
+# 部署方声明 ayatori_loadbalancer 时启用 LoadBalancer controller；凭据 Secret 由
+# deploy/flux/loadbalancer 同步。
+loadbalancer_args: >-
+  {{ [] if ayatori_loadbalancer is not defined else
+     ['--loadbalancer-address-pool=' ~ ayatori_loadbalancer.address_pool,
+      '--loadbalancer-credentials=' ~ control_namespace ~ '/loadbalancer-credentials'] }}
+
+loadbalancer_hosts: "{{ ayatori_loadbalancer.hosts | default([]) }}"
+# role 创建的 LoadBalancerHost 带此标签（selector 形式），据此删除 inventory 中已移除的主机。
+loadbalancer_host_label: app.kubernetes.io/managed-by=ayatori-deploy

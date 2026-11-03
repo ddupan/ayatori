@@ -74,5 +74,4 @@ jobs:
           key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
 
       - name: Lint
-        run: |
-          make lint
+        run: make lint

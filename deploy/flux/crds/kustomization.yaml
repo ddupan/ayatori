@@ -1,7 +1,10 @@
-# Database CRD 单独同步且关闭 prune：误删 CRD 会连带删除全部 Instance/Tenant/Database。
+# CRD 单独同步且关闭 prune：误删 CRD 会连带删除其全部对象（Instance/Tenant/Database、LoadBalancer、LoadBalancerHost、Backend）。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - ../../../config/crd/bases/database.ayatori.ddupan.top_postgresqlinstances.yaml
 - ../../../config/crd/bases/database.ayatori.ddupan.top_postgresqldatabases.yaml
 - ../../../config/crd/bases/database.ayatori.ddupan.top_postgresqltenants.yaml
+- ../../../config/crd/bases/network.ayatori.ddupan.top_loadbalancers.yaml
+- ../../../config/crd/bases/network.ayatori.ddupan.top_loadbalancerhosts.yaml
+- ../../../config/crd/bases/network.ayatori.ddupan.top_backends.yaml

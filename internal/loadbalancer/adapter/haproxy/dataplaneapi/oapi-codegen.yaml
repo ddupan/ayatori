@@ -1,0 +1,27 @@
+# 由 make generate-dataplaneapi 使用；只生成 adapter 用到的操作，未引用的 schema 会被裁剪。
+package: dataplaneapi
+output: internal/loadbalancer/adapter/haproxy/dataplaneapi/dataplaneapi.gen.go
+generate:
+  models: true
+  client: true
+output-options:
+  include-operation-ids:
+    - getConfigurationVersion
+    - startTransaction
+    - commitTransaction
+    - deleteTransaction
+    - getBackends
+    - createBackend
+    - replaceBackend
+    - deleteBackend
+    - getFrontends
+    - createFrontend
+    - replaceFrontend
+    - deleteFrontend
+    - getReloads
+    - getAllRuntimeServer
+    - createServerBackend
+    - replaceServerBackend
+    - deleteServerBackend
+    - replaceRuntimeServer
+    - getStats

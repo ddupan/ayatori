@@ -1,0 +1,6 @@
+# 仅在部署方声明 ayatori_loadbalancer 时由 role 加入同步；${VAR} 由该 Kustomization 的
+# postBuild.substitute 提供。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- credentials.yaml

@@ -2,13 +2,14 @@ name: Database Integration
 
 on:
   # 只在 Database 相关代码或本工作流变化时运行真实后端集成测试；其余 Go 改动由 Verify 覆盖。
-  # bootstrap 的集成测试同时验证 Database 装配，因此一并触发。
+  # bootstrap 的集成测试同时验证 Database 装配，因此一并触发；其中只属于 LoadBalancer 装配的文件除外。
   pull_request:
     paths:
       - 'api/database/**'
       - 'internal/database/**'
       - 'internal/infra/**'
       - 'internal/bootstrap/**'
+      - '!internal/bootstrap/loadbalancer*.go'
       - 'internal/testenv/**'
       - 'hack/integration-test.sh'
       - 'hack/apiserver/**'
@@ -46,7 +47,7 @@ jobs:
 
   test:
     runs-on: [self-hosted, pod]
-    timeout-minutes: 30
+    timeout-minutes: 60  # 2 核 runner 冷缓存全量编译很慢；缓存只在成功时保存
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd

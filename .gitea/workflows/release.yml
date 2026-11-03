@@ -83,3 +83,67 @@ jobs:
           else
             curl -fsS -X POST "${auth[@]}" -d "$payload" "${API}/releases" > /dev/null
           fi
+
+  # LB agent 跑在 LB 主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
+  # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
+  publish-lb-agent:
+    # 等 publish-image 建好带发布说明的 Release 再附加，避免两个 job 同时创建同名 Release。
+    needs: publish-image
+    runs-on: [self-hosted, pod]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          go: 'true'
+          go-version-file: go.mod
+
+      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
+      - name: Cache Go modules, build cache and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            bin
+          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+
+      - name: Build tarball and checksums
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          dist="$(mktemp -d)"
+          mkdir "$dist/pkg"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$dist/pkg/lb-agent" ./cmd/lb-agent
+          tar -C "$dist/pkg" -czf "$dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
+          (cd "$dist" && sha256sum "ayatori-lb-agent_${version}_linux_amd64.tar.gz" > "ayatori_${version}_checksums.txt")
+          echo "DIST=$dist" >> "$GITHUB_ENV"
+
+      # tag 推送不会自动创建 release；已有同名 release 时附加到它上面。
+      - name: Attach to release
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          api="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}"
+          auth="Authorization: token ${TOKEN}"
+          if ! id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" | jq -er .id)"; then
+            id="$(jq -n --arg tag "$TAG" '{tag_name: $tag, name: $tag}' |
+              curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' -d @- "$api/releases" | jq -er .id)"
+          fi
+          for file in "$DIST"/*.tar.gz "$DIST"/*_checksums.txt; do
+            curl -fsS -X POST -H "$auth" -F "attachment=@${file}" "$api/releases/${id}/assets?name=$(basename "$file")" >/dev/null
+          done
+          printf '## LB agent\n\n- `%s/releases/download/%s/`\n' "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" "$TAG" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

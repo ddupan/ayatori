@@ -4,12 +4,23 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	bao "github.com/openbao/openbao/api/v2"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
@@ -43,7 +54,11 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	}
 	t.Setenv("KUBECONFIG", path)
 	t.Setenv("POD_NAMESPACE", "")
-	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1")
+	createLoadBalancerCredentials(t, config)
+	options := parseTestOptions(t, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--webhook-port=-1",
+		"--loadbalancer-address-pool=10.62.0.0/24",
+		"--loadbalancer-credentials=default/loadbalancer-hosts",
+		"--loadbalancer-dns-url=http://127.0.0.1:1", "--loadbalancer-dns-zone=lb.example.test")
 	manager, err := newManager(options)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +85,9 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeDatabaseConnections()
+	if err := registerLoadBalancerControllers(ctx, manager, options.lb); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- manager.Start(ctx) }()
 	defer func() {
@@ -85,5 +103,37 @@ func TestBootstrapWithRealAPIServer(t *testing.T) {
 	}()
 	if !manager.GetCache().WaitForCacheSync(ctx) {
 		t.Fatal("assembled controller cache did not synchronize")
+	}
+}
+
+// createLoadBalancerCredentials 写入只用于本测试的自签证书；装配路径须能解析 mTLS 凭据。
+func createLoadBalancerCredentials(t *testing.T, config *rest.Config) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "ayatori-test"},
+		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der})
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := &corev1.Secret{Name: "loadbalancer-hosts", Namespace: "default", Data: map[string][]byte{
+		"username": []byte("ayatori"), "password": []byte("AYATORI-TEST-ONLY"),
+		"tls.crt": certificate, "tls.key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), "ca.crt": certificate,
+		"powerdns-api-key": []byte("AYATORI-TEST-ONLY"),
+	}}
+	if _, err := clientset.CoreV1().Secrets("default").Create(t.Context(), secret, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
 	}
 }
