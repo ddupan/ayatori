@@ -14,92 +14,22 @@
     mode: "0500"
   loop: "{{ identities }}"
 
-# 客户端证书（ADR-0021）：client-credentials 容器为各身份生成私钥、提交 CSR 并自行续签；首次签发与
-# 证书过期后的重新签发由本 role 用短期 bootstrap token 发起，核对 CSR 后以管理员身份批准。
-- name: 应用客户端证书 RBAC
-  ansible.builtin.include_tasks: apply.yml
-  vars:
-    manifest: "{{ role_path }}/files/client-certificates.yaml"
-
-- name: 检查各身份证书剩余有效期
-  ansible.builtin.command: openssl x509 -noout -checkend 604800 -in {{ identities_dir }}/{{ item.name }}/client.pem
-  loop: "{{ identities }}"
-  register: certificate_check
-  changed_when: false
-  failed_when: false
-
-# 没有证书或不足 7 天到期（续签在 70–90% 时进行，正常不会走到这里）时重新签发，每个身份一个 token。
-- name: 确定需要签发证书的身份
-  ansible.builtin.set_fact:
-    bootstrap_identities: []
-
-- name: 生成 bootstrap token
-  ansible.builtin.set_fact:
-    bootstrap_identities: >-
-      {{ bootstrap_identities + [item.item | combine({
-           'token_id': lookup('password', '/dev/null length=6 chars=ascii_lowercase,digits'),
-           'token_secret': lookup('password', '/dev/null length=16 chars=ascii_lowercase,digits')})] }}
-  loop: "{{ certificate_check.results | rejectattr('rc', 'equalto', 0) | list }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  no_log: true
-
-- name: 读取 k0s CA
-  ansible.builtin.slurp:
-    src: /var/lib/k0s/pki/ca.crt
-  register: k0s_ca
-
-- name: 创建 bootstrap token
+# ponytail: k0s 签发的客户端证书一年到期；到期前删除对应 kubeconfig 并重跑 playbook 轮换。
+- name: 签发 kubeconfig
   ansible.builtin.shell: |
     set -eu
-    k0s kubectl apply -f - <<EOF
-    apiVersion: v1
-    kind: Secret
-    metadata: {namespace: kube-system, name: bootstrap-token-$TOKEN_ID}
-    type: bootstrap.kubernetes.io/token
-    stringData:
-      token-id: "$TOKEN_ID"
-      token-secret: "$TOKEN_SECRET"
-      expiration: "$(date -u -d '+15 minutes' +%Y-%m-%dT%H:%M:%SZ)"
-      usage-bootstrap-authentication: "true"
-      auth-extra-groups: system:bootstrappers:ayatori
-    EOF
+    umask 077
+    k0s kubeconfig create "$NAME" > "$DIR/kubeconfig.tmp"
+    chown "$ID:$ID" "$DIR/kubeconfig.tmp"
+    chmod 0400 "$DIR/kubeconfig.tmp"
+    mv "$DIR/kubeconfig.tmp" "$DIR/kubeconfig"
+  args:
+    creates: "{{ identities_dir }}/{{ item.name }}/kubeconfig"
   environment:
-    TOKEN_ID: "{{ item.token_id }}"
-    TOKEN_SECRET: "{{ item.token_secret }}"
-  changed_when: true
-  loop: "{{ bootstrap_identities }}"
-  loop_control:
-    label: "{{ item.name }}"
-  no_log: true
-
-# bootstrap-kubeconfig 只属于 root：token 由续签容器使用，组件读不到它。
-- name: 写入 bootstrap kubeconfig
-  ansible.builtin.copy:
-    content: |
-      apiVersion: v1
-      kind: Config
-      clusters:
-      - name: ayatori
-        cluster:
-          server: https://{{ ayatori_api_address }}:6443
-          certificate-authority-data: {{ k0s_ca.content }}
-      users:
-      - name: bootstrap
-        user:
-          token: {{ item.token_id }}.{{ item.token_secret }}
-      contexts:
-      - name: default
-        context: {cluster: ayatori, user: bootstrap}
-      current-context: default
-    dest: "{{ identities_dir }}/{{ item.name }}/bootstrap-kubeconfig"
-    owner: root
-    group: root
-    mode: "0400"
-  loop: "{{ bootstrap_identities }}"
-  loop_control:
-    label: "{{ item.name }}"
-  no_log: true
+    NAME: "{{ item.name }}"
+    ID: "{{ item.uid }}"
+    DIR: "{{ identities_dir }}/{{ item.name }}"
+  loop: "{{ identities }}"
   notify: 重启控制面容器
 
 - name: 创建 kube-state-metrics 配置目录
@@ -144,38 +74,6 @@
   register: image_pull
   changed_when: "'changed' in image_pull.stdout"
   notify: 重启控制面容器
-
-- name: 写入 client-credentials quadlet
-  ansible.builtin.template:
-    src: client-credentials.container.j2
-    dest: /etc/containers/systemd/client-credentials.container
-    mode: "0644"
-  register: credentials_quadlet
-
-- name: 启动 client-credentials
-  ansible.builtin.systemd_service:
-    name: client-credentials
-    state: "{{ 'restarted' if credentials_quadlet is changed or image_pull is changed or bootstrap_identities | length > 0 else 'started' }}"
-    daemon_reload: true
-
-# 只批准以本次创建的 token 提交、且申请的正是该身份的 CSR（逻辑见 internal/infra/clientcert）。
-- name: 批准首次签发
-  ansible.builtin.command: >-
-    podman run --rm --network host --entrypoint /client-credentials
-    -v /var/lib/k0s/pki/admin.conf:/admin.conf:ro {{ ayatori_image }}
-    approve-bootstrap --kubeconfig /admin.conf --token-id {{ item.token_id }} --user {{ item.name }}
-  changed_when: true
-  loop: "{{ bootstrap_identities }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: 等待证书写出
-  ansible.builtin.wait_for:
-    path: "{{ identities_dir }}/{{ item.name }}/client.pem"
-    timeout: 120
-  loop: "{{ bootstrap_identities }}"
-  loop_control:
-    label: "{{ item.name }}"
 
 - name: 写入 quadlet
   ansible.builtin.template:

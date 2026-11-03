@@ -48,14 +48,17 @@
 - **批准者自己的续签**：ayatori-manager 的证书同样由它自己的批准者续签。它停摆超过证书剩余有效期
   （正常为数月）时，所有证书都会过期；重跑部署脚本即可恢复，部署脚本以 k0s 的管理员凭据批准。
 - **不使用 `system:node:`/`system:nodes`**：那是 kubelet 与 Node authorizer 专用的名字。
+- **部署方**：控制面的部署迁入 Chef（homelab-cookbooks 的 `homelab_ayatori` cookbook，节点基线由
+  `homelab_base` 负责），上表中"部署脚本"的部分由它实现；本仓库的 `deploy/ansible` role 在 Dev、Prod 迁移完成后删除。
 
 ## 待验证（Accepted 之前必须完成）
 
 1. envtest 中：bootstrap token 只能提交 CSR；部署方拒绝申请其他身份的 CSR、批准正确的 CSR；持有者
    自行续签；续签前建立的客户端在旧证书过期后仍可访问。
    **已完成（2026-11-03）**：`internal/infra/clientcert` 的集成测试，测试中以测试 CA 代替 csrsigning。
-2. Dev 控制面上：k0s 的 csrsigning 以其 CA 签发；从 `k0s kubeconfig create` 迁移到本方式时各组件
-   不中断；Flux、ESO、kube-state-metrics 在续签后继续工作。
+2. `homelab_ayatori` 的 Kitchen 中：真实的 k0s csrsigning 以其 CA 签发，各组件以签发的证书访问 API。
+3. Dev 控制面上：从 `k0s kubeconfig create` 迁移到本方式（随迁入 Chef）时各组件不中断；Flux、ESO、
+   kube-state-metrics 在续签后继续工作。
 
 ## 结果
 

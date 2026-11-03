@@ -251,10 +251,10 @@ func TestClientCertificates(t *testing.T) {
 	})
 }
 
-// applyRBAC 应用部署 role 中同一份 RBAC 清单。
+// applyRBAC 应用部署方使用的 RBAC 清单。
 func applyRBAC(t *testing.T, cfg *rest.Config) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "ansible", "roles", "control_plane", "files", "client-certificates.yaml"))
+	data, err := os.ReadFile(filepath.Join("testdata", "rbac.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

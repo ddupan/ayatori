@@ -1,10 +1,9 @@
 # 部署
 
 Dev 与 Prod 各是一台 Incus LXC 上的 API-only 控制面：k0s controller-only（apiserver、
-etcd、只开 namespace 与证书签发相关控制器的 kube-controller-manager）为 systemd 服务；ESO、Flux
+etcd、只开 namespace 控制器的 kube-controller-manager）为 systemd 服务；ESO、Flux
 source/kustomize-controller 与 ayatori-manager 为 podman quadlet 容器，使用 host 网络和
-各自的证书用户访问本机 API。证书由 `client-credentials` 容器以 CSR 申请并自行续签，首次签发由
-role 核对后批准（ADR-0021）。LXC 由 homelab-infra 的 Incus Terraform 与 cloud-init
+k0s 签发的各自证书用户访问本机 API。LXC 由 homelab-infra 的 Incus Terraform 与 cloud-init
 创建，需开启 `security.nesting` 才能运行 podman。
 
 ```text
@@ -104,7 +103,7 @@ homelab-infra `platform/observability`）：
 
 | 端口 | 组件 | 内容 |
 |---|---|---|
-| 9100 | node_exporter（systemd 二进制） | 只开 cpu、meminfo、pressure、filesystem（`/` 与备份卷）、netdev（eth0）、systemd（控制面服务）、textfile（`ayatori_backup_last_success_timestamp_seconds`；`ayatori_certificate_not_after_timestamp_seconds`，由 `ayatori-cert-metrics.timer` 每小时导出 k0s PKI 与各身份客户端证书到期时间）、time |
+| 9100 | node_exporter（systemd 二进制） | 只开 cpu、meminfo、pressure、filesystem（`/` 与备份卷）、netdev（eth0）、systemd（控制面服务）、textfile（`ayatori_backup_last_success_timestamp_seconds`；`ayatori_certificate_not_after_timestamp_seconds`，由 `ayatori-cert-metrics.timer` 每小时导出 k0s PKI 与各 kubeconfig 客户端证书到期时间）、time |
 | 8085 | kube-state-metrics（quadlet） | 只导出 CR 状态：`gotk_resource_info`（Flux）、`ayatori_eso_resource_info`（ExternalSecret/SecretStore）、`ayatori_resource_info`（Instance/Database/Tenant 的 Ready、原因与阶段） |
 | 8080 | ayatori-manager | controller-runtime 指标 |
 | 8180 / 8280 / 8281 | ESO / Flux source / Flux kustomize | 各自进程指标 |
@@ -115,8 +114,8 @@ node-exporter 负责。ESO v2 不导出状态条件指标，ExternalSecret/Secre
 
 ## 已知限制
 
-- 客户端证书在有效期过去 70–90% 时自行续签。续签失败（例如 ayatori-manager 长期停摆）导致证书
-  过期或不足 7 天到期时，重跑 playbook 即重新签发。
+- k0s 客户端证书一年到期：删除 `/etc/ayatori-control-plane/<identity>/kubeconfig` 后重跑
+  playbook 即轮换。
 - 修改 `k0s_disabled_components` 需要先 `k0s reset` 再重装；k0s 版本与配置变更会重启 API。
 - Flux 不选主，每台 LXC 单实例；kustomize-controller 使用 cluster-admin。
 - 第三方镜像只固定 digest，未做 cosign 验签。
@@ -135,7 +134,7 @@ k0s install controller --config /etc/k0s/k0s.yaml --disable-components <role def
 k0s start
 ```
 
-恢复保留原 PKI（CA 指纹不变），OpenBao 的 kubernetes auth 无需更新 CA，已签发的客户端证书
+恢复保留原 PKI（CA 指纹不变），OpenBao 的 kubernetes auth 无需更新 CA，已签发的证书 kubeconfig
 仍有效。恢复到不同地址的主机时需先把 `/etc/k0s/k0s.yaml` 的 `spec.api.address` 改为新地址，
 且 OpenBao mount 的 `kubernetes_host` 也要随之修改。2026-10-04 已在临时 LXC 演练：恢复后
 apiserver Ready，演练前写入的标记、Instance、Flux 对象与同步的 Secret 均在，CA 指纹与源一致；
