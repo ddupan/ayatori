@@ -3,7 +3,7 @@
 # 2 核 runner 上 go test 会边编译边跑：fixture 的启动、清理超时被并行编译吃掉，
 # 包级 10m 超时也算进了排队时间。拆开后，测试计时只含测试本身。
 #
-# INTEGRATION_SERVICES 列出的后端（"apiserver"、"postgres"、"openbao"）在 go test 之外启动一次：编译期间
+# INTEGRATION_SERVICES 列出的后端（"apiserver"、"postgres"、"openbao"、"haproxy"、"pdns"）在 go test 之外启动一次：编译期间
 # 在后台拉起，就绪后测试从 AYATORI_IT_<SERVICE> 找到它们（apiserver 为 kubeconfig 路径，其余为
 # 容器 ID），并自行隔离或复位。测试串行运行，每个场景独占这些实例；脚本退出时全部清除。
 set -euo pipefail
@@ -37,6 +37,20 @@ start_openbao() {
 		--health-cmd 'bao status' --health-interval 1s \
 		openbao/openbao@sha256:5b2486ab0fb90bbc788cc345b0a08616dfb375873ee8be5df3a2fd4d378a67e0 \
 		server -dev -dev-root-token-id=AYATORI-TEST-ONLY-bao-token -dev-listen-address=0.0.0.0:8200
+}
+
+# 与部署的 dataplaneapi v3.4.3 一致；配置在 testdata/fixture，测试经其 reset.sh 复位。
+start_haproxy() {
+	docker run -d --rm --user root --sysctl net.ipv4.ip_nonlocal_bind=1 \
+		-v "$PWD/internal/loadbalancer/adapter/haproxy/testdata/fixture:/fixture:ro" --entrypoint /fixture/start.sh \
+		-p 127.0.0.1::5555 -p 127.0.0.1::7000 -p 127.0.0.1::7001 \
+		haproxytech/haproxy-debian@sha256:6e919b0fe19314bd36a4f67f42743af5a6a01067dfd26f4502de0f88b2c445e4
+}
+
+# 与 homelab 部署的 PowerDNS Authoritative 5.0.7 一致；API key 与测试中的 fixtureAPIKey 相同。
+start_pdns() {
+	docker run -d --rm -p 127.0.0.1::8081 -e PDNS_AUTH_API_KEY=AYATORI-TEST-ONLY \
+		powerdns/pdns-auth-50@sha256:4d6cc4fc42a28f2df7fb55f6f36d8323f96e0da66135ccdad057ca7349b223b4
 }
 
 read -ra services <<<"${INTEGRATION_SERVICES-}"
@@ -77,8 +91,9 @@ for service in "${services[@]}"; do
 		continue
 	fi
 	id=$(<"$out/$service.id")
-	# 冷缓存时镜像拉取也在这里等待；WAN 不稳，给足时间。
-	until [[ $(docker inspect -f '{{.State.Health.Status}}' "$id") == healthy ]]; do
+	# 冷缓存时镜像拉取也在这里等待；WAN 不稳，给足时间。没有健康检查的容器只等运行，
+	# 应答由测试自己等待。
+	until [[ $(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id") =~ ^(healthy|running)$ ]]; do
 		if ((SECONDS - start > 300)); then
 			echo "$service 未在 300s 内就绪" >&2
 			docker logs --tail 50 "$id" >&2

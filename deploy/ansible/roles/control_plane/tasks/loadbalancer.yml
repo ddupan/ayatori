@@ -1,0 +1,38 @@
+# LoadBalancerHost 由部署方声明（ADR-0018），与 PostgreSQLInstance 一样来自 inventory；主机是列表，
+# Flux 的变量替换不能展开，所以由 role 渲染。CRD 由 Flux 同步，容器启动前不存在，先等它。
+- name: 等待 LoadBalancerHost CRD
+  ansible.builtin.command: >-
+    k0s kubectl wait --for=condition=Established --timeout=10s
+    crd/loadbalancerhosts.network.ayatori.ddupan.top
+  register: loadbalancer_host_crd
+  retries: 30
+  delay: 10
+  until: loadbalancer_host_crd.rc == 0
+  changed_when: false
+
+- name: 生成 LoadBalancerHost
+  ansible.builtin.template:
+    src: loadbalancer-hosts.yaml.j2
+    dest: "{{ deploy_state_dir }}/loadbalancer-hosts.yaml"
+    mode: "0600"
+  when: loadbalancer_hosts | length > 0
+
+- name: 应用 LoadBalancerHost
+  ansible.builtin.include_tasks: apply.yml
+  vars:
+    manifest: "{{ deploy_state_dir }}/loadbalancer-hosts.yaml"
+  when: loadbalancer_hosts | length > 0
+
+# 没有 Flux 的 prune，按标签找出 inventory 已移除的主机。删除是异步的：controller 先清理该主机
+# 上的全部 LoadBalancer 配置再放行，主机不可达时对象停在删除中（kubectl get lbhost 可见）。
+- name: 列出 role 创建的 LoadBalancerHost
+  ansible.builtin.command: >-
+    k0s kubectl get loadbalancerhosts -l {{ loadbalancer_host_label }}
+    -o jsonpath={.items[*].metadata.name}
+  register: loadbalancer_hosts_live
+  changed_when: false
+
+- name: 删除 inventory 中已移除的 LoadBalancerHost
+  ansible.builtin.command: k0s kubectl delete loadbalancerhost {{ item }} --wait=false
+  loop: "{{ loadbalancer_hosts_live.stdout.split() | difference(loadbalancer_hosts | map(attribute='name')) }}"
+  changed_when: true

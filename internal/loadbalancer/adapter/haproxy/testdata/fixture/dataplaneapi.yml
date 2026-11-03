@@ -1,0 +1,19 @@
+config_version: 2
+name: fixture
+dataplaneapi:
+  host: 0.0.0.0
+  port: 5555
+  userlist:
+    userlist: dataplaneapi
+  transaction:
+    transaction_dir: /tmp/haproxy-transactions
+haproxy:
+  config_file: /usr/local/etc/haproxy/haproxy.cfg
+  haproxy_bin: /usr/local/sbin/haproxy
+  master_worker_mode: true
+  master_runtime: /var/run/haproxy-master.sock
+  reload:
+    reload_delay: 1
+    reload_strategy: custom
+    reload_cmd: /bin/sh -c 'kill -USR2 $(cat /var/run/haproxy.pid)'
+    restart_cmd: /bin/sh -c 'kill -USR2 $(cat /var/run/haproxy.pid)'

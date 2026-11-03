@@ -2,6 +2,7 @@
 #   ayatori_environment: dev | prod
 #   ayatori_postgresql_instance: {name, host, hostaddr, port}
 #   ayatori_gitops（可选）: {url, path, branch=main}，Flux 同步其中的 namespace、Tenant 与 Database
+#   ayatori_loadbalancer（可选）: {address_pool, hosts: [{name, data_plane_url, agent_url}]}，启用 LoadBalancer
 # 站点端点（openbao_address、ayatori_repository、ayatori_image 的 registry）只是默认值，部署方
 # 可覆盖；Flux 清单中的环境相关值一律经 postBuild 替换，改地址不需要发版。
 # 本 role 与 manager 镜像、Flux 清单同属一个 release；版本随 release 提交更新，

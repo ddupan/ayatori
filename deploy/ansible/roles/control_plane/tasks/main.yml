@@ -7,7 +7,10 @@
       - ayatori_postgresql_instance.hostaddr is string
       - ayatori_postgresql_instance.port | int > 0
       - ayatori_gitops is not defined or (ayatori_gitops.url is string and ayatori_gitops.path is match('^\\./'))
-    fail_msg: 需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance
+      - loadbalancer_hosts | rejectattr('name', 'match', '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') | list | length == 0
+      - loadbalancer_hosts | rejectattr('data_plane_url', 'match', '^https://') | list | length == 0
+      - loadbalancer_hosts | rejectattr('agent_url', 'match', '^https?://') | list | length == 0
+    fail_msg: 需要声明 ayatori_environment（dev/prod）与 ayatori_postgresql_instance；ayatori_loadbalancer.hosts 每项为 {name, data_plane_url, agent_url}
 
 - name: 创建部署状态目录
   ansible.builtin.file:
@@ -23,6 +26,10 @@
 
 - name: 部署控制面容器
   ansible.builtin.import_tasks: containers.yml
+
+- name: 声明 LB 主机
+  ansible.builtin.include_tasks: loadbalancer.yml
+  when: ayatori_loadbalancer is defined
 
 - name: 部署 k0s 备份
   ansible.builtin.import_tasks: backup.yml

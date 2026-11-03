@@ -24,7 +24,7 @@ import (
 	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
 )
 
-const hint = "；用 make test-database-integration 运行"
+const hint = "；经 make 的集成测试 target（hack/integration-test.sh）运行"
 
 var scenarios atomic.Int64
 
