@@ -1,6 +1,6 @@
 # ADR-0017：计算后端的日常运维：备份接入、放置、维护、迁移与迁入
 
-- 状态：Proposed（含待维护者确认的问题，见文末）
+- 状态：Proposed（需先完成下文"待验证"的事项）
 - 日期：2026-11-03
 - 依据：[对照 vSphere 功能集的设计缺口](../compute/vsphere-gap-analysis.md)；建立在
   [ADR-0015](0015-libvirt-lxc-compute-backend.md)、[ADR-0016](0016-instance-node-services.md) 之上；
@@ -39,8 +39,9 @@ PVE 上的 9 个客户机和笔记本上的 dc1 目前都没有任何备份。
   - 增量：libvirt checkpoint（QEMU dirty bitmap），对应 CBT。bitmap 的持久化依赖 qcow2，raw 块设备
     只能用非持久 bitmap，QEMU 重启后需要一次全量，待验证；
   - 恢复：备份系统写入一个新卷，由 domain 引用它；LINSTOR 上的接管方式见 ADR-0018。
-- **备份系统的选型待调研**，候选需要支持 libvirt/QEMU 的增量备份接口和 Linux/Windows 的客户机 agent。
-  集成点的 API 形态（由谁触发、如何授权、在哪个节点读取）取决于选定的产品，选型后再定。
+- **备份系统的选型以后再定，不阻塞本 ADR 和当前实现**。候选需要支持 libvirt/QEMU 的增量备份接口和
+  Linux/Windows 的客户机 agent。集成点的 API 形态（由谁触发、如何授权、在哪个节点读取）取决于选定的
+  产品，选型时另行决定并验证。
 - 告警按实例的最近一次成功备份时间，替代现在的 `pve_not_backed_up_total`，数据来自备份系统。
 
 ### 2. 宿主机维护
@@ -234,24 +235,21 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 - 只声明新卷而不写 `source.volume` 时，新卷是空盘，Agent 不会复制任何数据，避免误把"换一块新盘"
   当成迁移。
 
-## 待维护者确认
+## 已确认
 
-1. **VyOS 的网关中断**：可选做法：
-   - 接受冷启动的中断（客户机启动时间，约数十秒）；
-   - 改为两台 VyOS 跑 VRRP，按 §4 设 hostname 的 `required` 反亲和（推荐，与 LB 的做法一致）；
-   - 依靠 §10 的在线迁移：计划内维护不中断，但宿主机故障时仍是冷启动。
-2. **备份系统选型**：见 §1。
+- **短时间停机可以接受**：VyOS 网关等实例在宿主机故障时冷启动、计划内维护时冷迁移，中断时间为
+  客户机关机加启动，不为此要求在线迁移或 VRRP 双机。在线迁移（§10）是减少维护中断的手段，不是
+  前提。
+- **备份系统以后再选**，见 §1。
 
 ## 待验证（Accepted 之前必须完成）
 
-1. libvirt pull 模式备份在 raw 块设备上的全量与增量，以及 QEMU 重启后 bitmap 丢失的处理；恢复到
-   新卷后启动实例。
-2. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0018）；zone 的反亲和由候选节点划分
+1. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0018）；zone 的反亲和由候选节点划分
    保证。
-3. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
-4. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
-5. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
-6. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
+2. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
+3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
+4. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
+5. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
 
 DRBD 上的冷切换、在线迁移、换池、接管与反亲和的验证见 ADR-0018。
 
