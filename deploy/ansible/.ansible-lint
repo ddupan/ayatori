@@ -1,6 +1,0 @@
-profile: production
-skip_list:
-  # 单一本地 role，不作为 collection 发布，不需要角色名前缀防冲突。
-  - var-naming[no-role-prefix]
-  # 只经 git 安装，不发布 Galaxy，不维护 changelog。
-  - galaxy[no-changelog]

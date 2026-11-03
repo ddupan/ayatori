@@ -1,4 +1,4 @@
-# 集群外进程以 k0s 签发的证书用户访问 API；namespace 由 Ansible 引导时创建。
+# 集群外进程以 CSR 签发的证书用户访问 API（ADR-0021）；namespace 由部署方（Chef）引导时创建。
 # 两个 OpenBao 登录身份只用于 TokenRequest，不对应任何 Pod。
 apiVersion: v1
 kind: ServiceAccount

@@ -49,7 +49,7 @@
   （正常为数月）时，所有证书都会过期；重跑部署脚本即可恢复，部署脚本以 k0s 的管理员凭据批准。
 - **不使用 `system:node:`/`system:nodes`**：那是 kubelet 与 Node authorizer 专用的名字。
 - **部署方**：控制面的部署迁入 Chef（homelab-cookbooks 的 `homelab_ayatori` cookbook，节点基线由
-  `homelab_base` 负责），上表中"部署脚本"的部分由它实现；本仓库的 `deploy/ansible` role 在 Dev、Prod 迁移完成后删除。
+  `homelab_base` 负责），上表中"部署脚本"的部分由它实现；本仓库的 `deploy/ansible` role 已在 Dev、Prod 迁移完成后（2026-11-03）删除。
 
 ## 待验证（Accepted 之前必须完成）
 
