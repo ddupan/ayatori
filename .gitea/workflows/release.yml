@@ -72,9 +72,10 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --quiet --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
-          notes="$(git tag -l --format='%(contents)' "$TAG")"
+          # %(contents) 含签名 tag 的 PGP 签名块；只取标题与正文。
+          notes="$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG")"
           body="$(printf '%s\n\n## 制品\n\n- manager 镜像：`%s`\n- 部署 role：`git+https://git.ddupan.top/%s.git#/deploy/ansible`，version `%s`\n' "$notes" "$IMAGE" "$GITHUB_REPOSITORY" "$TAG")"
-          payload="$(jq -n --arg tag "$TAG" --arg body "$body" '{tag_name: $tag, name: $tag, body: $body}')"
+          payload="$(jq -n --arg tag "$TAG" --arg body "$body" '{tag_name: $tag, name: $tag, body: $body, prerelease: ($tag | test("-"))}')"
           auth=(-H "Authorization: token ${TOKEN}" -H 'Content-Type: application/json')
           id="$(curl -fsS "${auth[@]}" "${API}/releases/tags/${TAG}" 2>/dev/null | jq -r '.id // empty' || true)"
           if [ -n "$id" ]; then
