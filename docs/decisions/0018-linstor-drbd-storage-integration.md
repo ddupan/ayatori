@@ -57,14 +57,13 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 | VM 在线迁移 | 能：临时双 Primary，见下；LXC 不支持 |
 | 不停机换存储池或副本节点 | 能：LINSTOR 逐副本重放 |
 
-### 版本与底座
+### 版本
 
 - LINSTOR ≥ 1.35（`auto_manage_dual_primary`），DRBD 9，drbd-reactor。
-- libvirt ≥ 10.10、swtpm ≥ 0.7：NVRAM 与 vTPM 状态放在块设备上（见"实例的卷布局"）。节点现在的
-  Ubuntu 24.04 只有 libvirt 10.0，需要换底座：Debian 13（libvirt 11.3、swtpm 0.7.1）或 Ubuntu 26.04
-  （libvirt 12.0），待维护者确认。
-- 换底座后，凡是依赖版本的 PoC 结论都要重新确认，例如 systemd 255 下 `Restart=` 与 `OnFailure=` 的
-  冲突。
+- libvirt ≥ 10.10、swtpm ≥ 0.7：NVRAM 与 vTPM 状态放在块设备上（见"实例的卷布局"）。计算节点的底座
+  为 Debian 13（libvirt 11.3、swtpm 0.7.1），见 ADR-0015。
+- DRBD 9 内核模块、drbd-reactor 与 LINSTOR 的包来源待确认：LINBIT 为 Ubuntu 提供 PPA，为 Debian 只有
+  PVE 专用的仓库，需要确认它们在 Debian 13 原生内核上可用。
 
 ### resource group 与 DRBD 参数
 
@@ -134,7 +133,7 @@ VMFS 文件锁，不需要全集群 quorum。
   赢的节点启动 `start` 中列出的单元；失去 quorum 的节点按上面的 `freeze` 处理。
 - **promoter 的 `start` 内容：**
   - VM：挂载状态卷，然后是 `ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
-  - LXC：挂载 rootfs 与状态卷的 systemd `.mount` 单元（Ubuntu 没有 `ocf:heartbeat:Filesystem`），然后是
+  - LXC：挂载 rootfs 与状态卷的 systemd `.mount` 单元（不依赖 Pacemaker 的 `ocf:heartbeat:Filesystem`），然后是
     LXC 版监管进程，不是 `lxc@<name>.service`。
 - **首选节点**：`nodeAffinity.preferred`（ADR-0017）按权重排序后写入 promoter 的 `preferred-nodes`，
   策略 `start-only`，原节点恢复后不自动切回。`required` 规则体现在副本与 diskless 的放置上，promoter 只会
@@ -234,13 +233,6 @@ ADR-0015 规定采集和告警不依赖控制面。DRBD 部分：
   peer 的 `drbd_connection_state` 变成 `Connecting`。剩下两个节点仍构成多数，所以 quorum 不变，
   但再坏一个节点就会全部停机。冗余降级必须按连接状态告警。
 
-## 待维护者确认
-
-1. **底座**：Debian 13 与 PVE 9 同一底座，cgo 编译的 Agent 一份构建可同时用于 PVE 节点和新节点，
-   PVE 节点也能原地转为计算节点；但需要先确认 LINBIT 的 DRBD 9 内核模块、drbd-reactor 与 LINSTOR 在
-   Debian 13 原生内核上的包来源（LINBIT 为 Ubuntu 提供 PPA，为 Debian 只有 PVE 专用的仓库）。
-   Ubuntu 26.04 的支持期更长，与现有 LXC 模板和 Chef 一致。
-
 ## 待验证（Accepted 之前必须完成）
 
 前 6 项原在 ADR-0015 中，编号对应关系见各项括号。
@@ -268,8 +260,9 @@ ADR-0015 规定采集和告警不依赖控制面。DRBD 部分：
    不插手、切换后 promoter 接手已是 Primary 的资源、监管进程认领；迁移中途失败时实例仍只在一个节点
    运行；限速下 1G 链路上 DRBD 不出现 quorum 抖动。
 9. 逐副本更换存储池或副本节点期间，实例持续运行、quorum 不丢。
-10. 新底座上：NVRAM 与 vTPM 状态改为 raw volume 后随冷切换迁移；vTPM 在块设备上的在线迁移是否安全；
-    重新确认依赖版本的 PoC 结论。
+10. Debian 13 上：DRBD 9 内核模块、drbd-reactor 与 LINSTOR 的安装；NVRAM 与 vTPM 状态改为 raw volume
+    后随冷切换迁移；vTPM 在块设备上的在线迁移是否安全；重新确认依赖版本的 PoC 结论，例如 systemd 255
+    下 `Restart=` 与 `OnFailure=` 的冲突（Debian 13 为 systemd 257）。
 11. hostname 的 `required` 反亲和：被选中的实例所在节点故障后，冷启动不会落到另一成员的节点；没有可用节点时保持
     停止并告警。
 
@@ -279,4 +272,4 @@ ADR-0015 规定采集和告警不依赖控制面。DRBD 部分：
 - 不写 libvirt 存储后端，LINSTOR 卷不出现在 `virsh vol-list` 中。
 - 迁移窗口交给 LINSTOR 1.35 的 API，与 LINBIT 自己的集成方向一致；没有先例的部分收窄为显式
   promote 与 promoter 交接。
-- 需要换底座以获得 libvirt ≥ 10.10。
+- 依赖 Debian 13 底座提供的 libvirt ≥ 10.10。

@@ -58,6 +58,15 @@
 | Compute Agent | 每台宿主机 | 写 Node/Lease（ADR-0007）；watch 与本节点相关的对象；在本机定义 pool、network、volume、domain；调用 liblxc；定义 libvirt secret；生成 drbd-reactor 配置；回写实际运行位置和状态 |
 | drbd-reactor（LINBIT） | 每台宿主机 | 运行时决定由哪个节点运行实例 |
 
+### 节点底座
+
+- 计算节点使用 **Debian 13**：
+  - 与 PVE 9 同一底座，cgo 编译的 Agent（libvirt、liblxc）一份构建可同时用于 PVE 节点和计算节点，
+    PVE 节点将来也能原地卸掉 PVE 转为计算节点（ADR-0007）；
+  - libvirt 11.3、swtpm 0.7.1，满足 NVRAM 与 vTPM 状态放在块设备上的要求（libvirt ≥ 10.10，
+    ADR-0018）。
+- PoC 在 Ubuntu 24.04（libvirt 10.0、systemd 255）上完成，依赖版本的结论需要在 Debian 13 上重新确认。
+
 ### 资源
 
 北向**透传原生配置**，不另做抽象。本后端是**把 libvirt 对象下发到各节点的中央控制器**：
