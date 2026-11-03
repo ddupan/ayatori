@@ -89,11 +89,14 @@ LB 每个环境两台分在不同节点，etcd 每个节点一个，sandbox1/2 �
 **放置规则复用 Kubernetes 的表达**，与 ADR-0007 复用 Node 一样只采用 API contract，调度由 Ayatori
 自己实现：
 
-- **Node label**：
-  - Agent 写入 well-known label：`kubernetes.io/hostname`、`kubernetes.io/arch`、`kubernetes.io/os`，
+- **Node label 全部由 Agent 决定**，不用 `kubectl label` 手工维护：
+  - 从节点事实发现：well-known 的 `kubernetes.io/hostname`、`kubernetes.io/arch`、`kubernetes.io/os`，
     CPU 厂商与型号沿用 node-feature-discovery 的命名（§3）；
-  - 管理员用 `kubectl label` 加其余 label，例如 `topology.kubernetes.io/zone` 区分 PVE 节点与笔记本。
-    Agent 以自己的 field manager 做 SSA，不会覆盖管理员的 label。
+  - 发现不了的拓扑信息（例如 `topology.kubernetes.io/zone` 区分 PVE 节点与笔记本）写在 Agent 配置中，
+    由 Chef Policyfile 按节点下发，相当于 kubelet 的 `--node-labels`；
+  - Agent 以自己的 field manager 做 SSA，label 集合由它完整拥有，不再出现的 label 随之移除。
+  - 节点能给自己打任意 label，也就能吸引实例。Kubernetes 用 NodeRestriction 限制 kubelet 可写的
+    label；这里 Agent 本来就有宿主机 root，VAP（ADR-0015）只限定它写自己的 Node，不再限制 label。
 - **实例上的字段**，类型直接使用 `k8s.io/api/core/v1`：
   - `spec.nodeSelector`：简写，与 `LibvirtNetwork`/`LibvirtStoragePool` 已有的 `nodeSelector` 一致；
   - `spec.affinity.nodeAffinity`（`NodeAffinity`）：`required` 限定候选节点，`preferred` 表达首选节点；
