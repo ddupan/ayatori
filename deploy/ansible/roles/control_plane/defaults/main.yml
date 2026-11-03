@@ -74,7 +74,7 @@ deploy_state_dir: /var/lib/ayatori-deploy
 # 部署方须把独立卷挂载到此处（homelab-infra 为 Incus custom volume）。
 backup_dir: /var/backups/ayatori
 backup_keep: 7
-# 每个集群外进程一个 k0s 证书用户；uid 是镜像内的运行用户，kubeconfig 只对其可读。
+# 每个集群外进程一个证书用户（ADR-0021）；uid 是镜像内的运行用户，证书与 kubeconfig 只对其可读。
 identities_dir: /etc/ayatori-control-plane
 identities:
   - {name: ayatori-controller, uid: 65532}

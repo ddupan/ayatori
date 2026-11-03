@@ -2,6 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-10-04
+- 修订：2026-11-03 [ADR-0021](0021-client-certificates-via-csr.md) 改为以 CSR 签发并自行续签客户端证书
 - 部分取代：[ADR-0002](0002-k0s-optional-workload-runtime.md) 中 Dev/Prod 默认 managed runtime、
   集群内 Flux 的部分；[ADR-0003](0003-dev-api-development-loop.md) 中 Flux 与 in-cluster
   controller 的部分

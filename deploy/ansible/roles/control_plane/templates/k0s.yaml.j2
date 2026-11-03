@@ -8,8 +8,9 @@ spec:
     sans: {{ ayatori_api_sans | to_json }}
   controllerManager:
     extraArgs:
-      # API-only 不运行 Pod；只保留 namespace 删除收尾。
-      controllers: namespace
+      # API-only 不运行 Pod：只保留 namespace 删除收尾，以及客户端证书（ADR-0021）的签发与过期
+      # bootstrap token、CSR 的清理。签发使用 k0s 的 CA。
+      controllers: namespace,csrsigning,csrcleaner,tokencleaner
   storage:
     type: etcd
   telemetry:
