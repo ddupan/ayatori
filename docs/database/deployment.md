@@ -1,6 +1,7 @@
 # 部署与配置
 
-> 本页是 manager 的配置合同。Dev/Prod 的实际部署由部署 role 完成，见
+> 本页是 manager 的配置合同。Dev/Prod 的实际部署由 Chef cookbook `homelab_ayatori` 完成
+> （环境声明为 homelab-infra `infrastructure/chef/policies/ayatori-<env>.rb`），见
 > [deploy/README.md](../../deploy/README.md) 与 [ADR-0013](../decisions/0013-api-only-control-plane-on-lxc.md)。
 
 | 项目 | 内容 |
@@ -9,8 +10,8 @@
 | 环境 | LXC 上的 API-only k0s + 外部 PostgreSQL/OpenBao |
 | 最后更新 | 2026-10-04 |
 
-本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测已接入 manager；
-OpenBao 认证与资源供应需显式启用；Ayatori 不投射凭据，消费方集群自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
+本文定义 v1alpha1 的运行依赖、启动顺序和部署级配置。Instance 观测随 manager 启用；
+OpenBao 认证、凭据准备与资源供应需显式启用；Ayatori 不投射凭据，消费方集群自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
 ## 依赖与顺序
 
@@ -20,44 +21,42 @@ OpenBao 认证与资源供应需显式启用；Ayatori 不投射凭据，消费�
 3. 创建 PostgreSQL controller 管理 role 和管理 database 连接权限。
 4. 在 OpenBao KV v2 写入管理 role 凭据。
 5. 配置 OpenBao Kubernetes auth 与 controller policy；消费方集群读取应用凭据的 policy 由其接入时单独授予。
-6. 部署控制面（部署 role）：k0s、ESO、Flux 与 manager；ESO 以 namespaced SecretStore 只读管理凭据
-   并同步为管理 Secret，Flux 从 release tag 同步 Instance 等对象。
+6. Chef converge 控制面：k0s、ESO、Flux 与 manager（podman quadlet，无 Pod）。Flux 从 release tag
+   同步 CRD（单独的 Kustomization，关闭 prune）、RBAC 以及管理凭据的 SecretStore/ExternalSecret
+   与 Instance（[postgresql.yaml](../../deploy/flux/control-plane/postgresql.yaml)）；Tenant/Database
+   由部署方 `gitops` 目录经 Kustomization `flux-system/gitops-tenants` 声明。
 7. manager 以 `--database-root-cert` 读取公开 CA；Instance Ready 后才创建 Tenant。
 
 任何一步都不得把真实密码、Token、kubeconfig 或 CA 私钥提交进 Git。
 
 ## Controller 配置合同
 
-当前 manager 支持 `--database-secret-namespace`（默认 `POD_NAMESPACE`，为空则停用
-Instance 观测）与 `--database-root-cert`（公开 PostgreSQL CA PEM 路径）。Deployment
-通过 downward API 获取 namespace，Secret 权限由该 namespace 的 Role 授予。
+`--database-secret-namespace`（默认取 `POD_NAMESPACE` 环境变量，为空则停用 Instance 观测）
+在生产中显式设置，因为 manager 以 quadlet 运行、没有 Pod；Secret 权限由该 namespace 的 Role 授予。
 
-以下表格区分已实现的认证参数与尚待实现的供应/交付参数。
-必填项缺失、路径无效或 duration 不为正数时，进程必须在启动 manager 前失败；
-不得等到 reconcile 时才逐个资源报告配置错误。
+依赖参数缺失、组合不完整（如启用供应而未配置凭据 mount）或地址/路径非法时，manager 在启动前
+失败，不等到 reconcile 时才逐个资源报告。
 
 | CLI flag | 必填/默认 | 说明 |
 | --- | --- | --- |
-| `--openbao-address` | 已实现，默认空 | HTTPS API 地址；为空时关闭认证会话 |
-| `--openbao-consumer-address` | 默认同 `--openbao-address` | 写入 Tenant status，必须能被预期外部消费者解析 |
-| `--openbao-auth-mount` | 已实现，`kubernetes` | Kubernetes auth mount 名称 |
-| `--openbao-auth-role` | 已实现，启用时必填 | OpenBao 登录 role |
-| `--openbao-ca-cert` | 已实现，默认系统信任根 | OpenBao 公开 CA PEM 路径 |
-| `--database-credential-mount` | 已实现，默认空 | 显式设置后启用应用凭据准备，要求已配置 OpenBao 认证 |
-| `--database-provision-resources` | 已实现，默认 false | 启用角色/数据库及 ACL 创建；要求管理 Secret namespace、凭据 mount 和认证配置，先升级 CRD |
-| `--openbao-service-account-namespace` | 已实现，启用时必填 | TokenRequest 目标 SA 的固定 namespace |
-| `--openbao-service-account-name` | 已实现，启用时必填 | TokenRequest 目标 SA 名称 |
-| `--openbao-token-audience` | 已实现，`openbao` | SA JWT audience。OpenBao 不持有 reviewer JWT 时登录 JWT 兼作 TokenReview 凭据，必须设为 API audience（k0s 为 `https://kubernetes.default.svc`），部署 role 已如此配置 |
-| `--leader-election-namespace` | 已实现，默认空 | 集群外运行时选主 Lease 所在 namespace，与 `--leader-elect` 一起使用 |
-| `--database-credential-prefix` | 已实现，默认 `applications` | Database UID 路径的 mount-relative 前缀；不迁移已有位置 |
-| `--database-credential-url-base` | 已实现，默认空 | OpenBao API 地址，只用于 Tenant status 中不含认证信息的 `credentialURL` |
-| `--database-root-cert` | 已实现 | 只读 PEM trust bundle，不含私钥；沿用 Instance 连接配置 |
-| `--reconcile-timeout` | `30s` | 单轮 reconcile 中外部操作的总期限，必须大于零 |
+| `--openbao-address` | 默认空 | HTTPS API 地址；为空时关闭认证会话 |
+| `--openbao-auth-mount` | `kubernetes` | Kubernetes auth mount 名称 |
+| `--openbao-auth-role` | 启用时必填 | OpenBao 登录 role |
+| `--openbao-ca-cert` | 默认系统信任根 | OpenBao 公开 CA PEM 路径 |
+| `--database-credential-mount` | 默认空 | 显式设置后启用应用凭据准备，要求已配置 OpenBao 认证 |
+| `--database-provision-resources` | 默认 false | 启用角色/数据库及 ACL 创建；要求管理 Secret namespace、凭据 mount 和认证配置，先升级 CRD |
+| `--openbao-service-account-namespace` | 启用时必填 | TokenRequest 目标 SA 的固定 namespace |
+| `--openbao-service-account-name` | 启用时必填 | TokenRequest 目标 SA 名称 |
+| `--openbao-token-audience` | `openbao` | SA JWT audience。OpenBao 不持有 reviewer JWT 时登录 JWT 兼作 TokenReview 凭据，必须设为 API audience（k0s 为 `https://kubernetes.default.svc`），cookbook 已如此配置 |
+| `--leader-election-namespace` | 默认空 | 集群外运行时选主 Lease 所在 namespace，与 `--leader-elect` 一起使用 |
+| `--database-credential-prefix` | 默认 `applications` | Database UID 路径的 mount-relative 前缀；不迁移已有位置 |
+| `--database-credential-url-base` | 默认空 | OpenBao API 地址，只用于 Tenant status 中不含认证信息的 `credentialURL` |
+| `--database-root-cert` | 默认空（libpq 默认信任） | 只读 PEM trust bundle，不含私钥；作为管理连接的 `sslrootcert` |
 
-address 必须是绝对 `http` 或 `https` URL，不允许 userinfo、query 或 fragment，末尾 `/`
-在规范化后移除。mount、auth mount 和 base path 都使用 mount-relative path 语义，不以
-`/` 开头，不含空段、`.` 或 `..`；base path 还不得编码 KV v2 的 `data`/`metadata`
-API 层。生产环境的 `--openbao-address` 必须使用 HTTPS；HTTP 只用于明确的开发 fixture。
+`--openbao-address` 必须是绝对 `https` URL，不允许 userinfo、path、query 或 fragment，末尾 `/`
+被移除（`internal/infra/openbao`）。凭据 mount 与前缀的每段只允许 `[A-Za-z0-9_-]`，且不得是
+KV v2 的 `data`/`metadata` API 层。`--database-credential-url-base` 原样拼成
+`<base>/v1/<mount>/data/<path>`，不应带结尾 `/` 或认证信息。
 
 ### 集群内与 systemd 共用 Kubernetes 认证
 
@@ -67,11 +66,12 @@ in-cluster 配置。禁止另要求 `/var/run/secrets/.../token` 文件或解析
 每次 Bao 登录前通过 TokenRequest 申请新的短期 SA JWT，Kubernetes JWT 与 Bao token 的
 生命周期分别由 API 签发和官方 SDK 续期管理；不把 kubeconfig 本身当成永久有效凭据。
 
-管理员为 controller 的实际 Kubernetes 身份授予目标 namespace 内
-`create serviceaccounts/token`，用 `resourceNames` 限定目标 SA；示例见
-[最小 RBAC](../../config/samples/database_openbao_auth_rbac.yaml)。集群外 RoleBinding subject
-对应 kubeconfig 的用户/组，集群内可绑定 manager SA；登录目标 SA 可以独立于调用者身份。
-controller 不创建 SA、Role/RoleBinding，也不向自己授予权限。不要求 `get secrets` 来获取 JWT。
+生产中 manager 以 CSR 签发、自行续签的客户端证书作为 User `ayatori-controller` 访问本机 API
+（[ADR-0021](../decisions/0021-client-certificates-via-csr.md)）。其 RBAC 见
+[rbac.yaml](../../deploy/flux/control-plane/rbac.yaml)：绑定生成的 `manager-role`，另在 `ayatori-system`
+授予 Secret 读取、Lease 与 `database-openbao-login` 的 `create serviceaccounts/token`（`resourceNames`
+限定）。通用最小示例见 [最小 RBAC](../../config/samples/database_openbao_auth_rbac.yaml)。
+controller 不创建 SA、Role/RoleBinding，也不向自己授予权限。
 OpenBao role 限制 SA 名称与 namespace。homelab 的 mount 不持有 reviewer JWT，以登录 JWT 自身调用
 TokenReview（两个登录 SA 绑定 `system:auth-delegator`），因此 role 不校验 audience，JWT 必须是
 API audience。
@@ -88,18 +88,11 @@ manager --kubeconfig=/etc/ayatori/controller.kubeconfig \
 ```
 
 这里的认证成功只开放 manager readiness，不代表 Database 已具备供应或交付能力。
-实例管理 Secret 的 namespace 同样由参数指定，systemd 模式不依赖 `POD_NAMESPACE` 环境变量。
 
-Tenant 不能选择任意凭据路径。凭据必须能随 Database 保留并安全交付给被授权的新 Tenant；
-原 `<base-path>/<namespace>/<metadata.name>` 定位规则不再直接作为新 API 合同。
-动态供应位置使用 `<base-path>/<Database UID>`；导入使用 Database 的显式 credentialRef，
-不要求搬迁已有凭据。供应流程须先记录原 mount/path，不能在配置变化后重新推导位置。
-consumer URL 仍使用无认证信息的 KV v2 API URL。
+Tenant 不能选择任意凭据路径。动态供应位置为 `<prefix>/<Database UID>`；导入使用 Database 的
+显式 `spec.credentialRef`，不搬迁已有凭据。位置在首次外部写入前固定到 status，不随配置重新推导。
 
-base path 必须是合法 mount-relative path，不以 `/` 开头且不包含空段、`.`、`..`、
-`data`/`metadata` API 层。
-
-配置变化不得隐式迁移既有凭据。修改 KV mount/base path 或 consumer address 前必须
+配置变化不得隐式迁移既有凭据。修改 KV mount/prefix 或 `--database-credential-url-base` 前必须
 停止 controller、评估现有 Database 与绑定，并走明确迁移。资源记录应能定位原凭据，
 不能根据新部署参数静默切换；不再使用 registry 保存安装身份。
 
@@ -165,10 +158,10 @@ Instance endpoint 变化时以相同密码改写为新版本，固定版本会�
 
 ## 升级与回滚
 
-v1alpha1 尚不承诺跨版本转换。升级前备份 CR/绑定、PostgreSQL 数据与 OpenBao，
-先在隔离 Kind 环境运行 E2E。禁止在同一组 CR 上同时运行两个 controller 版本。若新版本
-在执行任何破坏性迁移前失败，可回滚镜像；涉及 API/storage 或凭据定位迁移时，
-必须先写独立升级规格和回滚步骤。
+v1alpha1 尚不承诺跨版本转换。升级与回滚就是修改 policy 的 `release` 与 `image`（先在 Dev
+验收再 promotion 到 Prod），流程见 [deploy/README.md](../../deploy/README.md#release)；CRD 随 release
+同步且不 prune。禁止在同一组 CR 上同时运行两个 controller 版本。涉及 API/storage 或凭据定位
+迁移时，必须先写独立升级规格和回滚步骤。
 
 ## 上线验证
 

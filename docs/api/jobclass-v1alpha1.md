@@ -1,6 +1,6 @@
 # JobClass API v1alpha1 草案
 
-- 状态：Draft
+- 状态：Draft；CRD 已生成，Kubernetes executor 的 controller 未合入 main，暂停（见[路线图](../roadmap.md)）
 - 日期：2026-09-17
 - API group：`execution.ayatori.ddupan.top`
 - Kind：`JobClass`

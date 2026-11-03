@@ -1,6 +1,6 @@
 # Database 领域模型
 
-状态：资源模型已确认，字段与绑定协议待细化。日期：2026-09-25。
+状态：已实现。日期：2026-09-25。
 行为以 [系统规格](specification.md) 为准；决策依据见
 [ADR-0009](../decisions/0009-database-resource-and-claim.md)。
 
@@ -14,7 +14,6 @@
 | Binding | Database 与 Tenant 的排他关联，不是独立 Claim 或 registry |
 | LoginRole | 当前单数据库场景中兼任 owner 的登录角色 |
 | CredentialLocation | 与资源生命周期一致的凭据定位，不是密码 |
-| CredentialProjection | 面向当前使用者的凭据投射要求与观察 |
 
 Instance 一对多 Database；每个 Database 同时零或一个 Tenant，Tenant 最多一个 Database。
 Instance 不持有全部资源的内存集合。三者以引用关联，操作一个资源无需加载整个实例集合。
@@ -45,7 +44,7 @@ Tenant 表达申请与交付要求；可显式申请未绑定且可用的资源�
 
 第一版 Database 的生命周期边界包含一个 database、一个兼任 owner 的 LoginRole 及其
 应用凭据。LoginRole 与 CredentialLocation 随 Database 保留，不能因为 Tenant 消失就
-失去定位或未经授权被删除；导入时的管理授权与具体字段仍需评审。不新增 Role、Credential
+失去定位或未经授权被删除；导入以 `source: Import` 与 `spec.credentialRef` 显式声明（CEL 校验）。不新增 Role、Credential
 或 Claim CRD，也不预留多账号集合；若出现一库多账号的实际需求，再通过后续 API 版本演进。
 
 ## 生命周期与恢复
@@ -92,7 +91,7 @@ resourceVersion 解决 API 对象并发更新，不宣称 PostgreSQL 与 Kuberne
 | Reconciler | `<Kind>Reconciler`，文件 `<kind>_controller.go`；只写本 Kind 的 status | `DatabaseReconciler` |
 | 领域聚合 | 包名为名词，类型与包同名；`New…` 新建，`Reconstitute` 从持久状态加载 | `instance.Instance`、`database.Database` |
 | 后端接口 | 在 controller 中声明，以 `Backend` 结尾，只列使用方需要的方法 | `CredentialBackend`、`PostgreSQLBackend` |
-| 后端 adapter | 按所代表的外部对象命名 | `openbao.Credentials`、`postgresql.Connector` |
+| 后端 adapter | 按所代表的外部对象命名 | `openbao.Credentials`、`postgresql.Instances` |
 | 结果分类 | 影响状态迁移，放在领域包中，adapter 只依赖领域 | `database.ErrUnavailable`、`ErrUncertain`、`ErrConflict` |
 
 不使用 `Service`、`Reconciliation`、`Preparation`、`Resources`、`Record`、`Presenter`、
@@ -108,13 +107,3 @@ Database、Instance、Tenant 三条链路均按上述规则实现，不再有 `a
 - `DatabaseReconciler` 准备凭据并供应资源，规则在 `domain/database` 聚合；
 - `ManagementSecrets` 直连读取管理 Secret；`postgresql.Instances` 按 Instance 复用连接池，
   `openbao.Credentials` 访问应用凭据，二者只返回事实。
-
-## API 切片前需明确
-
-- 引用与绑定字段的最终格式及校验、管理员与 controller 的权限落实。
-- 资源侧回收策略与 Tenant/Database finalizer 配合。
-- 导入时角色/凭据的管理范围及关联字段、旧使用者撤权及投射清理。
-- 绑定/导入同一实际目标的重复声明如何拒绝，且不引入 registry。
-- 管理员确认冲突、解除旧绑定的具体可审计操作入口。
-
-这些细节不阻止已确认的三资源设计，但必须先于对应 API 与生命周期实现获得评审。

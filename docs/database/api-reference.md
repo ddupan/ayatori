@@ -7,8 +7,8 @@
 | 最后更新 | 2026-09-29 |
 
 以 [系统规格](specification.md) 与
-[ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。类型与生成的 CRD 已纳入源码，
-尚未发布为可用 DBaaS。示例可进入绑定协调，但不代表创建对象后会供应数据库或交付凭据。
+[ADR-0009](../decisions/0009-database-resource-and-claim.md) 为准。外部写入（凭据准备、资源供应）
+需按[部署参数](deployment.md)显式启用；未启用时示例只进入绑定协调。
 
 ## 当前 API 切片
 
@@ -36,9 +36,10 @@ Go 类型位于 `api/database/v1alpha1`，CRD 随 `config/crd` 发布；manager 
 | Tenant | `status.credentialRef`、`status.credentialVersion`、`status.credentialURL` | OpenBao 中已确认凭据的位置与版本，不包含密码或认证信息 |
 
 三资源均有 status subresource、observedGeneration 和按 type 唯一的 Conditions。
-Instance phase 沿用已批准枚举；Database/Tenant phase 暂不冻结供应子阶段枚举。
+Instance phase 为 Pending/Validating/Ready/Deleting；Tenant phase 为 Binding/Bound；Database 见下文。
 `credentialRef.path` 是 mount 内逻辑路径，不包含 KV v2 的 `data/` 前缀。
-其部署允许范围、实际凭据读取和 URL 安全构造仍由后续 adapter/controller 验证。
+部署允许范围由 `adapter/openbao` 的前缀检查保证（导入位置也必须位于 mount 与前缀内），恢复读取用
+`ReadConfirmed`；`credentialURL` 由 `TenantReconciler` 按 `<url-base>/v1/<mount>/data/<path>` 构造。
 
 凭据位置一旦写入便不可更改或移除；确认版本不可移除或回退，只能随 controller 改写连接信息
 前进；确认版本必须有对应位置。Conditions 描述
@@ -82,7 +83,8 @@ Tenant 进入 `status.phase=Binding` 后由 CEL 固定申请目标；Database �
 读取绑定判断使用 APIReader，写入依靠 resourceVersion；watch/cache 负责触发协调。
 `TenantReconciler` 协调绑定顺序、CR 映射、finalizer 和状态呈现，纯资格规则在 `domain/binding`。
 写入使用本轮读取的 resourceVersion；呈现前申请已变化时放弃旧结果并尽快重读，不覆盖其他修改。
-双向记录完成后 Tenant 为 Bound，Ready=False/BindingComplete，明确尚未供应或交付。
+双向记录完成后 Tenant 为 Bound，Ready 依次为 CredentialsPending → DatabaseNotReady →
+`True/CredentialsAvailable`。
 生成的 manager ClusterRole 授予资源读写，不包含 Secret 读取；Instance 观测的管理 Secret
 权限由固定 namespace 的独立 Role 授予。Instance controller 已接入原生管理观察与引用删除
 保护，启用方式及 Ready 边界见 [模块说明](README.md#instance-原生管理观测)。
@@ -104,7 +106,7 @@ Tenant 删除记录 Database `status.phase=Released` 后移除 Tenant finalizer�
   并发更新使用 resourceVersion，不增加 mutating webhook 或跨系统事务。
 - database/role identifier 继续匹配 `^[a-z][a-z0-9_]{0,62}$`。
 - 动态申请的 database/loginRole 省略时继续以 Tenant metadata.name 为语义默认值；
-  显式导入资源使用实际目标，不从新 Tenant 名称重新推导。最终互斥字段须经 API 评审。
+  显式导入资源使用实际目标，不从新 Tenant 名称重新推导。
 - Ayatori 不投射凭据；消费方集群按 Tenant status 公布的位置与版本自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 - 任何 spec/status/错误不得出现密码、Token 或完整秘密响应。
 
@@ -136,7 +138,7 @@ Ready 要求连接、metadata 与所需管理权限，不要求 registry。
 开始受管时保存 finalizer；删除时阻止新供应，并检查 Database（含 Released）及未绑定
 Tenant 引用。无引用才解除，不级联删除资源；查询失败不能视为无引用。
 
-## Database 资源（工作 Kind：PostgreSQLDatabase）
+## Database 资源（PostgreSQLDatabase）
 
 v1alpha1 以一个 database、一个兼任 owner 的 login role 及其应用凭据作为 Database 的
 生命周期边界；不提供多账号字段或独立 Role/Credential CRD。多账号需求留待后续 API 版本。
@@ -157,7 +159,8 @@ Database 是平台管理的集群级资源，不归属于应用 namespace，也�
 | 回收策略 | 资源侧 Retain（默认）或显式 Delete；普通 Tenant editor 不得扩大授权 |
 | 观察与进度 | 实际目标、当前阶段、条件和安全诊断，不保存秘密 |
 
-概念生命周期包含供应/验证、可绑定、已绑定、Released 和删除；最终 phase 枚举待协议评审。
+`status.phase` 只有 `Available`（验证通过、可绑定或已绑定）与 `Released`，验证前为空；
+供应、验证与回收进度见 `credentialPhase`/`resourcePhase`。
 Released 不自动变成可绑定。Database 不以 Tenant 为 GC owner；使用中的资源受删除保护。
 
 导入的初始检查只读；存在不等于 Ready。未绑定且可用的资源允许 Tenant 显式申请，
@@ -168,17 +171,14 @@ Released 不自动变成可绑定。Database 不以 Tenant 为 GC owner；使用
 
 保留用户申请与交付职责：
 
-- 动态申请描述 Instance、所需数据库/登录角色、扩展与目标 Secret；
+- 动态申请描述 Instance、所需数据库/登录角色与扩展；
   或显式引用管理员已登记的 Database。后者从 Database 获取 Instance，不重复指定来源；
-  两条路径互斥，具体 schema 在 API 切片固定。
+  两条路径互斥。
 - 绑定前固定有效需求，绑定/开始供应后不能通过改引用或名称迁移资源。
 - extensions 成功后只允许追加，不自动卸载。
-- status 展示绑定 Database 身份、Ready、交付 Secret 引用及不含认证信息的 OpenBao URL。
+- status 展示绑定 Database 身份、Ready 及 `credentialRef`、`credentialVersion`、不含认证信息的
+  `credentialURL`；不交付 Secret（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 - Tenant 删除释放申请，按照 Database 的回收策略处理，不独立持有最终删除授权。
-
-旧 Tenant `spec.deletionPolicy` 不再作为最终资源回收策略；旧字段表、供应 phase 枚举及
-仅按 Tenant namespace/name 派生凭据路径的规则不再是实现合同。已有代码没有兼容负担，
-不保留两套相互覆盖的策略字段。
 
 ## 已确认的绑定顺序
 
@@ -195,31 +195,27 @@ Released 不自动变成可绑定。Database 不以 Tenant 为 GC owner；使用
 Released，不自动清空后重新分配。API 记录部分写入由 reconcile 重试；外部创建结果
 无法确认时仍报告 Conflict，交给人工，不新增事务队列或 registry。
 
-## 绑定协议剩余评审要求
-
-实现前必须明确：
-
-1. 引用字段的最终格式，以及落实管理员资源管理、controller 协调与普通申请权限的 RBAC 规则。
-2. 绑定记录的最终字段及校验规则，落实上述写入顺序与恢复行为。
-3. Tenant UID 变化、对象删除、Released 旧引用与管理员重新授权的判断。
-4. 同一物理数据库重复登记的冲突处理；列表查询不是原子认领。
-5. 已有凭据关联字段、旧访问处置与投射清理顺序；动态凭据路径已确定按 Database UID 定位。
-6. Tenant/Database finalizer 配合；回收策略默认 Retain，删除流程前可改，进入后固定。
-
-资源管理者设置 Delete 即表示删除授权，不增加额外审批字段。导入显式关联已有凭据；
-Released 不自动改密，管理员处理旧访问后才重新开放。Tenant 不得自选任意 OpenBao 路径。
-
-该协议使用 Kubernetes API 持久化，不为它新增 PostgreSQL registry。
-未完成一致绑定不得供应或交付；外部创建结果不确定按 Conflict 人工处理。
-
 ## Conditions
 
 每类资源至少提供唯一的 Ready；同类型 Condition 不重复，维护 lastTransitionTime 与
-observedGeneration。最低安全错误分类见 [系统规格](specification.md#10-conditions-与可观测性)。
+observedGeneration。
 
 Conflict 必须说明目标、步骤、已确认与不确定部分及人工核实建议；不能建议清空 status、
 伪造 Ready 或改密码绕过。可恢复依赖故障退避重试，冲突不忙循环。
-具体 Reason 在 API 切片固定，Released 不得误报为可立即交付。
+
+实际写出的 Reason：
+
+| 资源 / Condition | Reason |
+| --- | --- |
+| Instance `Ready` | `ManagementReady`；`InvalidCredentials`、`AuthenticationFailed`、`InsufficientPrivileges`、`DependencyUnavailable`、`ObservationIncomplete`；删除时 `InstanceInUse` 或 `Deleting` |
+| Tenant `Ready` | `InvalidRequest`、`BindingPending`、`CredentialsPending`、`DatabaseNotReady`、`CredentialsAvailable`；绑定受阻时 `Conflict` 或 `DependencyUnavailable` |
+| Database `Ready` | `ProvisioningIncomplete`、`DatabaseReady` |
+| Database `CredentialsReady` | `PreparationPending`、`LocationPinned`、`CredentialPrepared`、`Conflict`、`DependencyUnavailable`、`PreparationStopped`、`InvalidTarget` |
+| Database `ResourcesReady` | 与 `status.resourcePhase` 相同 |
+
+阶段枚举：Database `credentialPhase` 为 Pending/Pinned/Prepared/Conflict/Unavailable/Stopped/InvalidTarget；
+`resourcePhase` 为 Pending/Available/Reclaiming/Conflict/Unavailable/Stopped。controller 只从阶段字段
+还原进度，Reason 仅用于呈现。
 
 ## 实现验收
 
