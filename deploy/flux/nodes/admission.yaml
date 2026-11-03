@@ -1,0 +1,71 @@
+# 节点 agent 只写自己，且只写自己的角色：
+#   - Node 只能是与自己同名的那个；
+#   - node-role.kubernetes.io/<role> label 与 <role>.ayatori.ddupan.top/Ready condition 只能增删改
+#     自己角色组 system:ayatori:role:<role> 对应的那些；
+#   - Lease 只能是 <自己>-<自己的角色>。
+# 节点名与角色取自证书的用户名与组（internal/infra/node）。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ayatori-node
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: [v1]
+      operations: [CREATE, UPDATE]
+      resources: [nodes, nodes/status]
+    - apiGroups: [coordination.k8s.io]
+      apiVersions: [v1]
+      operations: [CREATE, UPDATE]
+      resources: [leases]
+  matchConditions:
+  - name: is-node-agent
+    expression: "'system:ayatori:nodes' in request.userInfo.groups"
+  variables:
+  - name: node
+    expression: "request.userInfo.username.startsWith('system:ayatori:node:') ? request.userInfo.username.substring(20) : ''"
+  - name: roles
+    expression: "request.userInfo.groups.filter(g, g.startsWith('system:ayatori:role:')).map(g, g.substring(20))"
+  - name: labels
+    expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+  - name: oldLabels
+    expression: "request.operation == 'UPDATE' && has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}"
+  - name: conditions
+    expression: >-
+      request.resource.resource == 'nodes' && has(object.status) && has(object.status.conditions) ?
+      object.status.conditions.filter(c, c.type.endsWith('.ayatori.ddupan.top/Ready')) : []
+  - name: oldConditions
+    expression: >-
+      request.resource.resource == 'nodes' && request.operation == 'UPDATE' && has(oldObject.status) && has(oldObject.status.conditions) ?
+      oldObject.status.conditions.filter(c, c.type.endsWith('.ayatori.ddupan.top/Ready')) : []
+  validations:
+  - expression: "variables.node != ''"
+    message: "node agent username must be system:ayatori:node:<node>"
+  - expression: "request.resource.resource != 'nodes' || object.metadata.name == variables.node"
+    messageExpression: "'node ' + variables.node + ' may only write its own Node'"
+  - expression: >-
+      request.resource.resource != 'leases' ||
+      variables.roles.exists(r, object.metadata.name == variables.node + '-' + r)
+    messageExpression: "'node ' + variables.node + ' may only renew its own role leases'"
+  - expression: >-
+      variables.labels.all(k, !k.startsWith('node-role.kubernetes.io/') || k.substring(24) in variables.roles ||
+        (k in variables.oldLabels && variables.oldLabels[k] == variables.labels[k])) &&
+      variables.oldLabels.all(k, !k.startsWith('node-role.kubernetes.io/') || k.substring(24) in variables.roles ||
+        k in variables.labels)
+    messageExpression: "'node ' + variables.node + ' may only change the role labels of its own roles'"
+  - expression: >-
+      variables.conditions.all(c, c.type.substring(0, c.type.indexOf('.')) in variables.roles ||
+        variables.oldConditions.exists(o, o == c)) &&
+      variables.oldConditions.all(o, o.type.substring(0, o.type.indexOf('.')) in variables.roles ||
+        variables.conditions.exists(c, c == o))
+    messageExpression: "'node ' + variables.node + ' may only change the conditions of its own roles'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ayatori-node
+spec:
+  policyName: ayatori-node
+  validationActions: [Deny]
