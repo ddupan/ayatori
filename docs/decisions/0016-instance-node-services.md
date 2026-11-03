@@ -32,7 +32,7 @@
 
 - 运行时操作不修改 spec，因此不会与 Flux 冲突，也不需要"不 reconcile 某些字段"的特例。
 - 唯一需要跨越冷切换保存的运行时状态是**电源意图**：有意关机的实例在宿主机故障后不应被其他节点
-  开机。它写在实例的状态卷上（ADR-0015），跟随实例迁移，不依赖控制面。
+  开机。它写在实例的状态卷上（[ADR-0018](0018-linstor-drbd-storage-integration.md)），跟随实例迁移，不依赖控制面。
 
 ## 决策
 
@@ -169,7 +169,7 @@
 | 实例列表与详情：所在节点、电源状态、当前介质、Events | 创建实例、编辑 spec（走 git） |
 | 控制台：VNC、串口、SPICE `.vv` 下载 | 编辑 domain XML |
 | 运行时操作：换盘、开机、关机、断电、重置、发送按键 | 管理 pool 和 network 的定义 |
-| HA 健康：副本和 tiebreaker 的连接、quorum、最近的重启和 evict | 告警（见 ADR-0015"可观测性"） |
+| HA 健康：副本和 tiebreaker 的连接、quorum、最近的重启和 evict | 告警（见 ADR-0015、ADR-0018"可观测性"） |
 
 - **读取用用户自己的身份**：列表和详情把用户的 OIDC token 转给 apiserver，由 apiserver 做 RBAC，
   代理不需要 impersonation 权限。只有不经过 apiserver 的运行时操作，才由代理发起
@@ -190,7 +190,7 @@
 - **电源意图**：关机和强制断电写入实例状态卷上的"off"标记，开机时清除。Agent 一律**先写标记再执行**。
   - VM：libvirt 按 QMP `SHUTDOWN` 事件的 reason 报告停止原因，监管进程只对崩溃自动重启，因此客户机内
     主动关机也会保持关闭，并补写标记。`virsh destroy` 与崩溃无法区分，所以必须先写标记。
-  - LXC：容器没有自己的关机语义，监管进程只看标记（ADR-0015）。容器内执行 `poweroff` 会被重新拉起，
+  - LXC：容器没有自己的关机语义，监管进程只看标记（ADR-0018）。容器内执行 `poweroff` 会被重新拉起，
     关机只能经控制台或 API。
 - **重启**由监管进程在内部完成，Agent 不得 `systemctl restart` promoter 管理的单元：那会连带
   demote 资源，实例被另一节点接管（PoC 04）。

@@ -5,6 +5,8 @@
 - 依据：维护者讨论；修订 [ADR-0007](0007-compute-node-and-vm-boundary.md) 中北向 VM API、Agent
   与 HA 的部分，与 [ADR-0013](0013-api-only-control-plane-on-lxc.md)、
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
+- 修订：2026-11-03 LINSTOR/DRBD 的部分（卷、自动冷启动的机制、DRBD 可观测性）拆到
+  [ADR-0018](0018-linstor-drbd-storage-integration.md)，本 ADR 只保留计算核心与存储能力的契约。
 
 ## 问题
 
@@ -143,19 +145,19 @@ Ayatori 不抽象磁盘格式。存储能力尽量通过 libvirt 原生 pool 表
 |---|---|---|---|
 | Ceph RBD | `rbd` 类型 pool，各节点定义同一个 pool，卷共享；Ceph key 通过 libvirt secret 交付 | Agent krbd map 后挂载 | 能（HA 待定） |
 | 本地 | `dir`/`logical`/`zfs` 类型 pool | Agent 取卷路径直接使用或挂载 | 不能，固定在卷所在节点 |
-| LINSTOR/DRBD | **例外**，见下 | 挂载 DRBD 设备 | 能 |
+| LINSTOR/DRBD | **例外**，见 ADR-0018 | 挂载 DRBD 设备 | 能 |
 
-本地 `logical`/`zfs` pool 不得指向 LINSTOR/DRBD 的底层 VG 或 zpool：libvirt 会把 DRBD 的底层卷也列成
-pool 中的卷，经 libvirt 删除或直接挂载它们会绕过 DRBD（PoC 10）。
+**LINSTOR 没有 libvirt pool 驱动**，是本设计中唯一的非原生部分，由 Ayatori 直接集成，见
+[ADR-0018](0018-linstor-drbd-storage-integration.md)。
 
-**LINSTOR 没有 libvirt pool 驱动**，是本设计中唯一的非原生部分：
+**存储能力**：计算核心不认识具体存储，只按卷所在存储声明的能力决定实例能做什么：
 
-- `LibvirtStorageVolume` 增加 `backend: linstor` 分支，由 controller 调用 LINSTOR API 创建卷，
-  并在候选节点上放置副本或 diskless 资源。
-- domain 中写 `<disk type='block'>` 和 `/dev/drbd/by-res/<res>/0`。该路径在所有节点上一致，
-  本身就是稳定引用。
-- 一个受保护的实例对应一个 LINSTOR resource，多块盘用该 resource 的多个 volume。
-- VM 卷和子集群的 PVC 使用不同的 LINSTOR resource group。
+| 能力 | 本地 pool | LINSTOR/DRBD（ADR-0018） | Ceph RBD |
+|---|---|---|---|
+| 换节点 | 复制卷后才能换 | 能 | 能 |
+| 自动冷启动 | 不能，只在原节点拉起 | 能 | 待设计 |
+| VM 在线迁移 | 经 `--copy-storage-all` 复制磁盘 | 能 | 未设计 |
+| 不停机换存储池 | VM 经 `blockcopy` | 能，LXC 也可以 | 未设计 |
 
 **LXC 复用 libvirt 对象作为节点上的登记表**：liblxc 不认识 libvirt 对象，由 Agent 解析——
 `rootfs` 引用的 volume 从 libvirt 取得路径；`networks` 引用的 network 从其定义中查出 bridge，
@@ -176,83 +178,19 @@ LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.or
 ### 自动冷启动：节点自治，不依赖控制面
 
 参照 vSphere HA：故障判定和重启由宿主机上的 agent 完成，vCenter 只负责下发配置；真正防止
-双开的是 VMFS 文件锁，不需要全集群 quorum。
+双开的是存储锁（VMFS 文件锁），不需要全集群 quorum。
 
-- **DRBD 的单 Primary 相当于 VMFS 锁。** 使用 drbd-reactor 的 promoter 插件：
-  - 候选节点竞争 promote，赢的节点启动 `start` 中列出的单元；
-  - 失去 quorum 的节点停止服务。
-- **DRBD 参数**：`quorum majority`、`auto-promote no`、`on-no-quorum io-error`，
-  `on-no-data-accessible` 与 `on-no-quorum` 取相同的值。[ADR-0017](0017-compute-day2-operations.md)
-  提议改为 `suspend-io` 配合 promoter 的 `freeze`，避免 quorum 抖动让客户机进入只读。至少 3 个副本，或者 2 个副本加
-  diskless tiebreaker。drbd-reactor 不做节点级 STONITH，完全依赖 DRBD quorum。
-- **tiebreaker 必须在故障发生前就在线**：故障后才接入的 tiebreaker 没有见证旧 Primary 的最后
-  状态，DRBD 不会因此恢复 quorum（PoC 04）。PoC 中有两个资源的 tiebreaker 掉线 11 小时无人察觉。
-  Agent 必须把每个资源的 peer 连接和 quorum 回写 status，并对缺副本、缺 tiebreaker 告警。
-- **promoter 的 `start` 内容：**
-  - VM：`ayatori-vm@<name>.service`，用 Agent 预先放好的定义启动。
-  - LXC：挂载 rootfs 的 systemd `.mount` 单元（Ubuntu 没有 `ocf:heartbeat:Filesystem`），然后是
-    LXC 版监管进程，不是 `lxc@<name>.service`。
-- **fencing 的粒度是单个卷**，而不是整台宿主机。网络分区最多让个别实例停止，不会重启宿主机。
-- **谁来启动实例：**
-  - DRBD 上 `ha: Restart` 的实例，**换节点只由 promoter 决定**，Agent 不得在其他节点启动它，
-    否则会绕过单 Primary 互斥。
-  - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地
-    拉起。
-- **实例自身崩溃**（PoC 01 已验证）：promoter 不监控服务，各层分工如下：
-  - 客户机 panic 和卡死：domain XML 中写 `<features><acpi/></features>`、`<panic model='isa'/>`、
-    `<on_crash>restart</on_crash>` 和 `<watchdog model='i6300esb' action='reset'/>`，由 libvirt/QEMU
-    原地复位。此时 domain 状态为 `running (crashed)`，不算故障。
-  - QEMU 进程或容器 init 死亡：promoter 启动的单元是一个**监管进程**，跟踪实例的生命周期（VM 订阅
-    libvirt lifecycle 事件，LXC 循环执行 `lxc-start -F`），在本机重启并按滑动窗口计数。不得使用
-    oneshot 单元，否则实例死亡后节点仍持有 Primary，既不重启也不切换。
-  - 监管单元使用 `KillMode=mixed`。默认的 `control-group` 下，systemd 停止单元时会反复向 cgroup
-    发送 SIGTERM，监管进程清理时新 fork 的 `virsh destroy` 也可能被杀，QEMU 残留，DRBD 只能强制
-    demote 让其 IO 失败（PoC 05）。
-  - 监管进程启动实例前必须确认本节点是该实例 DRBD 资源的 Primary，否则不启动。`virsh start`
-    失败不计入重启次数，不得像崩溃那样 evict，否则会在节点之间来回弹跳（PoC 02）。但只停在原地也不对：
-    节点本地的问题（如 bridge 缺失）会让实例持有 Primary 却一直不运行（PoC 11，PoC 13 中真实发生过）。
-    因此启动失败时执行 `drbd-reactorctl evict --keep-masked`：本节点对该实例保持屏蔽，由下一个节点尝试；
-    全部候选节点都失败时实例停机并告警，不会来回弹跳。Agent 确认本节点问题已解决后执行 `--unmask`，屏蔽
-    状态回写 status 并导出为指标（PoC 13）。
-  - 重启次数耗尽：监管进程以非零值退出，单元的 `OnFailure=` 在节点本地执行
-    `drbd-reactorctl evict <实例>`，交给其他节点。
-  - 重启计数不能交给 systemd：systemd 255 下同一单元同时设置 `Restart=` 和 `OnFailure=` 时，第一次
-    失败就会触发 `OnFailure=`。promoter 的依赖保持默认 `Requires`，`BindsTo` 会让结果取决于 job
-    排队顺序。
-  - Agent 为每个实例生成独立的 promoter 配置文件，`evict` 按文件名定位。单元名中的 `\x2d` 等
-    转义在 TOML 双引号字符串中非法，必须用单引号字符串（PoC 03）。
-  - **LXC 没有自己的关机语义，意图只看电源意图标记**（与 Incus 相同）。容器的 init 只是宿主机上的
-    一个进程树，不存在 VM 那样由客户机发起、由 hypervisor 如实报告的关机。监管进程不区分容器怎么停的：
-    有标记就保持关闭，没有标记一律按崩溃处理，在本机重启，次数耗尽后 evict。容器内执行 `poweroff`
-    同样会被拉起，要关机必须经 Agent（先写标记再 `lxc-stop`）。
-    - 这样也绕开了一个无解的问题：liblxc 的 API、monitor 通道、hook 和 `lxc-start -F` 的退出码都拿不到
-      init 的退出原因，Go 进程也不能前台启动容器（PoC 04、08）。
-    - 启动失败按"容器没有进入 RUNNING"判断（`lxc-wait -s RUNNING`），不计入重启次数，不 evict；
-      `lxc-start -F` 在容器已运行时也返回 0，退出码不能用。
-    - `lxc-start` 不响应 SIGTERM，停止时由监管进程调用 `lxc-stop`。
-  - 实例的重启由监管进程在内部完成。对 promoter 管理的单元执行 `systemctl restart` 会连带
-    demote 资源，实例被其他节点接管。
-- **实例状态卷：凡是必须跟随实例的节点侧状态，都放在实例自己的 DRBD 资源上**，不放在节点本地。
-  参照 vSphere 把 VM 的配置和状态文件放在 datastore 上。每个受保护实例的 DRBD 资源多带一个小
-  volume（ext4，几十 MiB），由 promoter 在启动实例前挂载到 `/var/lib/ayatori/instances/<实例>`，
-  内容包括：
-  - **UEFI NVRAM**：默认在节点本地 `/var/lib/libvirt/qemu/nvram/`，冷切换后启动项丢失（PoC 02）。
-    domain 的 `<nvram>` 指向状态卷上的文件。
-  - **vTPM 状态**：默认在节点本地 `/var/lib/libvirt/swtpm/<uuid>/`，冷切换后 BitLocker 会要求恢复
-    密钥。libvirt 10.0 不支持 TPM backend 的 `<source>`，因此把状态卷上的目录 bind mount 到该路径。
-  - **电源意图**：实例被有意关机时写入"off"标记。宿主机故障后接管的节点读到标记就不启动，开机操作
-    清除标记。不依赖控制面，也不依赖 Agent 之间的同步。没有这个标记，有意关机的实例会在原节点
-    故障后被其他节点重新开机（PoC 01 中已识别；VM 和 LXC 分别在 PoC 03、04 中验证）。
-  - LXC 的 rootfs 本来就在 DRBD 上，电源意图同样写入状态卷。
-- **实际运行位置以 DRBD Primary 且有 quorum 为准**，不以 `virsh domstate`/`lxc-info` 为准。
-  PoC 01 观察到，失去 quorum 的旧节点上的实例还会短暂显示运行中。
-- **控制面只观察**实例实际跑在哪个节点，并写入 status。实例换了节点不算漂移，控制面不得把它
-  "纠正"回去。
-- **按存储类型的能力：**
-  - DRBD：自动冷启动。
-  - 本地：只在原节点自动拉起。
-  - Ceph：RBD 的 exclusive-lock 是协作式的，不能防止两个节点同时写，fencing 需要加入黑名单
-    （blocklist），drbd-reactor 也覆盖不到。出现真实需求时再设计。
+- **防止双开由存储提供**，因此自动冷启动是存储能力：LINSTOR/DRBD 用单 Primary + quorum 与
+  drbd-reactor promoter 实现，见 [ADR-0018](0018-linstor-drbd-storage-integration.md)；Ceph 的 RBD
+  exclusive-lock 是协作式的，fencing 需要加入黑名单（blocklist），出现真实需求时再设计。
+- **谁来启动实例**：
+  - 具备自动冷启动能力的存储上、`ha: Restart` 的实例，换节点只由该存储集成的机制决定，Agent 不得
+    在其他节点启动它；
+  - 其他实例由 Agent 根据本地状态中的 `runState` 启动，包括本地存储实例在宿主机重启后的原地拉起。
+- **电源意图**：有意关机的实例不应被重新拉起。本地实例记在 Agent 的本地状态中；可换节点的实例必须
+  记在随实例迁移的位置，DRBD 上是实例的状态卷（ADR-0018）。
+- **控制面只观察**实例实际跑在哪个节点，并写入 status。实际位置由存储集成判定（DRBD 以 Primary 且有
+  quorum 为准）。实例换了节点不算漂移，控制面不得把它"纠正"回去。
 - **容量预留**在创建时由控制面按实例保障量检查（对应 vSphere 的 admission control），见"资源模型"。
 
 ### 可观测性：告警不依赖控制面
@@ -263,28 +201,8 @@ HA 降级通常是静默的：PoC 04 中两个资源的 tiebreaker 掉线 11 小
 
 - **采集和告警路径与 HA 一样不依赖控制面**：中央 VictoriaMetrics 直接抓取节点上的 exporter，沿用
   现有的规则与 Telegram 通知。Ayatori apiserver、controller 和前端都不在这条路径上。
-- **DRBD 状态用 drbd-reactor 自带的 Prometheus 插件**（`[[prometheus]]`，默认 `:9942`），不自己
-  实现。它导出资源角色、quorum、各 peer 的连接状态、out-of-sync 字节数和 `force-io-failures` 等。
-- **Agent 导出 DRBD 看不到的部分**：各实例的原地重启次数、重启耗尽与 evict、启动失败、电源意图，
-  以及"实例在非 Primary 节点上运行"（PoC 05 的残留 QEMU）。
-- **第一批告警：**
-
-| 告警 | 依据 | 来源 |
-|---|---|---|
-| 冗余降级：副本或 tiebreaker 掉线 | `drbd_connection_state` 不是 `Connected` 持续 5 分钟 | PoC 04 |
-| 失去 quorum | `drbd_device_quorum == 0` | PoC 01 |
-| 强制 demote 后仍有打开者 | Agent 从 `drbdsetup events2` 导出；drbd-reactor 1.12 的 `drbd_resource_forceiofailures` 恒为 0（PoC 06） | PoC 05 |
-| split-brain | 连接状态 `StandAlone` | — |
-| 同步卡住 | `drbd_peerdevice_outofsync_bytes > 0` 持续较长时间 | — |
-| 应运行的实例没有任何节点在运行 | Agent 指标，按 `runState` 判断 | — |
-| 实例在非 Primary 节点运行 | Agent 指标 | PoC 05 |
-| promoter 的 target 为 active 但本节点不是 Primary | Agent 指标；在 promoter 之外 demote 后 systemd 状态会过期，该节点实际无法再接管 | PoC 07 |
-| 发生原地重启或 evict | Agent 计数器增加 | PoC 01 |
-| exporter 消失 | `drbdreactor_up` 缺失 | — |
-
-- **不能只看 quorum。** PoC 05 后实测：tiebreaker 下线时 `drbd_device_quorum` 仍是 1，只有对应
-  peer 的 `drbd_connection_state` 变成 `Connecting`。剩下两个节点仍构成多数，所以 quorum 不变，
-  但再坏一个节点就会全部停机。冗余降级必须按连接状态告警。
+- Agent 导出各实例的状态；"应运行的实例没有任何节点在运行"按 `runState` 判断并告警。存储相关的
+  告警由各存储集成定义，DRBD 见 ADR-0018。
 - Agent 指标的实例名用 `name` 标签，不用 `instance`：后者是 Prometheus 的抓取目标标签，重名会被
   改写为 `exported_instance`，按实例聚合的规则会全部算错（PoC 06）。
 - 控制面可用时，Agent 同时把这些状态写进 status 和 Event，供前端和 `kubectl` 查看；告警不依赖
@@ -359,11 +277,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 
 ## 待验证（Accepted 之前必须完成）
 
-1. 两台以上节点上，用 drbd-reactor promoter 分别跑一个 libvirt VM 和一个 LXC 容器。各测一次
-   拔网线和断电，确认不会两边同时运行，记录冷启动所需时间。
-   **已完成（2026-10-30）**：通过，见 [PoC 01](../compute/poc-01-drbd-reactor-failover.md)。
-2. 确认 DRBD 参数（`auto-promote no`、quorum 等）能否和 PVE 现有的 LINSTOR resource group
-   共存，或者是否需要单独的 resource group。
+1. drbd-reactor 冷切换：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 1 项。
+2. 与 PVE 现有 LINSTOR resource group 共存：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 2 项。
 3. 各节点下发同名 `rbd`、`logical` pool 和 bridge 型 network 后，domain 使用原生引用，冷启动换
    节点仍能正常解析；LXC 能通过 Agent 解析同一份 pool/network。
    **大部分完成（2026-10-31）**：`logical` pool 与 bridge 型 network 通过，见
@@ -375,7 +290,7 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 5. `go-lxc` 的 cgo 构建方式和 Agent 的发布形态；能否取得容器 init 的 wait status（PoC 04）。
    **已完成（2026-10-31）**：见 [PoC 08](../compute/poc-08-go-lxc.md)。go-lxc 动态链接 liblxc，Agent
    按节点发行版构建。liblxc 的 API、monitor 和 hook 都拿不到停止原因；因此 LXC 改为只看电源意图
-   标记，不解析日志（见"实例自身崩溃"）。
+   标记，不解析日志（见 ADR-0018"自动冷启动"）。
 6. 宿主机同时运行 kubelet 和 CNI 时，`bridge-nf-call-iptables` 对 VM/LXC 流量的实际影响。
    **已完成（2026-10-31）**：网络机制见 PoC 03；kubelet 共存见
    [PoC 11](../compute/poc-11-kubelet-coexistence.md)；内存分层与动态上限见
@@ -384,20 +299,12 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
    **已完成（2026-10-31）**：可行，见 [PoC 09](../compute/poc-09-agent-status-vap.md)。按节点分开的
    status 字段待 API 设计时确定。
 8. 控制面完全丢失后的手工恢复演练。
-9. 用 `OnFailure=` 自动触发 `drbd-reactorctl evict`，完成"原地重启 → 换节点"的升级；验证
-   `<on_crash>restart</on_crash>` 和 watchdog 设备。
-   **已完成（2026-10-30）**：通过，见 [PoC 01](../compute/poc-01-drbd-reactor-failover.md) 的"实例
-   崩溃"一节；LXC 版见 [PoC 04](../compute/poc-04-metadata-media-lxc-supervisor.md)。
+9. `OnFailure=` 触发 evict：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 3 项。
 10. 控制面不可用时重启宿主机：Agent 按本地状态原地拉起本地存储实例，DRBD 实例由 promoter
    拉起；控制面恢复后，离线期间被删除的对象能被正确清理，不会误删其他对象。
-11. 实例状态卷：NVRAM、vTPM 状态和电源意图随冷切换迁移；有意关机的实例在原节点故障后不会被
-    其他节点开机。
-    **已完成（2026-10-30）**：通过，见 [PoC 03](../compute/poc-03-state-volume-and-bridge-netfilter.md)。
-12. 第一批告警接入中央 VictoriaMetrics，并在 PoC 环境中逐条触发，确认 Telegram 能收到。
-    **部分完成（2026-10-31）**：PoC 环境用 Prometheus + webhook 逐条触发通过，见
-    [PoC 06](../compute/poc-06-observability.md)；接入中央 VictoriaMetrics 与 Telegram 待实现时进行。
-13. 启动失败时 `evict --keep-masked`：节点本地问题能自动换节点，全局配置错误不会来回弹跳；屏蔽的解除。
-    **已完成（2026-10-31）**：通过，见 [PoC 13](../compute/poc-13-start-failure-keep-masked.md)。
+11. 实例状态卷：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 4 项。
+12. 第一批告警：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 5 项。
+13. 启动失败时 `evict --keep-masked`：已移至 [ADR-0018](0018-linstor-drbd-storage-integration.md) 第 6 项。
 14. 宿主机"活着但不响应"（内核与 DRBD 正常、用户态卡死）时的处理。
     **已决定（2026-10-31）**：不做专门处理，按宿主机故障对待。DRBD 连接随之中断时与断电相同，自动冷切换
     （PoC 13 中真实发生）；DRBD 仍连着时依赖告警（`ExporterDown`、`InstanceDown`）与人工经 PVE/IPMI
@@ -436,7 +343,8 @@ etcd、DNS，甚至 Ayatori 控制面本身，都可能迁到本后端管理的 
 
 逐项对照 vSphere 功能集的结果见[缺口分析](../compute/vsphere-gap-analysis.md)。其中有现状证据的
 反亲和、维护模式、VMCP、故障切换容量、备份、迁入等，设计见
-[ADR-0017](0017-compute-day2-operations.md)。仍无需求的：
+[ADR-0017](0017-compute-day2-operations.md)，LINSTOR/DRBD 上的实现见
+[ADR-0018](0018-linstor-drbd-storage-integration.md)。仍无需求的：
 
 - **重启优先级与顺序**：基础服务（etcd、DNS）先于依赖它们的实例启动。全站断电恢复成为问题时，
   参照 vSphere 的 orchestrated restart。

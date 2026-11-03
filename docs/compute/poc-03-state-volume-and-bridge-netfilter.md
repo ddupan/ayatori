@@ -1,7 +1,7 @@
 # PoC 03：实例状态卷与 kubelet 共存时的 bridge 流量
 
 - 日期：2026-10-30
-- 对应：[ADR-0015](../decisions/0015-libvirt-lxc-compute-backend.md) 待验证第 11 项（实例状态卷）和
+- 对应：[ADR-0018](../decisions/0018-linstor-drbd-storage-integration.md) 待验证第 4 项（实例状态卷，原 ADR-0015 第 11 项）和
   第 6 项（与 kubelet 共存，仅网络机制部分）
 - 环境：沿用 [PoC 01](poc-01-drbd-reactor-failover.md) 的三台嵌套 VM。
 - 结论：**实例状态卷通过**：NVRAM、vTPM 和电源意图都随硬断电后的冷切换迁移。**网络机制已确认**：
