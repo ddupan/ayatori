@@ -197,11 +197,14 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
 - **agent 直接写 LoadBalancer 的 `status.hosts[]`**：每个 LoadBalancer 会有 N 个写入方，VAP 要按列表项
   收窄。改为各自只写自己的 LoadBalancerHost、由中央汇总，写入方与权限都更简单。
 
+## 已知限制
+
+- **BGP speaker 仍内嵌在 LB agent 中。** 按 ADR-0017，它是本机唯一的 BGP speaker；目前也没有其他角色
+  需要宣告路由。将来如果有第二个角色要宣告，就把 speaker 从 LB agent 中独立出来，作为本机共用的服务，
+  各角色把各自的路径交给它，宣告规则仍由各角色在本机决定。在那之前不做拆分。
+
 ## 待定问题
 
-- **同机的 BGP speaker。** ADR-0017 规定 LB agent 内嵌的 GoBGP 是本机唯一的 BGP speaker。compute 如果也
-  要向路由器宣告，同一台主机上只能留一个 speaker：要么由一个进程统一宣告，各角色把路径交给它；要么各
-  角色用不同的本机地址分别建立会话。等 compute 确定是否需要 BGP 后再定。
 - **同机部署时的 vip-guard。** 这条 nft 规则只针对 VIP 池，但两种角色同机部署前，仍要在 Kitchen 中验证。
 
 ## 待验证（Accepted 之前必须完成）
