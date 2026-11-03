@@ -26,7 +26,8 @@ type dataPlane struct {
 	configs     map[string]loadbalancer.Snapshot // host/uid → 已写入的期望
 	stopped     map[string]bool                  // host：agent 报告 frontend 未处于 OPEN
 	unreachable map[string]bool
-	records     map[string]netip.Addr // hostname
+	records     map[string]netip.Addr                  // hostname
+	health      map[string][]loadbalancer.ServerHealth // host → 运行中 server 的检查结论
 	events      []string
 }
 
@@ -42,7 +43,8 @@ func (d *dataPlane) Observe(_ context.Context, host loadbalancer.Host, lb *loadb
 	}
 	got, present := d.configs[host.Name+"/"+lb.Snapshot().Owner.UID]
 	want := lb.Snapshot()
-	return loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports)}, nil
+	return loadbalancer.ProxyFacts{Present: present, Matches: present && got.Address == want.Address && reflect.DeepEqual(got.Ports, want.Ports),
+		Servers: d.health[host.Name]}, nil
 }
 
 func (d *dataPlane) Apply(_ context.Context, host loadbalancer.Host, lb *loadbalancer.LoadBalancer) error {

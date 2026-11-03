@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,27 @@ func TestHostsContract(t *testing.T) {
 			t.Fatalf("连接应被关闭而不是转发或挂起: %v", err)
 		} else if err != io.EOF && !strings.Contains(err.Error(), "reset") {
 			t.Logf("连接以 %v 结束", err)
+		}
+	})
+
+	t.Run("Observe 报告各 server 的检查结论", func(t *testing.T) {
+		pass := loadbalancer.Endpoint{Address: loopback, Port: 5555}
+		closed := loadbalancer.Endpoint{Address: "127.0.0.1", Port: 1}
+		var servers []loadbalancer.ServerHealth
+		waitFor(t, func() bool {
+			facts, err := hosts.Observe(t.Context(), f.host, aggregate(uid, ports))
+			if err != nil {
+				t.Fatal(err)
+			}
+			servers = facts.Servers
+			return slices.Contains(servers, loadbalancer.ServerHealth{Port: passPort, Endpoint: pass, State: "UP", CheckStatus: "L7OK", CheckCode: 401}) &&
+				slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool {
+					return s.Port == closedPort && s.Endpoint == closed && s.State == "DOWN" && s.CheckStatus == "L4CON"
+				})
+		})
+		// 其他 LoadBalancer 的 server 不在结果中。
+		if slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool { return s.Port == 7100 }) {
+			t.Fatalf("got %+v", servers)
 		}
 	})
 

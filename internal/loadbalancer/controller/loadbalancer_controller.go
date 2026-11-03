@@ -34,6 +34,7 @@ const (
 	degradedType       = "Degraded"
 	hostnameType       = "HostnamePublished"
 	resolvedRefsType   = "ResolvedRefs"
+	endpointsReadyType = "EndpointsReady"
 	// pendingRetry 让池耗尽或冲突的对象在他人释放地址后重新尝试；释放没有指向它们的事件。
 	pendingRetry = 30 * time.Second
 	claimRetry   = time.Second
@@ -66,6 +67,8 @@ type LoadBalancerReconciler struct {
 	Proxy   ProxyBackend
 	DNS     DNSBackend
 	DNSZone string
+	// Now 只供测试替换。
+	Now func() time.Time
 }
 
 // +kubebuilder:rbac:groups=network.ayatori.ddupan.top,resources=loadbalancers,verbs=get;list;watch;update;patch
@@ -284,6 +287,9 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	meta.SetStatusCondition(&status.Conditions, condition(resolvedRefsType, resolved, reason, message, object.Generation))
 	programmed, reason, message := lb.Programmed()
 	meta.SetStatusCondition(&status.Conditions, condition(programmedType, programmed, reason, message, object.Generation))
+	status.Ports, status.Endpoints = endpointStatuses(object, lb.Health(), r.now())
+	ready, reason, message := lb.EndpointsReady()
+	meta.SetStatusCondition(&status.Conditions, condition(endpointsReadyType, ready, reason, message, object.Generation))
 	degraded := lb.Degraded()
 	if len(degraded) > 0 {
 		meta.SetStatusCondition(&status.Conditions, condition(degradedType, true, loadbalancer.ReasonHostsDegraded,
@@ -296,6 +302,51 @@ func (r *LoadBalancerReconciler) save(ctx context.Context, object *networkv1alph
 	}
 	object.Status = *status
 	return r.Client.Status().Update(ctx, object)
+}
+
+func (r *LoadBalancerReconciler) now() metav1.Time {
+	if r.Now == nil {
+		return metav1.Now()
+	}
+	return metav1.NewTime(r.Now())
+}
+
+// endpointStatuses 把本轮观察写成 status.ports 与平铺的 status.endpoints；state 未变时沿用上次的
+// lastTransitionTime，否则每轮都会因时间不同而写入。
+func endpointStatuses(object *networkv1alpha1.LoadBalancer, health []loadbalancer.PortHealth, now metav1.Time) ([]networkv1alpha1.PortStatus, []networkv1alpha1.EndpointStatus) {
+	names := map[int32]string{}
+	for _, port := range object.Spec.Ports {
+		names[port.Port] = port.Name
+	}
+	since := map[networkv1alpha1.EndpointStatus]metav1.Time{}
+	for _, previous := range object.Status.Endpoints {
+		key := previous
+		key.CheckStatus, key.CheckCode, key.LastTransitionTime = "", 0, metav1.Time{}
+		since[key] = previous.LastTransitionTime
+	}
+	ports := make([]networkv1alpha1.PortStatus, 0, len(health))
+	var endpoints []networkv1alpha1.EndpointStatus
+	for _, port := range health {
+		status := networkv1alpha1.PortStatus{Name: names[port.Port], Port: port.Port, Endpoints: int32(len(port.Endpoints))}
+		for _, endpoint := range port.Endpoints {
+			if endpoint.Ready() {
+				status.ReadyEndpoints++
+			}
+			for _, host := range endpoint.Hosts {
+				// 以端口、成员、主机与 state 为键查上次的时间：state 变了即为新的翻转。
+				key := networkv1alpha1.EndpointStatus{Port: port.Port, Address: endpoint.Endpoint.Address, EndpointPort: endpoint.Endpoint.Port,
+					Host: host.Host, State: host.State}
+				at, ok := since[key]
+				if !ok {
+					at = now
+				}
+				key.CheckStatus, key.CheckCode, key.LastTransitionTime = host.CheckStatus, host.CheckCode, at
+				endpoints = append(endpoints, key)
+			}
+		}
+		ports = append(ports, status)
+	}
+	return ports, endpoints
 }
 
 func hostnameReason(published bool) string {

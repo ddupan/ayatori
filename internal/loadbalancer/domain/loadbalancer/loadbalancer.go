@@ -59,6 +59,8 @@ type LoadBalancer struct {
 	reason      string
 	message     string
 	attachments []Attachment
+	// health 是本轮各可观察 Host 上 server 的健康检查结论（ADR-0023）。
+	health map[string][]ServerHealth
 
 	recordObserved  bool
 	recordPublished bool

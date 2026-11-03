@@ -86,13 +86,47 @@ type HealthCheck struct {
 	UnhealthyThreshold int32 `json:"unhealthyThreshold,omitempty"`
 }
 
+// BackendStatus 汇总引用它的各 LoadBalancer 在各主机上的观察（ADR-0023），只呈现观察。
+type BackendStatus struct {
+	// Observations 是每个成员在每个引用它的 LoadBalancer 端口、每台主机上的一次检查结论。平铺的
+	// 原因同 LoadBalancer 的 status.endpoints。
+	// +listType=map
+	// +listMapKey=address
+	// +listMapKey=port
+	// +listMapKey=loadBalancer
+	// +listMapKey=loadBalancerPort
+	// +listMapKey=host
+	// +kubebuilder:validation:MaxItems=4096
+	// +optional
+	Observations []BackendObservation `json:"observations,omitempty"`
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type BackendObservation struct {
+	// +kubebuilder:validation:MaxLength=253
+	Address string `json:"address"`
+	Port    int32  `json:"port"`
+	// LoadBalancer 是同 namespace 中引用本 Backend 的 LoadBalancer 名称。
+	// +kubebuilder:validation:MaxLength=63
+	LoadBalancer        string `json:"loadBalancer"`
+	LoadBalancerPort    int32  `json:"loadBalancerPort"`
+	EndpointObservation `json:",inline"`
+}
+
 // Backend 是 namespace 内被 LoadBalancer 端口引用的后端集合。
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type Backend struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 	Spec              BackendSpec `json:"spec"`
+	// +optional
+	Status BackendStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
