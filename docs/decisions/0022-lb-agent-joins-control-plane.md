@@ -29,10 +29,14 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
 | --- | --- |
 | 用户名 | `system:ayatori:node:<主机名>`，与 compute 节点同一前缀；主机名即 Node 与 LoadBalancerHost 的名称 |
 | 组 | `system:ayatori:nodes`（所有节点）、`system:ayatori:lb-hosts`（LB 角色）、`system:ayatori:client-certificates` |
+| 私钥 | 每个 agent 一份：同一台主机上的 compute Agent 与 LB agent 用户名相同，但证书、私钥和角色组各自独立 |
 | 证书文件 | `/etc/ayatori/lb-agent/client.pem`（证书与私钥合一，原子替换），`kubeconfig` 按相对路径引用 |
 | 续签 | agent 进程内使用 `internal/infra/clientcert`，由 ayatori-manager 的批准者按 ADR-0021 批准 |
 
-- 节点通用的权限（写自己的 Node 与 Lease）授予 `system:ayatori:nodes`；角色相关的权限只授予角色组。
+- **一台主机可以同时承担多个角色。** 架构不限制 compute 与 LB 部署在同一台物理机上，所以身份按主机命名，
+  角色由组表达；同一台主机上的每个 agent 只持有自己那个角色的组。一个 agent 被攻破，拿不到同机另一个
+  角色的权限。
+- 节点通用的权限（写自己的 Node）授予 `system:ayatori:nodes`；角色相关的权限只授予角色组。
   compute 的 `LibvirtDomain` 等权限也应授予 compute 自己的角色组，不要授予 `system:ayatori:nodes`，
   否则 LB 主机也能读到计算后端的对象。
 - **首次签发**由 Ayatori 部署 role 完成，它本来就按 inventory 创建 LoadBalancerHost：
@@ -49,10 +53,18 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
 
 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册逻辑：
 
-- agent 启动后以 SSA 创建并维护自己的 Node，带上 Ayatori ownership label 和角色 label
-  `node-role.kubernetes.io/loadbalancer`；地址与 `nodeInfo` 由 agent 填写。
-- 心跳是 `kube-node-lease` 中与 Node 同名的 Lease，与 compute 节点相同。
-- Node 只表示「这台主机加入了控制面、仍然活着」。LB 自己的事实（各 VIP 是否宣告）仍写在
+- **一台主机一个 Node，角色可以有多个。** 同一台主机上的各个 agent 以各自的 field manager（如
+  `lb-agent`、`compute-agent`）对同一个 Node 做 SSA，每个 agent 只 apply 自己的字段：
+  - 自己的角色 label，例如 `node-role.kubernetes.io/loadbalancer`；
+  - 自己角色的 condition，例如 `ayatori.ddupan.top/LoadBalancerReady`；
+  - 地址、`nodeInfo` 等主机级字段：各 agent 写入相同的值，SSA 允许共同持有。
+
+  先启动的 agent 负责创建 Node；agent 不删除 Node，主机退出由部署方处理。
+- **心跳按角色分开。** LB agent 续约 `kube-node-lease` 中的 `<node>-loadbalancer`，不碰与 Node 同名的
+  Lease。原因是 ADR-0015 的自动冷启动和 fencing 要从 Lease 判断 compute Agent 是否存活：如果同机的
+  LB agent 替它续约，compute Agent 挂掉后 Lease 仍然新鲜，VM 就得不到恢复。与 Node 同名的 Lease
+  留给 compute 决定怎么用；建议 compute 也改用按角色命名的 Lease，让语义对称。
+- Node 只表示「这台主机加入了控制面」以及各角色是否就绪。LB 自己的事实（各 VIP 是否宣告）仍写在
   LoadBalancerHost 中，见下节。
 - 选择计算节点时，必须按 compute 角色 label 正向挑选，不能用「排除 LB」的方式；控制面没有
   kube-scheduler，Node 上的 taint 不会自动生效。
@@ -64,7 +76,7 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
 - agent 以 server-side apply（field manager `lb-agent`）写自己那台 LoadBalancerHost 的
   `status.vips` 和 `AgentReady` condition。内容与语义沿用 ADR-0018：三层自检、未宣告的原因、
   「至少一个会话建立」等。只要本机事实有变化，或者距上次写入已满一个周期，agent 就会写入。
-- controller 照搬 Node lifecycle controller 的做法：Node 的 Lease 超过 `AgentStaleAfter` 未续约时，把
+- controller 照搬 Node lifecycle controller 的做法：Lease `<node>-loadbalancer` 超过 `AgentStaleAfter` 未续约时，把
   `AgentReady` 置为 `Unknown`（reason `AgentStale`），并清空 `status.vips`。agent 恢复后写回
   `True`/`False`。`AgentReady` 因此有两个写入方，和 kubelet 与 node lifecycle controller 共写 Node
   `Ready` 一样；controller 以 force apply 覆盖。
@@ -76,12 +88,14 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
 
 - RBAC：
   - `system:ayatori:nodes` 可以 `get/create/patch/update` Node 和 `nodes/status`，在 `kube-node-lease`
-    中可以 `get/create/update` Lease。与 compute 共用。
+    中可以 `get/create/update` Lease。与 compute 共用；具体能写哪些字段由下面的 VAP 收窄。
   - `system:ayatori:lb-hosts` 可以 `get/list/watch` LoadBalancerHost，`patch/update`
     `loadbalancerhosts/status`。
 - ValidatingAdmissionPolicy（与 dev/compute 上 compute 的 PoC 09 同一做法）按 `request.userInfo` 收窄：
-  - 节点通用规则，与 compute 共用：Node 与 Lease 只能是与自己同名的那个；Node 的角色 label 一旦写入
-    就不能更改。LB 主机不能把自己改成计算节点，反之亦然。
+  - 节点通用规则，与 compute 共用：
+    - 只能写与自己同名的 Node；
+    - 角色 label 与角色 condition 只能增删、修改自己角色组对应的那一个，不能动同机其他角色的；
+    - Lease 只能是 `<自己>-<自己的角色>`。
   - LB 规则：只能写与自己同名的 LoadBalancerHost 的 status，而且只能改 `vips` 和 type 为
     `AgentReady` 的 condition。
 - 读权限不按主机限制：LoadBalancerHost 不含凭据，每台主机读到其他主机的 status 也无妨。
@@ -98,7 +112,7 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
   部署 role 重新首次签发。路由不受影响：宣告与否仍只由本机决定（ADR-0017），控制面不可达时 agent
   照常宣告，只是不再上报。
 - **部署 role 要能 ssh 到 LB 主机**，用于写入 `bootstrap-kubeconfig`。目前只有 Cinc 的 converge
-  ssh 到这些主机。
+  ssh 到这些主机。同一台主机上的每个角色各做一次首次签发。
 - **controller 判断不了 agent 是否「活着但写不进来」**，例如证书过期：这时只看得到 Lease 过期，即
   `AgentStale`。原因要到主机日志里查。为了提前告警，agent 要在 `/metrics` 中导出自身客户端证书的
   到期时间；控制面的 `ayatori_certificate_not_after_timestamp_seconds` 只覆盖控制面上的证书。
@@ -114,7 +128,21 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
   地址也只能放进 annotation。而且主机加入（Node）和主机被允许承接流量（部署方创建的
   LoadBalancerHost）是两件事，删除时「先清理该主机上的配置再放行」的语义也属于后者。
 - **LB 主机不注册 Node，单独用 `ayatori-system` 中的 Lease**：节点身份、心跳和 VAP 就得为 LB 再做一套，
-  而用 role label 区分 LB 与计算节点并不难。
+  而用 role label 区分 LB 与计算节点并不难。更重要的是，compute 与 LB 可能在同一台主机上，各自注册
+  主机会让一台物理机在控制面里变成两个互不相关的对象。
+- **每台主机只跑一个 node agent，由它代各角色注册并持有全部权限**：一个角色的漏洞就能拿到同机所有角色的
+  权限，各角色的发布节奏也会被绑在一起。
+- **各角色共用与 Node 同名的 Lease**：会掩盖单个 agent 的死亡，理由见「注册为 Node」。
+
+## 待定问题
+
+- **同机的 BGP speaker。** ADR-0017 规定 LB agent 内嵌的 GoBGP 是本机唯一的 BGP speaker。compute 如果也
+  要向路由器宣告（例如 VM 或实例的地址），同一台主机上就会有两个 speaker 用同一个源地址与路由器建立
+  会话，二者只能留一个。届时要决定是由一个进程统一宣告、各角色把路径交给它，还是各角色用不同的
+  本机地址分别建立会话。在 compute 确定是否需要 BGP 之前，本 ADR 不处理。
+- **同机部署时的 vip-guard。** homelab_loadbalancer 的 nft 规则会拒绝发往 VIP 池、却落到监听通配地址的
+  socket 的流量。这条规则只针对 VIP 池，不影响计算节点上的其他服务，但两种角色同机部署前，仍要在
+  Kitchen 中验证一次。
 
 ## 后续（另立 ADR）
 
@@ -133,17 +161,18 @@ LB agent 按 ADR-0021 获得客户端证书，**由 agent 把本机事实写进 
 ## 待验证（Accepted 之前必须完成）
 
 1. envtest 中：VAP 只允许 `system:ayatori:node:<名称>` 写自己那台 LoadBalancerHost 的 `vips` 与
-   `AgentReady`，写其他主机、其他 condition 或 spec 一律拒绝；Node 与 Lease 只能写自己那份，
-   角色 label 不能更改。
-2. envtest 中：agent 的 SSA 与 controller 的 force apply 共写 `AgentReady` 时，Lease 过期置为
+   `AgentReady`，写其他主机、其他 condition 或 spec 一律拒绝；Node 只能写与自己同名的那个，Lease
+   只能写 `<自己>-loadbalancer`。
+2. envtest 中，模拟同一台主机：LB 与 compute 两个身份用户名相同、角色组不同，对同一个 Node 做 SSA；
+   各自只能增删自己的角色 label 和 condition，动不了对方的，也续约不了对方的 Lease。
+3. envtest 中：agent 的 SSA 与 controller 的 force apply 共写 `AgentReady` 时，Lease 过期置为
    `Unknown`，agent 恢复后回到 `True`，`DataPlaneReachable` 不受影响。
-3. Dev 上：部署 role 为 lb-dev-1/2 完成首次签发，agent 写入 status，并按 ADR-0021 自行续签；
+4. Dev 上：部署 role 为 lb-dev-1/2 完成首次签发，agent 写入 status，并按 ADR-0021 自行续签；
    manager 不再连接 :9641（LB 主机上可以关掉该端口对控制面的放行来确认）。
 
 ## 测试合同
 
 - agent 单测：本机事实（沿用 `/status` 的结构）到 status apply 配置的转换；事实不变时不重复写入。
 - controller 单测：Lease 新鲜与过期时的 `AgentReady`；过期时清空 `vips`。
-- 集成测试：envtest 中，以 impersonation 模拟两台 LB 主机和一台计算节点的 agent，覆盖上面的 VAP
-  用例；
-  `internal/infra/clientcert` 已有的集成测试覆盖签发与续签，这里不重复。
+- 集成测试：envtest 中，以 impersonation 模拟两台 LB 主机和一台计算节点的 agent，其中一台主机同时
+  承担两种角色，覆盖上面的 VAP 用例；`internal/infra/clientcert` 已有的集成测试覆盖签发与续签，这里不重复。
