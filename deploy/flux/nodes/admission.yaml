@@ -1,7 +1,8 @@
 # 节点 agent 只写自己，且只写自己的角色：
 #   - Node 只能是与自己同名的那个；
-#   - node-role.kubernetes.io/<role> label 与 <role>.ayatori.ddupan.top/Ready condition 只能增删改
-#     自己角色组 system:ayatori:role:<role> 对应的那些；
+#   - node-role.kubernetes.io/<role> label 只能增删改自己角色组 system:ayatori:role:<role> 对应的那些；
+#   - condition 只能增删改自己角色的 <role>.ayatori.ddupan.top/Ready；Node 的 Ready 等其他 condition
+#     一律不能写，一个角色不就绪不应让整台主机显得不可用；
 #   - Lease 只能是 <自己>-<自己的角色>。
 # 节点名与角色取自证书的用户名与组（internal/infra/node）。
 apiVersion: admissionregistration.k8s.io/v1
@@ -35,11 +36,13 @@ spec:
   - name: conditions
     expression: >-
       request.resource.resource == 'nodes' && has(object.status) && has(object.status.conditions) ?
-      object.status.conditions.filter(c, c.type.endsWith('.ayatori.ddupan.top/Ready')) : []
+      object.status.conditions : []
   - name: oldConditions
     expression: >-
       request.resource.resource == 'nodes' && request.operation == 'UPDATE' && has(oldObject.status) && has(oldObject.status.conditions) ?
-      oldObject.status.conditions.filter(c, c.type.endsWith('.ayatori.ddupan.top/Ready')) : []
+      oldObject.status.conditions : []
+  - name: ownConditions
+    expression: "variables.roles.map(r, r + '.ayatori.ddupan.top/Ready')"
   validations:
   - expression: "variables.node != ''"
     message: "node agent username must be system:ayatori:node:<node>"
@@ -56,9 +59,9 @@ spec:
         k in variables.labels)
     messageExpression: "'node ' + variables.node + ' may only change the role labels of its own roles'"
   - expression: >-
-      variables.conditions.all(c, c.type.substring(0, c.type.indexOf('.')) in variables.roles ||
+      variables.conditions.all(c, c.type in variables.ownConditions ||
         variables.oldConditions.exists(o, o == c)) &&
-      variables.oldConditions.all(o, o.type.substring(0, o.type.indexOf('.')) in variables.roles ||
+      variables.oldConditions.all(o, o.type in variables.ownConditions ||
         variables.conditions.exists(c, c == o))
     messageExpression: "'node ' + variables.node + ' may only change the conditions of its own roles'"
 ---
