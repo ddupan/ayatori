@@ -218,6 +218,13 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
   并写它的 `AgentReady`（HAProxy 应答、至少一个会话、最近 5 轮内收敛过）与 `status.vips`；有变化或
   距上次写入满 5 分钟时写。`deploy/flux/loadbalancer` 的 RBAC 与准入策略只允许它注册自己、写
   自己的 status，不能改 spec、finalizer，也不能删除。
+- 配置了 `dataPlane` 时在本机收敛（ADR-0022）：watch 全部 LoadBalancer 与 Backend，以与 controller
+  相同的 `controller.Desired` 计算期望配置，经本机 Data Plane API 写入（每轮每个 LoadBalancer 至多
+  一次写入，删除中的对象删除配置）；再按 `haproxy.Hosts.Owners` 删除已不存在的 LoadBalancer 的配置。
+  informer 首次同步之后才判断「已不存在」，API 不可达期间缓存不变，不清理任何配置。结果写入
+  LoadBalancerHost 的 `status.loadBalancers[]`：`uid`、本机配置与之一致的期望摘要 `digest`
+  （`Snapshot.Digest`，与 controller 比较；Backend 变化不改 generation）、`present`、`reload`、
+  `message` 与各 server 的检查结论。
 - 只读的 `GET /status`（ADR-0018，与 `/metrics` 同一监听，ADR-0022 后只用于本机排障）：HAProxy 是否应答、各邻居会话、最近
   一次成功收敛时间，以及每个有 bind 的 VIP 是否已发给路由器与未发出的原因。原因按三层取第一个
   不满足的：`not-local`（内核不把它当本机地址）、`frontend-not-open`（某个 frontend 或 bind 不是
@@ -239,6 +246,11 @@ metricsAddress: 10.60.0.30:9641
 # 以下加入控制面（ADR-0022）；不写 nodeName 时只在本机宣告。
 nodeName: lb-1
 credentialsDir: /etc/ayatori/lb-agent   # 部署方写入 bootstrap-kubeconfig；kubeconfig 二选一，用于开发
+dataPlane:                              # 在本机收敛（ADR-0022）；与 manager 远程收敛二选一
+  url: http://127.0.0.1:5555
+  username: ayatori-agent
+  passwordFile: /etc/ayatori/lb-agent/dataplane-password
+  connectTimeout: 5s                    # 与 --loadbalancer-connect-timeout 相同含义
 ```
 
 ## 状态
@@ -396,3 +408,5 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 - ADR-0022 切片 2（`dev/lb-agent`）：LoadBalancerHost 改由 agent 注册并写 status；去掉 `agentURL`，
   `dataPlaneURL` 改为可选（迁移期间 manager 仍远程收敛时使用）；controller 不再读取 agent `/status`，
   改按 Lease 判定 `AgentStale`。
+- ADR-0022 切片 3a（`dev/lb-agent`）：agent 在本机收敛并写 `status.loadBalancers[]`；controller 尚未
+  读取它，仍远程收敛。

@@ -87,11 +87,11 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	backends, err := r.backends(ctx, object.Namespace)
+	desired, err := Desired(ctx, r.Client, object)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	lb := loadbalancer.Reconstitute(snapshot(object, backends))
+	lb := loadbalancer.Reconstitute(desired)
 
 	if !object.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(object, LoadBalancerFinalizer) {
@@ -212,17 +212,18 @@ func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]hostTarget, error
 	return hosts, nil
 }
 
-// backends 返回 namespace 内的全部 Backend，按名称索引；只允许同 namespace 引用。
-func (r *LoadBalancerReconciler) backends(ctx context.Context, namespace string) (map[string]*networkv1alpha1.BackendSpec, error) {
+// Desired 把 LoadBalancer 与同 namespace 的 Backend 翻译为期望配置；只允许同 namespace 引用。
+// controller 与在本机收敛的 agent 共用它，两边算出的 Digest 才一致（ADR-0022）。
+func Desired(ctx context.Context, c client.Reader, object *networkv1alpha1.LoadBalancer) (loadbalancer.Snapshot, error) {
 	list := &networkv1alpha1.BackendList{}
-	if err := r.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
-		return nil, err
+	if err := c.List(ctx, list, client.InNamespace(object.Namespace)); err != nil {
+		return loadbalancer.Snapshot{}, err
 	}
 	backends := make(map[string]*networkv1alpha1.BackendSpec, len(list.Items))
 	for i := range list.Items {
 		backends[list.Items[i].Name] = &list.Items[i].Spec
 	}
-	return backends, nil
+	return snapshot(object, backends), nil
 }
 
 // record 观察并至多写入一次 Hostname 的 A 记录。

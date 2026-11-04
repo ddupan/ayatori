@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
@@ -78,6 +79,10 @@ func (a *Agent) register(ctx context.Context) {
 		a.logger.Error("build scheme", "error", err)
 		return
 	}
+	if err := networkv1alpha1.AddToScheme(scheme); err != nil {
+		a.logger.Error("build scheme", "error", err)
+		return
+	}
 	kube, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		a.logger.Error("build API client", "error", err)
@@ -85,6 +90,9 @@ func (a *Agent) register(ctx context.Context) {
 	}
 	logf := func(msg string, err error) { a.logger.Debug(msg, "error", err) }
 	go a.reportHost(ctx, kube, logf)
+	if a.config.DataPlane != nil {
+		go a.converge(ctx, config, scheme)
+	}
 	r := &node.Registrar{Client: kube, Node: a.config.NodeName, Role: Role}
 	r.Run(ctx, func() node.Status { return nodeStatus(a.Status()) }, logf)
 }

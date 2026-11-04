@@ -7,6 +7,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
@@ -27,6 +28,8 @@ type hostReport struct {
 	ready           bool
 	reason, message string
 	vips            []networkv1alpha1.AgentVIPStatus
+	// loadBalancers 为 nil 时不在本机收敛，agent 不持有该字段。
+	loadBalancers []networkv1alpha1.HostLoadBalancerStatus
 }
 
 // reportHost 以 SSA 注册与 Node 同名的 LoadBalancerHost（不带 spec，ADR-0022），并写入 AgentReady 与
@@ -64,6 +67,11 @@ func (a *Agent) hostReport() hostReport {
 	if !ready {
 		report.reason = "NotReady"
 	}
+	if a.config.DataPlane != nil {
+		a.mu.Lock()
+		report.loadBalancers = append([]networkv1alpha1.HostLoadBalancerStatus{}, a.loadBalancers...)
+		a.mu.Unlock()
+	}
 	for _, vip := range status.VIPs {
 		report.vips = append(report.vips, networkv1alpha1.AgentVIPStatus{
 			Address: vip.Address.String(), Announced: vip.Announced, Reason: string(vip.Reason),
@@ -76,9 +84,9 @@ func (a *Agent) applyHost(ctx context.Context, kube client.Client, report hostRe
 	if err := kube.Apply(ctx, client.ApplyConfigurationFromUnstructured(a.hostObject()), fieldOwner, client.ForceOwnership); err != nil {
 		return err
 	}
-	status := metav1.ConditionFalse
+	ready := metav1.ConditionFalse
 	if report.ready {
-		status = metav1.ConditionTrue
+		ready = metav1.ConditionTrue
 	}
 	vips := make([]any, 0, len(report.vips))
 	for _, vip := range report.vips {
@@ -90,13 +98,25 @@ func (a *Agent) applyHost(ctx context.Context, kube client.Client, report hostRe
 	}
 	// Apply 会把服务端返回的对象（含 managedFields）写回参数，status 用新的对象。
 	object := a.hostObject()
-	object.Object["status"] = map[string]any{
+	status := map[string]any{
 		"vips": vips,
 		"conditions": []any{map[string]any{
-			"type": agentReadyType, "status": string(status), "reason": report.reason, "message": report.message,
+			"type": agentReadyType, "status": string(ready), "reason": report.reason, "message": report.message,
 			"lastTransitionTime": transition.UTC().Format(time.RFC3339),
 		}},
 	}
+	if report.loadBalancers != nil {
+		items := make([]any, 0, len(report.loadBalancers))
+		for i := range report.loadBalancers {
+			item, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&report.loadBalancers[i])
+			if err != nil {
+				return err
+			}
+			items = append(items, item)
+		}
+		status["loadBalancers"] = items
+	}
+	object.Object["status"] = status
 	// controller 在 Lease 过期时覆盖 AgentReady 与 vips；agent 恢复后以 force 收回。
 	return kube.Status().Apply(ctx, client.ApplyConfigurationFromUnstructured(object), fieldOwner, client.ForceOwnership)
 }
