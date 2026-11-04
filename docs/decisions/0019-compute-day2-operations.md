@@ -149,7 +149,9 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 
 - **实例资源指标**（CPU、内存、balloon、磁盘和网络 I/O）由 Agent 从
   `virConnectGetAllDomainStats` 和 LXC 的 cgroup 导出，实例名同样使用 `name` 标签。不另装 libvirt
-  exporter，因为它不覆盖 LXC，标签也不一致。
+  exporter，因为它不覆盖 LXC，标签也不一致。VM 部分为 `ayatori_compute_agent_domain_cpu_seconds_total`、
+  `_memory_bytes{type=current|maximum|rss}`、`_disk_{read,written}_bytes_total{device}`、
+  `_network_{receive,transmit}_bytes_total{device}`；只导出运行中的实例。
 - 节点 journald 中 drbd-reactor、Agent 和监管进程的日志接入集中日志，补上现有 PVE 节点 journald
   未采集的缺口。
 

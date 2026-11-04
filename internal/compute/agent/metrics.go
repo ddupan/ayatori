@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 )
 
 // 指标供中央 VictoriaMetrics 直接抓取，告警不经过控制面（ADR-0015 可观测性、ADR-0019 §6）。实例名用
@@ -17,6 +21,7 @@ type metrics struct {
 	shouldRun   *prometheus.GaugeVec
 	running     *prometheus.GaugeVec
 	poolBytes   *prometheus.GaugeVec
+	domains     *domainStats
 }
 
 func newMetrics(registry prometheus.Registerer) *metrics {
@@ -37,7 +42,8 @@ func newMetrics(registry prometheus.Registerer) *metrics {
 			Name: "ayatori_compute_agent_pool_bytes", Help: "libvirt storage pool 的容量与可用空间。"},
 			[]string{nameLabel, "type"}),
 	}
-	registry.MustRegister(m.libvirtUp, m.lastSuccess, m.shouldRun, m.running, m.poolBytes)
+	m.domains = newDomainStats(domain)
+	registry.MustRegister(m.libvirtUp, m.lastSuccess, m.shouldRun, m.running, m.poolBytes, m.domains)
 	return m
 }
 
@@ -73,4 +79,57 @@ func boolGauge(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// instanceStats 是一个实例的资源用量快照。
+type instanceStats struct {
+	namespace, name string
+	libvirt.DomainStats
+}
+
+// domainStats 导出运行中实例的资源用量（ADR-0019 §6）。主循环每轮收敛后替换快照，抓取时只读快照，
+// 不访问 libvirt 连接；实例停止或删除后随下一份快照消失。
+type domainStats struct {
+	snapshot                                         atomic.Pointer[[]instanceStats]
+	cpu, memory, diskRead, diskWritten, netRx, netTx *prometheus.Desc
+}
+
+func newDomainStats(labels []string) *domainStats {
+	device := append(slices.Clip(labels), "device")
+	desc := func(name, help string, labels []string) *prometheus.Desc {
+		return prometheus.NewDesc("ayatori_compute_agent_domain_"+name, help, labels, nil)
+	}
+	d := &domainStats{
+		cpu:         desc("cpu_seconds_total", "实例累计使用的 CPU 时间。", labels),
+		memory:      desc("memory_bytes", "balloon 报告的内存：current 为客户机当前可用，maximum 为配置量，rss 为宿主机上的驻留内存。", append(slices.Clip(labels), "type")),
+		diskRead:    desc("disk_read_bytes_total", "磁盘累计读取的字节数。", device),
+		diskWritten: desc("disk_written_bytes_total", "磁盘累计写入的字节数。", device),
+		netRx:       desc("network_receive_bytes_total", "客户机网卡累计接收的字节数。", device),
+		netTx:       desc("network_transmit_bytes_total", "客户机网卡累计发送的字节数。", device),
+	}
+	d.snapshot.Store(&[]instanceStats{})
+	return d
+}
+
+func (d *domainStats) Describe(ch chan<- *prometheus.Desc) {
+	for _, desc := range []*prometheus.Desc{d.cpu, d.memory, d.diskRead, d.diskWritten, d.netRx, d.netTx} {
+		ch <- desc
+	}
+}
+
+func (d *domainStats) Collect(ch chan<- prometheus.Metric) {
+	for _, s := range *d.snapshot.Load() {
+		ch <- prometheus.MustNewConstMetric(d.cpu, prometheus.CounterValue, float64(s.CPUTime)/1e9, s.namespace, s.name)
+		for kind, bytes := range s.Memory {
+			ch <- prometheus.MustNewConstMetric(d.memory, prometheus.GaugeValue, float64(bytes), s.namespace, s.name, kind)
+		}
+		for _, io := range s.Disks {
+			ch <- prometheus.MustNewConstMetric(d.diskRead, prometheus.CounterValue, float64(io.In), s.namespace, s.name, io.Device)
+			ch <- prometheus.MustNewConstMetric(d.diskWritten, prometheus.CounterValue, float64(io.Out), s.namespace, s.name, io.Device)
+		}
+		for _, io := range s.Nics {
+			ch <- prometheus.MustNewConstMetric(d.netRx, prometheus.CounterValue, float64(io.In), s.namespace, s.name, io.Device)
+			ch <- prometheus.MustNewConstMetric(d.netTx, prometheus.CounterValue, float64(io.Out), s.namespace, s.name, io.Device)
+		}
+	}
 }
