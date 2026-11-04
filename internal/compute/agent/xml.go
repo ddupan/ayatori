@@ -89,13 +89,18 @@ func hash(s string) string {
 
 func plainHash(xml string) (string, error) { return hash(xml), nil }
 
-// poolHash 去掉容量统计后再算 hash：这些值随使用变化，不是配置。
+// poolHash 去掉容量统计与目标目录权限后再算 hash：前者随使用变化；后者是 libvirt 在 pool 启动时
+// 从目录实际读回填入的（持久配置里也会出现），不是配置。只算一次 define 的话，每次 libvirtd 重启
+// 或宿主机重启后自动启动 pool，都会被误判为配置漂移。
 func poolHash(xml string) (string, error) {
 	var x libvirtxml.StoragePool
 	if err := x.Unmarshal(xml); err != nil {
 		return "", err
 	}
 	x.Capacity, x.Allocation, x.Available = nil, nil, nil
+	if x.Target != nil {
+		x.Target.Permissions = nil
+	}
 	out, err := x.Marshal()
 	return hash(out), err
 }
