@@ -238,7 +238,10 @@ func startSession(t *testing.T, session interface{ Start(context.Context) error 
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Errorf("authentication stopped with error: %v", err)
+			}
 		case <-time.After(20 * time.Second):
 			t.Error("authentication did not stop")
 		}
