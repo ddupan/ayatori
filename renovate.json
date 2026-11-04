@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "postUpdateOptions": ["gomodTidy"],
+  "customManagers": [
+    {
+      "description": "Makefile 里 go install / 下载的工具版本：在 `<NAME>_VERSION ?=` 上一行写 `# renovate: datasource=<ds> depName=<name>`。",
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)Makefile$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\S+_VERSION \\?= (?<currentValue>\\S+)"]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "k8s.io 各模块与 controller-runtime 的次版本互相绑定；envtest 版本由 go.mod 推导，随之更新。",
+      "matchDatasources": ["go"],
+      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/controller-runtime"],
+      "groupName": "kubernetes"
+    },
+    {
+      "description": "go.mod 的 go 指令与构建镜像一起升级，避免本地、CI 与镜像的工具链不一致。",
+      "matchDepNames": ["go", "golang"],
+      "groupName": "go toolchain"
+    },
+    {
+      "description": "生成器升级会改变生成物，Verify 的 git diff 检查会失败，需要在分支上重新生成后提交。",
+      "matchDepNames": ["sigs.k8s.io/controller-tools", "github.com/oapi-codegen/oapi-codegen/v2"],
+      "commitMessageSuffix": "(需手动步骤)",
+      "prBodyNotes": ["⚠️ **合并前**：在本分支运行 `make manifests generate generate-dataplaneapi` 并提交生成物。"]
+    }
+  ]
+}
