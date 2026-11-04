@@ -141,9 +141,9 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 
 | 现有告警 | 替代 |
 |---|---|
-| `StorageAlmostFull` | LINSTOR controller 自带的 `/metrics`（storage pool 容量）；本地 libvirt pool 由 Agent 导出 |
-| `OnbootGuestDown` | ADR-0015 已有的"应运行的实例没有任何节点在运行" |
-| `GuestLockedLong` | Agent 导出每个对象最后一次 reconcile 成功的时间，长时间失败告警 |
+| `StorageAlmostFull` | LINSTOR controller 自带的 `/metrics`（storage pool 容量）；本地 libvirt pool 由 Agent 导出（`ayatori_compute_agent_pool_bytes{type="capacity"\|"available"}`） |
+| `OnbootGuestDown` | ADR-0015 已有的"应运行的实例没有任何节点在运行"：`max by (namespace, name) (ayatori_compute_agent_domain_should_run) == 1 unless on (namespace, name) max by (namespace, name) (ayatori_compute_agent_domain_running) == 1`。客户机内关机或 destroy 的实例 `should_run` 为 0，不告警 |
+| `GuestLockedLong` | Agent 导出每个对象最后一次 reconcile 成功的时间（`ayatori_compute_agent_object_last_success_timestamp_seconds`，从未成功为 0），长时间失败告警；libvirt 不可用见 `ayatori_compute_agent_libvirt_up` |
 | `NodeOffline` | node-exporter 抓取失败；Lease 过期由 controller 导出 |
 | `pve_not_backed_up_total` | 备份系统给出的最近一次成功备份时间（§1） |
 

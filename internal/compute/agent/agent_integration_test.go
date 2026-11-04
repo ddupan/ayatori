@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,8 +69,9 @@ func eventually(t *testing.T, timeout time.Duration, check func() error) {
 func free(f func() error) { _ = f() }
 
 type runningAgent struct {
-	cancel func()
-	done   chan struct{}
+	cancel   func()
+	done     chan struct{}
+	registry *prometheus.Registry
 }
 
 func (r runningAgent) stop() { r.cancel(); <-r.done }
@@ -79,14 +82,73 @@ func runAgent(t *testing.T, config agent.Config) runningAgent {
 	if testing.Verbose() {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	a, err := agent.New(config, logger)
+	registry := prometheus.NewRegistry()
+	a, err := agent.New(config, registry, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
-	return runningAgent{cancel, done}
+	return runningAgent{cancel, done, registry}
+}
+
+// metric 返回名为 name、标签恰好为 labels 的 gauge 的值；不存在时 ok 为 false。
+func (r runningAgent) metric(t *testing.T, name string, labels map[string]string) (value float64, ok bool) {
+	t.Helper()
+	families, err := r.registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			got := map[string]string{}
+			for _, l := range m.GetLabel() {
+				got[l.GetName()] = l.GetValue()
+			}
+			if maps.Equal(got, labels) {
+				return m.GetGauge().GetValue(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// expectMetric 等到 gauge 满足 ok；ok 收到 found=false 表示序列不存在。
+func (s *suite) expectMetric(t *testing.T, name string, labels map[string]string, ok func(value float64, found bool) bool) {
+	t.Helper()
+	eventually(t, 10*time.Second, func() error {
+		if v, found := s.agent.metric(t, name, labels); !ok(v, found) {
+			return fmt.Errorf("%s%v = %v (found %v)", name, labels, v, found)
+		}
+		return nil
+	})
+}
+
+func is(want float64) func(float64, bool) bool {
+	return func(v float64, found bool) bool { return found && v == want }
+}
+
+func absent(_ float64, found bool) bool { return !found }
+
+const (
+	shouldRunMetric   = "ayatori_compute_agent_domain_should_run"
+	runningMetric     = "ayatori_compute_agent_domain_running"
+	lastSuccessMetric = "ayatori_compute_agent_object_last_success_timestamp_seconds"
+)
+
+// domainLabels 是实例指标的标签：与对象相同，但没有 kind。
+func domainLabels(name string) map[string]string {
+	l := objectLabels("", corev1.NamespaceDefault, name)
+	delete(l, "kind")
+	return l
+}
+
+func objectLabels(kind, namespace, name string) map[string]string {
+	return map[string]string{"kind": kind, "namespace": namespace, "name": name}
 }
 
 // suite 是各场景共享的环境。场景按顺序依次运行，后一个建立在前一个的结果之上。
@@ -233,6 +295,14 @@ func (s *suite) definesSelected(t *testing.T) {
 	if _, err := s.l.LookupNetworkByName("elsewhere"); !libvirt.IsNotFound(err) {
 		t.Errorf("network for another rack was defined here: %v", err)
 	}
+	s.expectMetric(t, "ayatori_compute_agent_libvirt_up", map[string]string{}, is(1))
+	s.expectMetric(t, shouldRunMetric, domainLabels("vm1"), is(1))
+	s.expectMetric(t, runningMetric, domainLabels("vm1"), is(1))
+	s.expectMetric(t, lastSuccessMetric,
+		objectLabels("LibvirtNetwork", "", lan),
+		func(v float64, found bool) bool { return found && time.Since(time.Unix(int64(v), 0)) < time.Minute })
+	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": "local", "type": "capacity"},
+		func(v float64, found bool) bool { return found && v > 0 })
 }
 
 func (s *suite) restoresDrift(t *testing.T) {
@@ -260,6 +330,9 @@ func (s *suite) keepsIntentionalShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.waitState(t, s.vm1, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.Reason == "shutdown" })
+	// 有意关机不是"应运行却没有运行"，不应触发告警。
+	s.expectMetric(t, shouldRunMetric, domainLabels("vm1"), is(0))
+	s.expectMetric(t, runningMetric, domainLabels("vm1"), is(0))
 	time.Sleep(3 * time.Second) // 几轮 reconcile
 	if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_SHUTOFF {
 		t.Fatalf("domain restarted after an intentional shutdown: state %d", state)
@@ -331,6 +404,9 @@ func (s *suite) removesAfterConfirmation(t *testing.T) {
 		}
 		return nil
 	})
+	// 删除后不再导出它的指标，免得留下"应运行"的陈旧序列。
+	s.expectMetric(t, shouldRunMetric, domainLabels("vm2"), absent)
+	s.expectMetric(t, lastSuccessMetric, objectLabels("LibvirtDomain", corev1.NamespaceDefault, "vm2"), absent)
 	// 在线时删除：watch 到删除后清理。
 	if err := s.k.Delete(ctx, &computev1alpha1.LibvirtNetwork{Name: lan}); err != nil {
 		t.Fatal(err)

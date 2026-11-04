@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,6 +59,8 @@ type Config struct {
 	// NodeLabels 是发现不了、按节点配置的 Node label，例如 topology.kubernetes.io/zone，相当于
 	// kubelet 的 --node-labels（ADR-0019 §4）。与发现的 label 同名时以它为准；角色 label 不能在此设置。
 	NodeLabels map[string]string `json:"nodeLabels"`
+	// MetricsAddress 是 /metrics 的明文监听地址，例如 :9810；为空时不监听。
+	MetricsAddress string `json:"metricsAddress"`
 	// ResyncInterval 是没有变化时重新收敛的间隔，也是发现带外修改的最长延迟。
 	ResyncInterval metav1.Duration `json:"resyncInterval"`
 }
@@ -116,11 +119,16 @@ type Agent struct {
 	// connected 表示 libvirt 是否连通，写入 Node 的 compute.ayatori.ddupan.top/Ready（只表示 compute 角色，不是 Node Ready）。
 	connected bool
 	facts     atomic.Pointer[nodeFacts]
+
+	metrics *metrics
+	// succeeded 是各对象最近一次成功收敛的时间，seen 是上一轮出现过的对象；只由主循环访问。
+	succeeded map[objectID]time.Time
+	seen      map[objectID]bool
 }
 
 // New 只加载本地状态，不访问 API：控制面不可用、证书尚未签发时 Agent 也必须能启动。证书在后台
 // 申请与续签（ADR-0021）。
-func New(config Config, logger *slog.Logger) (*Agent, error) {
+func New(config Config, registry prometheus.Registerer, logger *slog.Logger) (*Agent, error) {
 	store, err := state.Open(config.StateDir)
 	if err != nil {
 		return nil, err
@@ -143,7 +151,8 @@ func New(config Config, logger *slog.Logger) (*Agent, error) {
 	}
 	a := &Agent{config: config, store: store, scheme: scheme, logger: logger, restConfig: restConfig,
 		stopCredentials: stopCredentials,
-		observed:        map[string]observation{}, reported: map[string]observation{}}
+		observed:        map[string]observation{}, reported: map[string]observation{},
+		metrics: newMetrics(registry), succeeded: map[objectID]time.Time{}, seen: map[objectID]bool{}}
 	a.facts.Store(&nodeFacts{})
 	return a, nil
 }
