@@ -73,8 +73,10 @@ pve1 是 Intel，pve2/pve3 是 AMD。VM 100 用 `host` CPU 在线迁移失败，
 切换虽然不要求 CPU 相同，但客户机会在下次启动时看到另一颗 CPU：Linux 不受影响，Windows 可能要求
 重新激活，retro 系统对 CPUID 更敏感。
 
-- Agent 把宿主机的 CPU 厂商和型号写进 Node label，沿用 node-feature-discovery 的命名，例如
-  `feature.node.kubernetes.io/cpu-model.vendor_id`，取自 libvirt capabilities。
+- Agent 把宿主机的 CPU 厂商和型号写进 Node label，沿用 node-feature-discovery 的命名和取值：
+  `feature.node.kubernetes.io/cpu-model.vendor_id`（`Intel`/`AMD`）、`cpu-model.family`、`cpu-model.id`
+  （CPUID 签名，十进制），取自 libvirt capabilities 的 `vendor` 与 `signature`。libvirt 的 CPU 型号名
+  （如 `Skylake-Client-IBRS`）随 libvirt 版本变化，不作为 label。
 - domain 写了具名 CPU 型号时，Agent 在下发前用 `virConnectCompareHypervisorCPU` 检查本节点能否提供；
   不能提供就写入该节点的 status，controller 将其排除出候选节点。
 - domain 使用 `host-passthrough`/`host-model`，而候选节点的 CPU 型号不一致时，controller 设置一个

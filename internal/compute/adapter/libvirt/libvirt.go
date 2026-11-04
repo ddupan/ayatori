@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	golibvirt "libvirt.org/go/libvirt"
+	"libvirt.org/go/libvirtxml"
 )
 
 type Client struct{ conn *golibvirt.Connect }
@@ -266,6 +267,22 @@ func (c *Client) NodeInfo() (cpus int64, memory int64, err error) {
 		return 0, 0, err
 	}
 	return int64(info.Cpus), int64(info.Memory) * 1024, nil
+}
+
+// HostCPU 返回 capabilities 中本机 CPU 的厂商、型号与 CPUID 签名。
+func (c *Client) HostCPU() (libvirtxml.CapsHostCPU, error) {
+	doc, err := c.conn.GetCapabilities()
+	if err != nil {
+		return libvirtxml.CapsHostCPU{}, err
+	}
+	var caps libvirtxml.Caps
+	if err := caps.Unmarshal(doc); err != nil {
+		return libvirtxml.CapsHostCPU{}, err
+	}
+	if caps.Host.CPU == nil {
+		return libvirtxml.CapsHostCPU{}, nil
+	}
+	return *caps.Host.CPU, nil
 }
 
 // IsNotFound 判断 domain、network、pool 或卷不存在。
