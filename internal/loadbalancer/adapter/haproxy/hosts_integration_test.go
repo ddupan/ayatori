@@ -233,6 +233,9 @@ pkill -x dataplaneapi`
 		if facts := converged(t, hosts, f, otherUID, other); !facts.Matches {
 			t.Fatalf("其他 LoadBalancer 的配置不应受影响: %+v", facts)
 		}
+		if owners, err := hosts.Owners(t.Context(), f.host); err != nil || !slices.Equal(owners, []string{otherUID}) {
+			t.Fatalf("Owners() = %v, %v", owners, err)
+		}
 	})
 
 	t.Run("Probe 以当前凭据确认应答", func(t *testing.T) { probes(t, hosts, f) })

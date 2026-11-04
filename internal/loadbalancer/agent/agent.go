@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 
+	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
@@ -44,6 +45,20 @@ type Config struct {
 	CredentialsDir string `json:"credentialsDir,omitempty"`
 	// Kubeconfig 与 CredentialsDir 二选一，用于开发与测试。
 	Kubeconfig string `json:"kubeconfig,omitempty"`
+	// DataPlane 设置后 agent watch LoadBalancer 与 Backend，经本机 Data Plane API 收敛 HAProxy
+	// （ADR-0022）；需要 nodeName。迁移期间与 manager 的远程收敛二选一，按环境整体切换。
+	DataPlane *DataPlane `json:"dataPlane,omitempty"`
+}
+
+// DataPlane 是本机 Data Plane API；只监听 loopback，凭据由 cookbook 在本机生成。
+type DataPlane struct {
+	URL          string `json:"url"`
+	Username     string `json:"username"`
+	PasswordFile string `json:"passwordFile"`
+	// ConnectTimeout 是代理连接后端的超时，缺省 5 秒；与 manager 的 --loadbalancer-connect-timeout 相同。
+	ConnectTimeout metav1.Duration `json:"connectTimeout,omitempty"`
+	// Resolvers 是 DNS endpoint 使用的 resolvers section 名称；为空时只在启动时解析。
+	Resolvers string `json:"resolvers,omitempty"`
 }
 
 type Neighbor struct {
@@ -65,6 +80,9 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if config.Interval.Duration == 0 {
 		config.Interval.Duration = 2 * time.Second
+	}
+	if d := config.DataPlane; d != nil && d.ConnectTimeout.Duration == 0 {
+		d.ConnectTimeout.Duration = 5 * time.Second
 	}
 	return config, config.validate()
 }
@@ -97,8 +115,11 @@ func (c Config) validate() error {
 	if c.NodeName != "" && (c.CredentialsDir == "") == (c.Kubeconfig == "") {
 		errs = append(errs, errors.New("nodeName needs exactly one of credentialsDir and kubeconfig"))
 	}
-	if c.NodeName == "" && (c.CredentialsDir != "" || c.Kubeconfig != "") {
-		errs = append(errs, errors.New("credentialsDir and kubeconfig need nodeName"))
+	if c.NodeName == "" && (c.CredentialsDir != "" || c.Kubeconfig != "" || c.DataPlane != nil) {
+		errs = append(errs, errors.New("credentialsDir, kubeconfig and dataPlane need nodeName"))
+	}
+	if d := c.DataPlane; d != nil && (d.URL == "" || d.Username == "" || d.PasswordFile == "") {
+		errs = append(errs, errors.New("dataPlane needs url, username and passwordFile"))
 	}
 	return errors.Join(errs...)
 }
@@ -148,6 +169,8 @@ type Agent struct {
 
 	mu     sync.Mutex
 	status loadbalancer.AgentStatus
+	// loadBalancers 是最近一轮本机收敛的结果；不在本机收敛时为空。
+	loadBalancers []networkv1alpha1.HostLoadBalancerStatus
 }
 
 // New 启动 speaker；vips 在生产中为 Loopback。

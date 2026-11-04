@@ -113,6 +113,34 @@ func (h *Hosts) Probe(ctx context.Context, host loadbalancer.Host) error {
 
 // Purge 删除 Host 上全部 lb_ 前缀 section，包括已不存在的 LoadBalancer 留下的（LoadBalancerHost
 // 删除时，ADR-0018）。返回 true 表示配置中已没有这些 section，运行中的进程也不再有 lb_ frontend：
+// Owners 返回 Host 上有配置的全部 LoadBalancer 的 UID，供本机收敛清理已不存在的 LoadBalancer
+// （ADR-0022）。
+func (h *Hosts) Owners(ctx context.Context, host loadbalancer.Host) ([]string, error) {
+	api, err := h.client(host)
+	if err != nil {
+		return nil, err
+	}
+	frontends, backends, err := sections(ctx, api, nil)
+	if err != nil {
+		return nil, err
+	}
+	var uids []string
+	add := func(name string) {
+		uid, _, _ := strings.Cut(strings.TrimPrefix(name, managedPrefix), "_")
+		if !slices.Contains(uids, uid) {
+			uids = append(uids, uid)
+		}
+	}
+	for name := range managed(frontends) {
+		add(name)
+	}
+	for name := range managed(backends) {
+		add(name)
+	}
+	slices.Sort(uids)
+	return uids, nil
+}
+
 // 此时 agent 已无 VIP 可宣告。reload 失败时返回错误，旧进程仍在服务。
 func (h *Hosts) Purge(ctx context.Context, host loadbalancer.Host) (bool, error) {
 	api, err := h.client(host)

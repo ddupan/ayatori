@@ -76,7 +76,7 @@ func TestAgentJoins(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	// HAProxy 尚未启动：agent 照常运行，角色报告未就绪。
 	a, err := agent.New(ctx, agent.Config{
-		ASN: 65100, RouterID: "10.60.0.30", VIPPool: "10.62.0.0/24", HAProxySocket: socket,
+		ASN: 65100, RouterID: routerID, VIPPool: vipPool, HAProxySocket: socket,
 		Neighbors: []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
 		Interval:  metav1.Duration{Duration: 200 * time.Millisecond},
 		NodeName:  lbHost, CredentialsDir: dir,
@@ -201,7 +201,7 @@ func onlyOwnStatus(t *testing.T, admin, self client.Client) {
 		"删除自己": func() error { return self.Delete(t.Context(), own()) },
 		"写 LoadBalancer": func() error {
 			lb := &networkv1alpha1.LoadBalancer{}
-			lb.Namespace, lb.Name = "default", "x"
+			lb.Namespace, lb.Name = testNamespace, "x"
 			lb.Spec.Ports = []networkv1alpha1.LoadBalancerPort{{Port: 80, BackendRef: networkv1alpha1.BackendRef{Name: "x"}}}
 			return self.Create(t.Context(), lb)
 		},
