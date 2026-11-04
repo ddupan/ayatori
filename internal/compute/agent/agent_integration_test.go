@@ -25,6 +25,7 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 	"go.ddupan.top/ayatori/internal/compute/agent"
+	nodeagent "go.ddupan.top/ayatori/internal/infra/node"
 )
 
 const (
@@ -105,8 +106,8 @@ func TestAgent(t *testing.T) {
 	t.Run("defines objects selected for this node and starts the domain", s.definesSelected)
 	t.Run("restores configuration changed outside Ayatori", s.restoresDrift)
 	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
-	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(65536, `<interface type='network'><source network='lan'/></interface>`)}}
+	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
 	create(t, s.k, s.vm2)
 	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
@@ -158,14 +159,14 @@ func (s *suite) registerNode(t *testing.T) {
 		if err := s.k.Get(ctx, client.ObjectKey{Name: node}, &n); err != nil {
 			return err
 		}
-		if n.Labels[agent.ManagedByLabel] == "" || len(n.Status.Conditions) == 0 || n.Status.Conditions[0].Status != corev1.ConditionTrue {
+		if _, ok := n.Labels[nodeagent.RoleLabelPrefix+agent.Role]; !ok || !ready(n) {
 			return fmt.Errorf("node not ready yet: %+v", n.Status.Conditions)
 		}
 		n.Labels["rack"] = "a"
 		return s.k.Update(ctx, &n)
 	})
 	eventually(t, 30*time.Second, func() error {
-		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node}, &coordinationv1.Lease{})
+		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node + "-" + agent.Role}, &coordinationv1.Lease{})
 	})
 }
 
@@ -188,8 +189,8 @@ func (s *suite) createObjects(t *testing.T) {
 		}
 		return err
 	})
-	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: "default", Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(65536, `<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
+	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
 	create(t, s.k, s.vm1)
 }
 
@@ -351,8 +352,18 @@ func (s *suite) waitState(t *testing.T, d *computev1alpha1.LibvirtDomain, ok fun
 	})
 }
 
-func domainXML(memoryKiB int, devices string) string {
-	return fmt.Sprintf(`<domain type='test'><name>x</name><memory unit='KiB'>%d</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, memoryKiB, devices)
+// ready 报告 Node 上 compute 角色的就绪 condition。
+func ready(n corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == nodeagent.ConditionType(agent.Role) {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func domainXML(devices string) string {
+	return fmt.Sprintf(`<domain type='test'><name>x</name><memory unit='KiB'>65536</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, devices)
 }
 
 func create(t *testing.T, k client.Client, obj client.Object) {

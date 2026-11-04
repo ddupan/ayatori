@@ -1,0 +1,46 @@
+# compute Agent 只写自己：domain 的 status 只在 spec.nodeName 是自己时可写，且只能把自己报告为运行
+# 节点；network、pool 的 status.nodes 中只能改自己那一项（PoC 09）。
+# ponytail: domain 按 spec.nodeName 判断；compute controller 计算候选节点后改为按候选 label（PoC 09）。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ayatori-compute-agent
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [compute.ayatori.ddupan.top]
+      apiVersions: ["*"]
+      operations: [UPDATE]
+      resources: [libvirtdomains/status, libvirtnetworks/status, libvirtstoragepools/status]
+  matchConditions:
+  - name: is-compute-agent
+    expression: "'system:ayatori:role:compute' in request.userInfo.groups"
+  variables:
+  - name: node
+    expression: "request.userInfo.username.startsWith('system:ayatori:node:') ? request.userInfo.username.substring(20) : ''"
+  - name: others
+    expression: >-
+      request.resource.resource == 'libvirtdomains' ? [[], []] :
+      [has(object.status) && has(object.status.nodes) ? object.status.nodes.filter(n, n.nodeName != variables.node) : [],
+       has(oldObject.status) && has(oldObject.status.nodes) ? oldObject.status.nodes.filter(n, n.nodeName != variables.node) : []]
+  validations:
+  - expression: "variables.node != ''"
+    message: "agent username must be system:ayatori:node:<node>"
+  - expression: "request.resource.resource != 'libvirtdomains' || oldObject.spec.nodeName == variables.node"
+    messageExpression: "'domain is not assigned to node ' + variables.node"
+  - expression: >-
+      request.resource.resource != 'libvirtdomains' || !has(object.status) || !has(object.status.nodeName) ||
+      object.status.nodeName == variables.node ||
+      (has(oldObject.status) && has(oldObject.status.nodeName) && object.status.nodeName == oldObject.status.nodeName)
+    messageExpression: "'node ' + variables.node + ' may only report itself as the running node'"
+  - expression: "variables.others[0] == variables.others[1]"
+    messageExpression: "'node ' + variables.node + ' may only change its own entry in status.nodes'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ayatori-compute-agent
+spec:
+  policyName: ayatori-compute-agent
+  validationActions: [Deny]

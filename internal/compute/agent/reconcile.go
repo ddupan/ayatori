@@ -232,11 +232,15 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 
 // report 把与上次写入不同的观察写回 API；失败的留到下一轮，控制面不可用时只是暂时写不进去。
 func (a *Agent) report(ctx context.Context) {
+	kube := a.kube.Load()
+	if kube == nil {
+		return
+	}
 	for id, obs := range a.observed {
 		if prev, ok := a.reported[id]; ok && reflect.DeepEqual(prev, obs) {
 			continue
 		}
-		if err := a.writeStatus(ctx, obs); err != nil {
+		if err := a.writeStatus(ctx, *kube, obs); err != nil {
 			a.logger.Debug("write status", "object", id, "error", err)
 			continue
 		}
@@ -251,7 +255,7 @@ func (a *Agent) report(ctx context.Context) {
 
 // writeStatus 以本节点专属的 field manager 做 server-side apply：network/pool 的 status.nodes 是以
 // nodeName 为键的列表，各节点只拥有自己那一项。
-func (a *Agent) writeStatus(ctx context.Context, obs observation) error {
+func (a *Agent) writeStatus(ctx context.Context, kube client.Client, obs observation) error {
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(computev1alpha1.GroupVersion.String())
 	u.SetKind(obs.kind)
@@ -270,7 +274,7 @@ func (a *Agent) writeStatus(ctx context.Context, obs observation) error {
 	} else {
 		u.Object["status"] = map[string]any{"nodes": []any{status}}
 	}
-	err = a.kube.Status().Apply(ctx, client.ApplyConfigurationFromUnstructured(u),
+	err = kube.Status().Apply(ctx, client.ApplyConfigurationFromUnstructured(u),
 		client.FieldOwner("ayatori-compute-agent/"+a.config.NodeName), client.ForceOwnership)
 	if apierrors.IsNotFound(err) {
 		return nil // 对象已被删除，sync 会标记删除
