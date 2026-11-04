@@ -9,15 +9,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
@@ -52,6 +55,9 @@ type Config struct {
 	LibvirtURI string `json:"libvirtURI"`
 	// HostReservedMemory 是宿主机自身的预留，从 Node 的 allocatable 中扣除（ADR-0015 资源模型）。
 	HostReservedMemory resource.Quantity `json:"hostReservedMemory"`
+	// NodeLabels 是发现不了、按节点配置的 Node label，例如 topology.kubernetes.io/zone，相当于
+	// kubelet 的 --node-labels（ADR-0019 §4）。与发现的 label 同名时以它为准；角色 label 不能在此设置。
+	NodeLabels map[string]string `json:"nodeLabels"`
 	// ResyncInterval 是没有变化时重新收敛的间隔，也是发现带外修改的最长延迟。
 	ResyncInterval metav1.Duration `json:"resyncInterval"`
 }
@@ -82,6 +88,12 @@ func LoadConfig(path string) (Config, error) {
 	if c.StateDir == "" {
 		errs = append(errs, errors.New("stateDir is required"))
 	}
+	for k := range c.NodeLabels {
+		if strings.HasPrefix(k, node.RoleLabelPrefix) {
+			errs = append(errs, fmt.Errorf("nodeLabels: %s is a role label", k))
+		}
+	}
+	errs = append(errs, metav1validation.ValidateLabels(c.NodeLabels, field.NewPath("nodeLabels")).ToAggregate())
 	return c, errors.Join(errs...)
 }
 

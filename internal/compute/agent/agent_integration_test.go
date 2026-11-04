@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -147,11 +148,13 @@ func setup(t *testing.T) *suite {
 			NodeName: node, Kubeconfig: kubeconfig, StateDir: filepath.Join(dir, "state"),
 			LibvirtURI:     uri,
 			ResyncInterval: metav1.Duration{Duration: time.Second},
+			NodeLabels:     map[string]string{"rack": "a"},
 		},
 	}
 }
 
-// registerNode 等 Agent 注册 Node；管理员再打上 label，network/pool 的 nodeSelector 据此选择节点。
+// registerNode 等 Agent 注册 Node 并写上自己决定的 label：发现的，加配置中的 rack；network/pool 的
+// nodeSelector 据 rack 选择节点。
 func (s *suite) registerNode(t *testing.T) {
 	ctx := t.Context()
 	eventually(t, 30*time.Second, func() error {
@@ -162,8 +165,17 @@ func (s *suite) registerNode(t *testing.T) {
 		if _, ok := n.Labels[nodeagent.RoleLabelPrefix+agent.Role]; !ok || !ready(n) {
 			return fmt.Errorf("node not ready yet: %+v", n.Status.Conditions)
 		}
-		n.Labels["rack"] = "a"
-		return s.k.Update(ctx, &n)
+		want := map[string]string{
+			corev1.LabelHostname: node, corev1.LabelArchStable: goruntime.GOARCH, corev1.LabelOSStable: goruntime.GOOS,
+			"rack": "a",
+		}
+		for k, v := range want {
+			if n.Labels[k] != v {
+				return fmt.Errorf("label %s: want %q, got %v", k, v, n.Labels)
+			}
+		}
+		t.Logf("node labels: %v", n.Labels)
+		return nil
 	})
 	eventually(t, 30*time.Second, func() error {
 		return s.k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceNodeLease, Name: node + "-" + agent.Role}, &coordinationv1.Lease{})

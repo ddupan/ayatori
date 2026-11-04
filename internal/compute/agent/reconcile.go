@@ -62,7 +62,7 @@ func (a *Agent) connect() bool {
 	if err != nil {
 		a.logger.Error("connect libvirt", "uri", a.config.LibvirtURI, "error", err)
 		a.connected = false
-		a.facts.Store(&nodeFacts{})
+		a.facts.Store(&nodeFacts{cpuLabels: a.facts.Load().cpuLabels})
 		return false
 	}
 	a.hv, a.connected = hv, true

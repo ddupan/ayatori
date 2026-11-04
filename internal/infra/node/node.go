@@ -13,6 +13,7 @@ package node
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -83,17 +84,25 @@ func (r *Registrar) RenewLease(ctx context.Context) error {
 	return r.Client.Apply(ctx, lease, r.fieldOwner(), client.ForceOwnership)
 }
 
-// Status 是该角色写入 Node status 的部分。Capacity 与 Allocatable 只由拥有它们的角色填写（compute）。
+// Status 是该角色写入 Node 的部分。Capacity 与 Allocatable 只由拥有它们的角色填写（compute）。
 type Status struct {
 	Ready           bool
 	Reason, Message string
 	Capacity        corev1.ResourceList
 	Allocatable     corev1.ResourceList
+	// Labels 是角色 label 以外、由该角色决定的 Node label。它们与角色 label 一起以本角色的 field
+	// manager 完整 apply，不再出现的随之移除；多个角色写同一个 label 时共同持有。
+	Labels map[string]string
 }
 
-// Apply 写入角色 label 与本角色的 status。Node 不存在时由此创建；agent 不删除 Node。
+// Apply 写入角色 label、Labels 与本角色的 status。Node 不存在时由此创建；agent 不删除 Node。
 func (r *Registrar) Apply(ctx context.Context, s Status) error {
-	node := corev1ac.Node(r.Node).WithLabels(map[string]string{RoleLabelPrefix + r.Role: ""})
+	labels := maps.Clone(s.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[RoleLabelPrefix+r.Role] = ""
+	node := corev1ac.Node(r.Node).WithLabels(labels)
 	if err := r.Client.Apply(ctx, node, r.fieldOwner(), client.ForceOwnership); err != nil {
 		return err
 	}
@@ -150,6 +159,6 @@ func (r *Registrar) Run(ctx context.Context, status func() Status, logf func(msg
 }
 
 func equal(a, b Status) bool {
-	return a.Ready == b.Ready && a.Reason == b.Reason && a.Message == b.Message &&
+	return a.Ready == b.Ready && a.Reason == b.Reason && a.Message == b.Message && maps.Equal(a.Labels, b.Labels) &&
 		equality.Semantic.DeepEqual(a.Capacity, b.Capacity) && equality.Semantic.DeepEqual(a.Allocatable, b.Allocatable)
 }
