@@ -4,25 +4,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LoadBalancerHostSpec 指向一台 LB 主机上的 Data Plane API（ADR-0018）。凭据按环境统一，留在
-// controller 的凭据 Secret，资源里只有地址。
+// LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
 type LoadBalancerHostSpec struct {
 	// DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller 以 mTLS 与 Basic 凭据访问。
+	// ponytail: 迁移期间 manager 仍远程收敛时使用（ADR-0022「下线与迁移」）；agent 在本机收敛后删除。
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() == 'https'",message="dataPlaneURL must be an https URL"
-	DataPlaneURL string `json:"dataPlaneURL"`
-	// AgentURL 是该主机 LB agent 指标端口的地址，controller 读取其只读的 GET /status。
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() in ['http', 'https']",message="agentURL must be an http or https URL"
-	AgentURL string `json:"agentURL"`
+	// +optional
+	DataPlaneURL string `json:"dataPlaneURL,omitempty"`
 }
 
 type LoadBalancerHostStatus struct {
 	// ObservedGeneration 是本 status 观察的 spec 版本。
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// VIPs 是 agent 最近一次报告的每个 VIP 是否已发给路由器；agent 不应答时清空。只呈现观察，
-	// LoadBalancer 的 Attachment 以它为准。
+	// VIPs 是 agent 报告的每个 VIP 是否已发给路由器；agent 的 Lease 过期时由 controller 清空。
+	// 只呈现观察，LoadBalancer 的 Attachment 以它为准。
 	// +listType=map
 	// +listMapKey=address
 	// +kubebuilder:validation:MaxItems=256
@@ -44,8 +41,9 @@ type AgentVIPStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由部署方创建，
-// 删除时先清理该主机上全部 LoadBalancer 配置。
+// LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由该主机的 agent
+// 以与 Node 同名注册并写入 status（ADR-0022）；删除由管理员发起，先清理该主机上全部 LoadBalancer
+// 配置。退役时先停 agent，否则它会重新注册。
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=lbhost
@@ -57,7 +55,8 @@ type AgentVIPStatus struct {
 type LoadBalancerHost struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
-	Spec              LoadBalancerHostSpec `json:"spec"`
+	// +optional
+	Spec LoadBalancerHostSpec `json:"spec,omitzero"`
 	// +optional
 	Status LoadBalancerHostStatus `json:"status,omitzero"`
 }

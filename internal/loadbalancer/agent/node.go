@@ -57,8 +57,8 @@ func startCredentials(config Config, registry prometheus.Registerer) (restConfig
 	return func() (*rest.Config, error) { return clientcert.RESTConfig(dir) }, stop, nil
 }
 
-// register 等到能构造 API 配置（证书已签发）后注册 Node 并续约 Lease，直到 ctx 结束。
-// 只写 Node 与 Lease，不读任何资源：控制面不可用时宣告照常。
+// register 等到能构造 API 配置（证书已签发）后注册 Node、续约 Lease，并注册与 Node 同名的
+// LoadBalancerHost、写它的 status，直到 ctx 结束。控制面不可用时宣告照常。
 func (a *Agent) register(ctx context.Context) {
 	var config *rest.Config
 	for {
@@ -83,9 +83,10 @@ func (a *Agent) register(ctx context.Context) {
 		a.logger.Error("build API client", "error", err)
 		return
 	}
+	logf := func(msg string, err error) { a.logger.Debug(msg, "error", err) }
+	go a.reportHost(ctx, kube, logf)
 	r := &node.Registrar{Client: kube, Node: a.config.NodeName, Role: Role}
-	r.Run(ctx, func() node.Status { return nodeStatus(a.Status()) },
-		func(msg string, err error) { a.logger.Debug(msg, "error", err) })
+	r.Run(ctx, func() node.Status { return nodeStatus(a.Status()) }, logf)
 }
 
 // nodeStatus 把本机事实转为 loadbalancer 角色的就绪：HAProxy 应答且至少一个 BGP 会话已建立，

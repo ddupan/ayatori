@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/agentstatus"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/powerdns"
 	lbcontroller "git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
@@ -40,7 +39,7 @@ func (o *loadBalancerOptions) bindFlags(flags *flag.FlagSet) {
 		"LB 凭据 Secret（<namespace>/<name>），为空时只分配 VIP、不管理 LoadBalancerHost：username、password 为 Data Plane API Basic 凭据，tls.crt、tls.key、ca.crt 为 Data Plane API 的 mTLS，powerdns-api-key 为 PowerDNS API key")
 	flags.DurationVar(&o.connectTimeout, "loadbalancer-connect-timeout", 5*time.Second, "代理连接后端的超时")
 	flags.DurationVar(&o.agentStale, "loadbalancer-agent-stale-after", time.Minute,
-		"LB agent 最近一次成功收敛距今超过此值即报告 AgentReady=False（收敛停滞）")
+		"LB agent 的 Lease 超过此值未续约即报告 AgentReady=Unknown（AgentStale）")
 	flags.StringVar(&o.resolvers, "loadbalancer-resolvers", "", "DNS endpoint 使用的 HAProxy resolvers section 名称")
 	flags.StringVar(&o.dnsURL, "loadbalancer-dns-url", "", "PowerDNS API 地址；与 --loadbalancer-dns-zone 同时设置时维护 Hostname")
 	flags.StringVar(&o.dnsZone, "loadbalancer-dns-zone", "", "Ayatori 独占的 LoadBalancer zone，如 lb.lab.ddupan.top")
@@ -80,9 +79,6 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 		reconciler.Proxy = proxy
 		hosts := &lbcontroller.LoadBalancerHostReconciler{
 			Client: manager.GetClient(), Proxy: proxy, AgentStaleAfter: options.agentStale,
-			// agent 状态接口只读、不含凭据，明文 HTTP（ADR-0018），不使用 Data Plane API 的 mTLS 客户端。
-			// 超时由每轮的 hostTimeout context 限定。
-			Agent: agentstatus.Client{HTTP: &http.Client{}},
 		}
 		if err := hosts.SetupWithManager(manager); err != nil {
 			return fmt.Errorf("set up LoadBalancerHost controller: %w", err)

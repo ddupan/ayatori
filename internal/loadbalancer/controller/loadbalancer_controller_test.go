@@ -11,6 +11,7 @@ import (
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,7 +36,7 @@ func environment(t *testing.T) client.Client {
 		t.Skip("运行 make test 启动真实 API server")
 	}
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{networkv1alpha1.AddToScheme, corev1.AddToScheme, networkingv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{networkv1alpha1.AddToScheme, corev1.AddToScheme, networkingv1.AddToScheme, coordinationv1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
@@ -87,8 +88,8 @@ func newLoadBalancer(name, requested string) *networkv1alpha1.LoadBalancer {
 	return lb
 }
 
-// converge 模拟 controller-runtime 的连续协调，直到不再请求立即重试。每轮之后像 LoadBalancerHost
-// controller 一样刷新主机 status 中的 agent 报告。
+// converge 模拟 controller-runtime 的连续协调，直到不再请求立即重试。每轮之后各主机的 agent 写入
+// 报告，再由 LoadBalancerHost controller 观察。
 func converge(t *testing.T, r *LoadBalancerReconciler, lb *networkv1alpha1.LoadBalancer) ctrl.Result {
 	t.Helper()
 	var result ctrl.Result
@@ -110,7 +111,7 @@ func refreshAgents(t *testing.T, r *LoadBalancerReconciler) {
 	if !ok {
 		return
 	}
-	hosts := &LoadBalancerHostReconciler{Client: r.Client, Proxy: plane, Agent: plane, AgentStaleAfter: time.Minute}
+	hosts := &LoadBalancerHostReconciler{Client: r.Client, Proxy: plane, AgentStaleAfter: time.Minute}
 	list := &networkv1alpha1.LoadBalancerHostList{}
 	if err := r.Client.List(t.Context(), list); err != nil {
 		t.Fatal(err)
@@ -120,6 +121,7 @@ func refreshAgents(t *testing.T, r *LoadBalancerReconciler) {
 		if !object.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
 			continue
 		}
+		plane.report(t, r.Client, object.Name)
 		if _, err := hosts.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)}); err != nil {
 			t.Fatal(err)
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -13,11 +12,14 @@ import (
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // dataPlane 在内存中模拟各主机的代理配置与 agent 报告，并记录写入顺序。
@@ -66,29 +68,39 @@ func (d *dataPlane) Probe(_ context.Context, host loadbalancer.Host) error {
 	return nil
 }
 
-// Status 模拟 agent：已写入的配置都有 bind，未 stopped 时已宣告。主机名取 agentURL 的第一段。
-func (d *dataPlane) Status(_ context.Context, agentURL string) (loadbalancer.AgentStatus, error) {
-	parsed, err := url.Parse(agentURL)
-	if err != nil {
-		return loadbalancer.AgentStatus{}, err
-	}
-	host, _, _ := strings.Cut(parsed.Hostname(), ".")
+// report 扮演主机上的 agent（ADR-0022）：续约 Lease，并按 agent 的方式写 LoadBalancerHost 的
+// status——已写入的配置都有 bind，未 stopped 时已宣告。unreachable 的主机既不续约也不写入。
+func (d *dataPlane) report(t *testing.T, c client.Client, host string) {
+	t.Helper()
 	if d.unreachable[host] {
-		return loadbalancer.AgentStatus{}, errUnreachable
+		return
 	}
-	now := time.Now()
-	status := loadbalancer.AgentStatus{HAProxyUp: true, LastSync: &now,
-		Neighbors: []loadbalancer.NeighborStatus{{Address: "10.60.0.1", Established: true}}}
+	lease := &coordinationv1.Lease{}
+	lease.Namespace, lease.Name = corev1.NamespaceNodeLease, host+"-"+agentRole
+	if _, err := controllerutil.CreateOrUpdate(t.Context(), c, lease, func() error {
+		lease.Spec.RenewTime = &metav1.MicroTime{Time: time.Now()}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	object := &networkv1alpha1.LoadBalancerHost{}
+	if err := c.Get(t.Context(), client.ObjectKey{Name: host}, object); err != nil {
+		t.Fatal(err)
+	}
+	object.Status.VIPs = nil
 	for key, snapshot := range d.configs {
 		if strings.HasPrefix(key, host+"/") {
-			vip := loadbalancer.VIPStatus{Address: snapshot.Address, Announced: !d.stopped[host]}
+			vip := networkv1alpha1.AgentVIPStatus{Address: snapshot.Address.String(), Announced: !d.stopped[host]}
 			if d.stopped[host] {
-				vip.Reason = loadbalancer.FrontendNotOpen
+				vip.Reason = string(loadbalancer.FrontendNotOpen)
 			}
-			status.VIPs = append(status.VIPs, vip)
+			object.Status.VIPs = append(object.Status.VIPs, vip)
 		}
 	}
-	return status, nil
+	meta.SetStatusCondition(&object.Status.Conditions, condition(agentReadyType, true, "Ready", "", object.Generation))
+	if err := c.Status().Update(t.Context(), object); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Purge 与真实 adapter 相同：本轮删除后返回 false，下一轮确认已无配置才返回 true。
@@ -139,7 +151,7 @@ func (d *dataPlane) take() []string {
 
 func hostSpec(name string) networkv1alpha1.LoadBalancerHostSpec {
 	return networkv1alpha1.LoadBalancerHostSpec{
-		DataPlaneURL: "https://" + name + ".example.test:5555", AgentURL: "http://" + name + ".example.test:9641",
+		DataPlaneURL: "https://" + name + ".example.test:5555",
 	}
 }
 
