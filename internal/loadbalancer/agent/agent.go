@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
@@ -35,6 +36,14 @@ type Config struct {
 	// Interval 是收敛间隔，也是 frontend 消失到撤回的最长延迟。
 	Interval       metav1.Duration `json:"interval"`
 	MetricsAddress string          `json:"metricsAddress"`
+	// NodeName 设置后 agent 加入控制面，注册为 Node（ADR-0022）；为空时只在本机宣告，迁移期间
+	// 尚未首次签发的主机照常工作。
+	NodeName string `json:"nodeName,omitempty"`
+	// CredentialsDir 是客户端证书身份目录（ADR-0021）：部署方写入 bootstrap-kubeconfig，agent 以
+	// system:ayatori:node:<nodeName> 申请证书并自行续签。
+	CredentialsDir string `json:"credentialsDir,omitempty"`
+	// Kubeconfig 与 CredentialsDir 二选一，用于开发与测试。
+	Kubeconfig string `json:"kubeconfig,omitempty"`
 }
 
 type Neighbor struct {
@@ -85,6 +94,12 @@ func (c Config) validate() error {
 	if c.Interval.Duration < 0 {
 		errs = append(errs, errors.New("interval must be positive"))
 	}
+	if c.NodeName != "" && (c.CredentialsDir == "") == (c.Kubeconfig == "") {
+		errs = append(errs, errors.New("nodeName needs exactly one of credentialsDir and kubeconfig"))
+	}
+	if c.NodeName == "" && (c.CredentialsDir != "" || c.Kubeconfig != "") {
+		errs = append(errs, errors.New("credentialsDir and kubeconfig need nodeName"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -127,6 +142,10 @@ type Agent struct {
 	metrics *metrics
 	logger  *slog.Logger
 
+	// restConfig 为 nil 时不加入控制面；用证书身份时，证书签发之前它返回错误。
+	restConfig      func() (*rest.Config, error)
+	stopCredentials func()
+
 	mu     sync.Mutex
 	status loadbalancer.AgentStatus
 }
@@ -137,24 +156,37 @@ func New(ctx context.Context, config Config, vips VIPs, registry prometheus.Regi
 	if err != nil {
 		return nil, err
 	}
-	speaker, err := StartSpeaker(ctx, config, logger)
+	restConfig, stopCredentials, err := startCredentials(config, registry)
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{config: config, pool: pool, speaker: speaker, vips: vips, metrics: newMetrics(registry), logger: logger}, nil
+	speaker, err := StartSpeaker(ctx, config, logger)
+	if err != nil {
+		stopCredentials()
+		return nil, err
+	}
+	return &Agent{config: config, pool: pool, speaker: speaker, vips: vips, metrics: newMetrics(registry), logger: logger,
+		restConfig: restConfig, stopCredentials: stopCredentials}, nil
 }
 
+// Run 先按本机 HAProxy 现状收敛一轮宣告，再加入控制面（ADR-0022）：控制面不可用、证书尚未签发时
+// 宣告照常。
 func (a *Agent) Run(ctx context.Context) {
 	defer a.speaker.Stop()
+	defer a.stopCredentials()
 	ticker := time.NewTicker(a.config.Interval.Duration)
 	defer ticker.Stop()
+	a.reconcile(ctx)
+	if a.restConfig != nil {
+		go a.register(ctx)
+	}
 	for {
-		a.reconcile(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+		a.reconcile(ctx)
 	}
 }
 

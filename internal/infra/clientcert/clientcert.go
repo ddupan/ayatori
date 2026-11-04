@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
 	"k8s.io/client-go/kubernetes"
@@ -86,6 +87,16 @@ func Start(ctx context.Context, id Identity) (stop func(), err error) {
 // RESTConfig 读取身份目录中的 kubeconfig。
 func RESTConfig(dir string) (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", filepath.Join(dir, Kubeconfig))
+}
+
+// NotAfter 返回身份目录中当前证书的到期时间，供集群外的持有者导出指标、提前告警：控制面的
+// 证书到期指标覆盖不到它们。
+func NotAfter(dir string) (time.Time, error) {
+	cert, err := (&fileStore{path: filepath.Join(dir, certFile)}).Current()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.Leaf.NotAfter, nil
 }
 
 func bootstrapConfig(dir string) (*rest.Config, error) {

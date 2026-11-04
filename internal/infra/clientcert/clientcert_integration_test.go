@@ -115,6 +115,9 @@ func TestClientCertificates(t *testing.T) {
 			return err
 		})
 		whoami(t, dir, user)
+		if got, err := clientcert.NotAfter(dir); err != nil || !got.Equal(first.NotAfter) {
+			t.Fatalf("NotAfter() = %v, %v; want %v", got, err, first.NotAfter)
+		}
 	})
 
 	t.Run("renews itself and clients reload the file", func(t *testing.T) {
