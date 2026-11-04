@@ -33,6 +33,7 @@ const (
 	node    = "node-a"
 	lan     = "lan"
 	running = "running"
+	rack    = "rack"
 )
 
 // test:///default 在进程内由所有连接共享；最后一个连接关闭后状态清空，用来模拟宿主机重启。
@@ -148,7 +149,7 @@ func setup(t *testing.T) *suite {
 			NodeName: node, Kubeconfig: kubeconfig, StateDir: filepath.Join(dir, "state"),
 			LibvirtURI:     uri,
 			ResyncInterval: metav1.Duration{Duration: time.Second},
-			NodeLabels:     map[string]string{"rack": "a"},
+			NodeLabels:     map[string]string{rack: "a"},
 		},
 	}
 }
@@ -167,7 +168,7 @@ func (s *suite) registerNode(t *testing.T) {
 		}
 		want := map[string]string{
 			corev1.LabelHostname: node, corev1.LabelArchStable: goruntime.GOARCH, corev1.LabelOSStable: goruntime.GOOS,
-			"rack": "a",
+			rack: "a",
 		}
 		for k, v := range want {
 			if n.Labels[k] != v {
@@ -184,9 +185,9 @@ func (s *suite) registerNode(t *testing.T) {
 
 func (s *suite) createObjects(t *testing.T) {
 	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: lan, Spec: computev1alpha1.LibvirtNetworkSpec{
-		XML: `<network><name>ignored</name><forward mode='bridge'/><bridge name='br-lan'/></network>`, NodeSelector: map[string]string{"rack": "a"}}})
+		XML: `<network><name>ignored</name><forward mode='bridge'/><bridge name='br-lan'/></network>`, NodeSelector: map[string]string{rack: "a"}}})
 	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: "elsewhere", Spec: computev1alpha1.LibvirtNetworkSpec{
-		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{"rack": "b"}}})
+		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{rack: "b"}}})
 	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: "local", Spec: computev1alpha1.LibvirtStoragePoolSpec{
 		XML: `<pool type='dir'><target><path>/images</path></target></pool>`}})
 	eventually(t, 30*time.Second, func() error {
