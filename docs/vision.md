@@ -26,8 +26,8 @@ Ayatori 提供统一、声明式、可组合的基础设施 API：
 Ayatori 是具有产品质量的内部平台，而非初期即面向公众的通用私有云。源码公开不等于
 承担未知部署环境、任意后端和第三方兼容性的成本。
 
-平台允许对当前环境形成明确意见：Proxmox、OpenSandbox、Envoy、GoBGP、OpenBao、
-PostgreSQL、SeaweedFS、Samba AD DNS、Cloudflare 和 Flux 都可以是已知实现。
+平台允许对当前环境形成明确意见：HAProxy、GoBGP、PowerDNS、OpenBao、PostgreSQL、libvirt、
+LXC、LINSTOR、Proxmox、SeaweedFS、Cloudflare 和 Flux 都可以是已知实现。
 
 Ayatori 不以补齐传统私有云或公有云的产品目录为目标。一个资源只有同时满足以下条件，才进入
 北向 API：
@@ -40,9 +40,14 @@ Ayatori 不以补齐传统私有云或公有云的产品目录为目标。一个
 
 当前最明确的管理缺口是 Database 与 LoadBalancer。Bucket/Object Storage 已由 CI Terraform
 覆盖，不进入北向 API（[ADR-0011](decisions/0011-bucket-managed-by-ci-terraform.md)）。
-VirtualMachine 同样具有明确价值：Proxmox 的 API 不能覆盖所需的全部生命周期，一部分操作必须
-在节点上通过 CLI 完成，因此 Ayatori 可以提供稳定北向 API，并在南向组合 Proxmox API、受限节点 Agent 与人工
-任务。KaaS 只有在出现托管控制面的实际需求时才进入实现，不是产品路线的必达终点。
+Database 已在 Dev/Prod 上线，LoadBalancer 处于 v0.3.0 预发布并已承载部分入口。
+
+计算实例同样具有明确价值：Proxmox HA 依赖全集群 quorum 与自我 fencing，不符合"宿主机故障后
+自动冷启动"的需求，Windows/retro VM 又需要完整的 libvirt 设备模型。因此计算层规划为自建的
+libvirt/LXC backend：北向透传原生 domain/lxc 配置，由每台宿主机上的 Compute Agent 在本机收敛
+（[ADR-0015](decisions/0015-libvirt-lxc-compute-backend.md)，Proposed）。KaaS 以 CAPI 管理集群
+生命周期、Ayatori 供应跨后端节点（[ADR-0014](decisions/0014-kaas-cross-backend-node-supply.md)，
+Proposed），只在出现实际需求时实现，不是产品路线的必达终点。
 
 ## 非目标
 

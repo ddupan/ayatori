@@ -2,14 +2,13 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 资源模型与生命周期已批准；字段协议待 API 评审 |
+| 状态 | 已批准并已实现；字段见 [API 合同](api-reference.md) |
 | 目标 API | `database.ayatori.ddupan.top/v1alpha1` |
 | 最后更新 | 2026-09-25 |
 | 决策 | [ADR-0009](../decisions/0009-database-resource-and-claim.md) |
 
 本文是当前行为合同，替代旧的 Tenant 同时承担申请与资源生命周期、PostgreSQL registry
-持久所有权、任意 status 丢失自动恢复的设计。批准设计不表示实现已完成。
-未决字段不能由实现自行补成新产品约定。
+持久所有权、任意 status 丢失自动恢复的设计。
 
 ## 1. 范围
 
@@ -34,8 +33,8 @@ Instance
 | Database | 描述外部数据库、管理范围、绑定与回收策略 | 充当第二套 registry 或通用资源框架 |
 | Tenant | 声明需求或显式选择资源，申请使用并交付凭据 | 删除时隐式销毁独立资源记录 |
 
-Instance 与 Database 为 cluster-scoped，Tenant 为 namespaced。Database 的工作名称是
-PostgreSQLDatabase；字段拼写与导入授权细节待 API 评审。
+Instance 与 Database 为 cluster-scoped，Tenant 为 namespaced。Database 的 Kind 是
+PostgreSQLDatabase。
 Database 由平台管理员管理，不属于应用 namespace，不引入资源专用 namespace。
 Tenant 按名称引用 Database；Database 绑定记录包含 Tenant 的 namespace/name/UID。
 普通申请者通过 Tenant 申请使用，不能自行修改 Database 回收策略或将 Released 资源重新开放。
@@ -60,7 +59,9 @@ Database 自身必须声明 `instanceRef`，手工登记时同时指定实际数
 - PostgreSQL catalog 是 database、role、grant、extension 实际状态的来源。
 - OpenBao 是应用凭据的事实来源；Ayatori 不在控制面投射 Secret（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 - Instance、Database、Tenant 以 UID 区分对象身份；namespace/name 用于定位，
-  同名新 UID 不继承旧绑定。数据库 OID 仅供诊断，不是永久身份或删除授权。
+  同名新 UID 不继承旧绑定。Database `status.roleOID`/`databaseOID` 是创建或导入后回读确认的
+  PostgreSQL 身份，冲突判定、Delete 回收与重新开放都按它核对；它不跨集群或备份恢复保持稳定，
+  也不能凭同名补记。
 - 不新增 PostgreSQL 所有权表、安装身份表或 Retain 墓碑；COMMENT 也不能授权认领。
 - 记录操作意图不等于外部操作成功，phase 不等于外部所有权；执行前后仍须观察实际状态。
 
@@ -70,7 +71,7 @@ Instance 声明 host、hostaddr、port（默认 5432）、管理 database（默�
 TLS mode（默认 verify-full）及 controller namespace 的管理 Secret 名称和字段映射。
 禁止隐式 TLS 降级。凭据引用不接受自选 namespace 或 OpenBao path。
 
-管理员维护 ExternalSecret，由 ESO 同步管理 Secret；controller 只读，不修改管理密码，
+管理 Secret 由 ESO 从 Bao 同步（ExternalSecret 随 release 由 Flux 下发）；controller 只读，不修改管理密码，
 不直接从 Bao 取管理凭据。有效用户名或密码变化时释放旧连接并重验；仅 metadata 或无关
 字段变化不重建。中途凭据变化必须丢弃旧观察。已有有效管理凭据时，Bao/ESO 故障本身
 不撤销 Instance Ready；首次缺少有效 Secret 时不能 Ready。
@@ -121,8 +122,8 @@ PostgreSQL 名称唯一。后端创建时的重名失败报告 Conflict，失败
 未显式导入的同名数据库一律 Conflict。导入资源默认 Retain，不隐含 Delete 授权。
 有权创建 Tenant 的申请者可以显式引用已登记、未绑定且可用的 Database；不增加资源侧
 允许绑定名单或逐 Tenant 的管理员审批。绑定仍检查目标、可用状态与排他关系。
-Released 不在可申请范围，必须由管理员处理旧访问并重新开放。导入时显式关联已有凭据，
-不通过隐式改密生成替代凭据；具体关联字段在 API 中定义。
+Released 不在可申请范围，必须由管理员处理旧访问并重新开放。导入时以 `spec.credentialRef`
+显式关联已有凭据，不通过隐式改密生成替代凭据。
 
 ## 7. Retain、重新绑定与 Delete
 
@@ -145,12 +146,12 @@ Database 不得设置会让它随 Tenant 消失的 ownerReference。
 ### Delete
 
 必须由有权限的主体在资源侧明确授权，并核对 Database 身份、绑定、实际对象和管理范围。
-在相关 finalizer 保护下清理投射、阻止新登录、处理已有连接、删除 database，再按已确认的
-独占管理范围清理 role 与凭据；共享或未纳管的对象不得删除，禁止扩大 CASCADE 范围。
+在 finalizer 保护下按已确认 OID 依次：`NOLOGIN` 并终止应用会话 → `DROP DATABASE` →
+`DROP ROLE`（无 CASCADE/REASSIGN）→ 永久删除 OpenBao metadata → 移除 finalizer。共享或
+未纳管的对象不得删除。Ayatori 不投射凭据，没有投射清理步骤。
 
 每步回读，失败保持进度与 finalizer；确认已删除的对象可幂等跳过，未知同名对象不能继续删除。
 数据库被使用时，直接删除 Database 不得绕过绑定保护。资源已释放后才按策略处理。
-具体 Tenant/Database finalizer 配合与投射清理顺序须经 API 设计及故障注入验收。
 
 ## 8. 幂等、失败与人工处理
 
@@ -185,7 +186,7 @@ CREATEDB、CREATEROLE 或 replication 权限。撤销 PUBLIC CONNECT，再授予
 Ayatori 不创建 ExternalSecret 或含凭据的 Secret；消费方按 Tenant status 公布的位置与版本自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
 凭据仍输出 username/password/database/host/hostaddr/port/sslmode 七键，不生成带密码 URI。
-Tenant status 提供 Secret 引用与无认证信息的 OpenBao API URL。
+Tenant status 提供 `credentialRef`、`credentialVersion` 与无认证信息的 `credentialURL`。
 mount/base path 属部署配置，Tenant 不得自选任意路径；原按 Tenant namespace/name 固定
 推导路径的规则撤除。动态供应的凭据路径按 Database UID 确定；导入时显式关联已有凭据
 位置，不要求搬迁已有凭据。Released 不自动改密，管理员处理旧访问后才重新开放资源。
@@ -205,10 +206,8 @@ TLS、OpenBao Kubernetes auth、controller/ESO 身份隔离、Secret 读取范�
 三类资源均提供唯一的 Ready Condition 及 observedGeneration，phase 只辅助表示阶段。
 Ready=True 必须有当前目标的实际验证；Database 已绑定不等于 Tenant 凭据交付已经完成。
 
-至少区分 Reconciling、InvalidSpec、ImmutableField、DependencyUnavailable、
-AuthenticationFailed、InsufficientPrivileges、InstanceNotReady、Conflict、
-ProvisioningFailed、CredentialProjectionFailed。Released 应明确显示未可供重新绑定，
-具体 Condition Reason 由 API 细化，不假定仅靠 phase 判断授权。
+实际 Reason 与阶段枚举见 [API 合同](api-reference.md#conditions)。Released 不可直接重新绑定，
+不假定仅靠 phase 判断授权。
 
 使用结构化日志、Events 和低基数失败分类 metrics；Condition 是面向使用者的主要诊断入口。
 禁止在任何 CR、Event、日志、metric、trace 或测试输出中出现密码、Token、完整秘密响应。
@@ -231,7 +230,8 @@ ProvisioningFailed、CredentialProjectionFailed。Released 应明确显示未可
 | 泄漏与权限 | canary 不出现在输出；namespace 用户不能导入/回收他人资源 |
 
 纯规则用单元测试；schema/CEL/status/watch/resourceVersion/绑定事件链用 envtest；
-真实 PostgreSQL/OpenBao 验证后端行为；GC、ESO 与完整交付用具备相应控制器的测试集群。
-envtest 不运行 GC/ESO，不能据此宣称这两类验收完成。详细测试与实现差距见
+真实 PostgreSQL/OpenBao 验证后端行为；GC 用具备相应控制器的测试集群，envtest 不运行 GC。
+Database 模块中 ESO 只同步 Instance 的管理 Secret（[postgresql.yaml](../../deploy/flux/control-plane/postgresql.yaml)），
+不参与应用凭据交付。详细测试与实现差距见
 [开发文档](development.md)。导入不是数据迁移，dump/restore 仍是可选路径，见
 [迁移文档](migration.md)。

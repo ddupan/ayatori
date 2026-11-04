@@ -3,40 +3,20 @@
 Database 是 Ayatori 首批实际产品领域之一。当前已包含三资源 API、分层绑定与 Instance 原生
 管理能力观测、凭据准备及显式启用的角色/数据库创建、扩展安装、应用登录验证、凭据位置公布、Retain/Delete 回收与显式导入。
 
-## 当前设计（2026-09-24）
+## 当前设计
 
 采用 Instance → Database → Tenant 的资源与申请模型；Database 独立存在，支持显式导入、
 Retain 后人工重新绑定与资源侧 Delete。撤销 PostgreSQL ownership registry 及任意 status
 丢失自动恢复所有权的要求。未知同名资源或创建结果不确定时，清楚报告 Conflict 并人工处理。
 
 依据 [ADR-0009](../decisions/0009-database-resource-and-claim.md)，当前合同见
-[系统规格](specification.md)。下面的迁移来源与已存在代码不反向约束新设计。
-registry adapter、专属迁移/测试及 Instance 的 registry 判定现已撤除；Instance 根据完整管理
-能力观察直接判定 Ready。Database 资源与绑定、角色/凭据供应已接入，导入及回收仍未完成。wiki 同步位置见
-`homelab-wiki/services/postgresql-tenant-operator.md`，跨仓库发布状态由 wiki 的同步记录维护。
+[系统规格](specification.md)。Instance 根据完整管理能力观察直接判定 Ready；Database 绑定、
+凭据与资源供应、导入及 Retain/Delete 回收均已实现并有真实后端集成测试。
 
-## 来源基线
+## 来源
 
-完整设计合同及首批领域模型与测试提取自原 PostgreSQL Tenant Operator：
-
-- 仓库：`git.ddupan.top/panxiao81/postgresql-tenant-operator`
-- source commit：`dae546e58efa1be81e930861c87f7fb13bb12113`
-- 原路径：`internal/domain/instance/`、`docs/domain-instance.md`
-- 迁移日期：2026-09-20
-
-本目录迁入该基线的 specification、architecture、API、领域、部署、安全、开发、迁移与运维
-文档，最初只进行 Ayatori 产品归属、API group、目录和链接适配；2026-09-24 经维护者
-批准的资源/申请分离修订明确替代 registry、自动恢复与原 Retain 合同，其余适用的安全约束保留。
-
-迁移只使用该 commit 中已提交的文件。源仓库
-`feature/instance-extension-observations` 工作树中的 `instance.go` 修改与
-`instance_extensions_test.go` 未进入本切片。
-
-代码被移动到 Ayatori 的 `internal/database/domain/instance`，测试 import 和文档链接相应更新；
-首个后续切片按已批准合同增加 Instance extension observation：观测与当前 target 绑定，进入重新
-验证或删除时失效，且支持判定不授权 Tenant provisioning。已有 Ready 切片曾按原合同加入
-registry 准备决策；这一依赖现已从代码移除，不能把旧运行链路接回模型。
-各层验证边界见 [Instance 领域规格](domain-instance.md)。
+设计合同与首批领域代码于 2026-09-20 迁自原 PostgreSQL Tenant Operator（commit `dae546e`），
+随后按 ADR-0009 修订；来历见 Git 历史。
 
 ## 边界
 
@@ -44,7 +24,7 @@ registry 准备决策；这一依赖现已从代码移除，不能把旧运行�
 - CredentialReference 只携带管理 Secret 的名称与字段映射，不包含 Secret 内容或 OpenBao path。
 - Instance checkpoint 不是外部事实；实际能力必须由 Reconciler 经 adapter 观察后交给领域对象判断。
 - Instance 观察只检查供应前置条件，不单独授予 Tenant 所有权或外部写入权限；凭据准备
-  另行校验双向绑定和保护，尚不表示完整 Database API 已经可用。
+  另行校验双向绑定和保护。
 
 ## 管理凭据与连接
 
@@ -83,14 +63,8 @@ registry、不设置 Ready，也不授予 Tenant 写权限。真实测试验证�
 
 ## Registry 撤除
 
-原 `adapter/postgresql/registry`、SQL 迁移、registry 专属集成测试及 tern 依赖已删除；
-未提交的 inspection 实验也已撤除。来源仍可在 Git 历史追溯，没有删除外部 PostgreSQL 对象。
-Instance 不再具有 InitializingRegistry 阶段、RegistryState、准备决策或回读方法；
-首次完整管理能力观察即可完成验证，重验失败则撤销本轮就绪证据。
-
-保留凭据读取与连接刷新、TLS、metadata/扩展观察及其真实后端测试。领域测试覆盖每项能力
-在初次验证和 Ready 重验时失败、依赖恢复、重启后重新取证、错误目标/阶段及删除保护。
-这不等于三资源供应、交付和回收已实现。
+原 PostgreSQL ownership registry 及其迁移、测试已删除（Git 历史可追溯，未删除外部对象）；
+Instance 不再有 InitializingRegistry 阶段。
 
 ## Instance 原生管理观测
 
@@ -115,14 +89,15 @@ superuser 属性、服务器可写状态、版本和扩展列表，作为原始�
 [CREATE EXTENSION](https://www.postgresql.org/docs/18/sql-createextension.html)。这些检查是基础
 能力观察，不是未来操作必然成功的保证；权限、容量、连接数等仍可能在执行时变化。
 
-`InstanceReconciliation` 协调 finalizer、观察、领域判定和删除引用检查，controller 只连接
+`InstanceReconciler` 协调 finalizer、观察、领域判定和删除引用检查，controller 只连接
 事件、用例、状态呈现与重试。每轮重建无证据的领域对象；旧 Ready 不授权新一轮操作。
 失败清除当前版本结果并撤销 Ready；CR 在观察期间被修改则拒绝旧结果，下一轮重新读取。
 连接/权限变化由 Secret watch 和 30 秒重查驱动，单轮 IO 最长 15 秒；不持续写入相同状态。
 
-manager 通过 `--database-secret-namespace`（默认 `POD_NAMESPACE`）启用 Instance 观测；
-为空时不启用。本地运行需显式提供该参数。Deployment 使用 downward API 获取自身 namespace；
-Secret 的 get/list/watch 权限由该 namespace 的 Role 单独授予，不放入 ClusterRole。
+manager 通过 `--database-secret-namespace`（默认取 `POD_NAMESPACE` 环境变量）启用 Instance 观测；
+为空时不启用。生产以 podman quadlet 运行、没有 Pod，因此显式设置该参数；
+Secret 的 get/list/watch 权限由该 namespace 的 Role 单独授予，不放入 ClusterRole
+（[rbac.yaml](../../deploy/flux/control-plane/rbac.yaml)）。
 watch 使用 controller-runtime 的 metadata-only cache，读取有效凭据仍直连 API server。
 TLS 使用既有 endpoint 合同，公开 CA bundle 可由 `--database-root-cert` 指定；不会自动挂载
 生产证书或创建管理 Secret。manager worker 停止后统一关闭 pgxpool。
@@ -136,7 +111,7 @@ Instance 删除首先释放本地连接并撤销 Ready。任何引用它的 Data
 安装/回读，拒绝非 trusted 扩展；权限撤回/恢复、只读会话、superuser 拒绝和中途轮换。
 实际 manager 在生成的资源 RBAC 和 namespaced Secret Role 下验证缺失 Secret 后出现、
 轮换、删除、跨 namespace 拒绝和 watch。API 测试另覆盖写入版本冲突、幂等、新 reconciler
-恢复与引用删除保护。完整 DBaaS 仍需供应/导入、OpenBao/ESO、Retain/Delete 集成验收。
+恢复与引用删除保护。
 
 ## 应用凭据存储切片
 
@@ -199,7 +174,7 @@ Tenant 仍未完成交付。凭据准备本身不创建 PostgreSQL 资源；后�
 
 启用后同一个 `DatabaseReconciler` 在凭据确认可用之后继续资源供应，不另设 controller，
 避免两个 worker 争写同一资源状态。所有 SQL 操作复用 `postgresql.Instances` 中 Instance 的
-管理连接池，不再开一个管理连接池。执行前重新查询非 superuser 管理能力。
+管理连接池，不再开一个管理连接池；管理能力由 Instance Ready 保证，不逐次重查。
 PostgreSQL adapter 只返回 catalog 事实；下一步由 Database 聚合按“CR 记录的 OID + 本轮
 观察”决定。每一步都可重复执行，不需要事务或持久检查点：
 
@@ -351,7 +326,4 @@ Database 集成测试和 lint 入口同时覆盖 `internal/infra/...`，避免�
 - [架构](architecture.md)与[API 合同](api-reference.md)；
 - [领域模型](domain-model.md)与[Instance 领域规格](domain-instance.md)；
 - [安全](security.md)、[迁移](migration.md)与[运维](operations.md)；
-- [部署合同](deployment.md)与[开发测试合同](development.md)。
-
-部署和开发文档描述目标合同，其中旧仓库专属的 Make target、脚手架版本和目录尚未接入 Ayatori；
-在对应实现切片完成前，不应把其中命令理解为当前仓库已经可执行的入口。
+- [部署合同](deployment.md)（运行方式见 [deploy/README.md](../../deploy/README.md)）与[开发测试](development.md)。

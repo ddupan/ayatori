@@ -1,34 +1,14 @@
-# 现有数据库导入与迁移 Runbook
+# 现有数据库 dump/restore 迁移 Runbook
 
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | Review；尚未在临时 PostgreSQL 演练 |
-| 适用范围 | 管理员显式导入，或通过 dump/restore 迁移到新资源 |
+| 适用范围 | 通过 dump/restore 把已有数据库迁移到新的动态供应资源 |
 | 最后更新 | 2026-09-24 |
 
-当前设计支持管理员显式登记已有 Database；未知同名资源仍不得自动认领。
-导入不要求移动数据，不隐含改密码、owner、授权或删除权限。API schema 与绑定协调已实现，
-但导入观察和凭据交付尚未实现，以下导入步骤
-是验收要求而非可直接执行的命令。
-
-## 显式导入与保留资源复用
-
-1. 核对 Instance、数据库、owner、角色权限、扩展、使用者与备份，确定允许管理的范围。
-2. 由管理员声明 Database，指定已有目标，回收策略默认 Retain；导入验证初始只读。
-3. 以 `source: Import` 与 `spec.credentialRef` 关联现有应用凭据，不把密码写入 CR，不因验证失败重置密码。
-4. Tenant 显式引用未绑定且可用的 Database；controller 验证要求并建立排他绑定，无额外名单审批。
-5. 验证实际登录与凭据位置公布，再由消费方集群投射；不满足时停止，不以修改原数据库作为默认修复。
-
-Released 资源复用前另需核实旧使用者的访问权限、数据交接与投射处置。保留旧绑定身份直到
-人工处理完成，不仅靠清空 claimRef 或修改 UID 授予新使用权。
-
-导入失败时原数据库应保持不变；撤回登记不得触发 Delete。绑定后的回退按 Retain 释放，
-检查新投射与访问授权的影响，不能承诺撤回 CR 自动恢复此前所有外部访问状态。
-
-## 可选的 dump/restore 路径
-
-不适合直接导入、需要改变 owner/权限模型或移动数据时，可使用下述逻辑迁移流程。
-它不是纳管现有数据库的唯一路径；保留旧资源作为限时回滚点。
+纳管已有数据库首选原地显式导入（`source: Import`，不移动数据），见
+[显式导入与重新开放](README.md#显式导入与重新开放)。不适合直接导入、需要改变 owner/权限模型
+或移动数据时，才使用下述逻辑迁移流程；保留旧资源作为限时回滚点。
 
 以下命令是顺序模板，不可原样复制到真实环境。先把尖括号变量解析成明确值，确认当前
 连接目标，再逐条执行。dump 可能包含敏感业务数据，必须放在加密临时存储且不得提交 Git。
@@ -37,8 +17,8 @@ Released 资源复用前另需核实旧使用者的访问权限、数据交接�
 
 - 已验证 PostgreSQL/OpenBao 备份和恢复；记录恢复点。
 - Instance 已 Ready，目标 namespace 存在，消费方集群已能读取对应 Bao 路径。
-- 最终 database/login role 当前由旧应用占用，但改名后的保留名称、新推导的 Bao path
-  均不存在。
+- 最终 database/login role 当前由旧应用占用，但改名后的保留名称不存在（新凭据位置按
+  Database UID 生成，无需预留）。
 - 已记录旧 database owner、grants、extensions、locale/encoding、连接配置和验证清单。
 - 已确认应用可停止写入，并确定回滚窗口和负责人。
 - 已确认旧 login role 不被其他 database/应用共享，且角色改名不会破坏未纳入本次维护
@@ -95,7 +75,7 @@ identifier 必须由管理员工具安全引用，不能把未经校验的值直
 
 ### 5. Restore
 
-从 OpenBao 或目标 Secret 安全取得新应用凭据，不要把密码放进 shell history。以新 login
+从 OpenBao（Tenant status 公布的位置）安全取得新应用凭据，不要把密码放进 shell history。以新 login
 owner 连接目标 database：
 
 ```sh
@@ -134,9 +114,8 @@ extension 应由 Tenant spec 创建。若 dump 仍包含 extension 定义，预�
 
 ## 演练验收
 
-发布首个可用版本前，必须在临时 PostgreSQL/OpenBao/Kind 环境执行本文并记录：
+必须在临时 PostgreSQL/OpenBao 环境执行本文并记录：
 
-- 显式导入的管理权限、Released 重新开放前的旧访问处置和失败不修改原资源；
 - 使用的 PostgreSQL major version 和命令版本；
 - dump/restore 返回码和对象差异；
 - DNS/IP TLS 登录结果；

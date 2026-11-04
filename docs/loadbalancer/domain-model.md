@@ -1,7 +1,9 @@
 # LoadBalancer 领域模型
 
-状态：已评审，API 字段随切片 1 落地。日期：2026-10-05；宣告部分按
-[ADR-0017](../decisions/0017-lb-host-local-announcement.md) 修订于 2026-10-16。决策依据见
+状态：已实现（v0.3.0-rc.3，切片 1–6）。日期：2026-10-05；宣告部分按
+[ADR-0017](../decisions/0017-lb-host-local-announcement.md) 修订于 2026-10-16，Backend 与
+LoadBalancerHost 按 [ADR-0018](../decisions/0018-lb-backend-and-host-resources.md) 补充，2026-11-03
+按代码校对。决策依据见
 [ADR-0012](../decisions/0012-l4-loadbalancer.md)。分层与命名沿用
 [Database 领域模型](../database/domain-model.md#分层)。
 
@@ -42,14 +44,15 @@ listener、endpoint 与健康检查是 LoadBalancer 的核心语义，以领域�
 职责，adapter 只向聚合返回“一致/不一致”的事实。
 
 ```go
-// 示意，具体签名在实现时确定。
-func Reconstitute(snapshot Snapshot, deps Dependencies) *LoadBalancer
+// 摘录，以 internal/loadbalancer/domain/loadbalancer 为准。
+func Reconstitute(snapshot Snapshot) *LoadBalancer
 
-func (lb *LoadBalancer) PlanAddress(pool Pool) Action           // Allocate / Save / Wait
-func (lb *LoadBalancer) AddressClaimed(ip netip.Addr, err error) // 结果分类见下
-func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, agent AgentReport, err error, deleting bool) Action
+func (lb *LoadBalancer) PlanAddress(pool Pool, taken map[netip.Addr]Owner) (netip.Addr, Action) // Allocate / Save / Wait
+func (lb *LoadBalancer) AddressClaimed(addr netip.Addr)
+func (lb *LoadBalancer) PlanRelease(taken map[netip.Addr]Owner) ([]netip.Addr, Action)
+func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, agent AgentReport, observeErr error, deleting bool) HostAction
 // ApplyConfig / RemoveConfig / Wait
-func (lb *LoadBalancer) Programmed() bool
+func (lb *LoadBalancer) Programmed() (ok bool, reason, message string)
 
 // 宣告规则：纯函数，只在 LB agent 中求值（ADR-0018）。
 func Check(pool Pool, frontends []Frontend, local func(netip.Addr) bool) map[netip.Addr]Reason
@@ -160,7 +163,7 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | Reconciler | 职责 |
 | --- | --- |
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
-| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
+| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）与 agent `/status`（`AgentReady`、`status.vips`）；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
 
 Address 复用内置 `networking.k8s.io/v1 IPAddress`（envtest 1.37 验证：Service CIDR 外的地址
@@ -244,8 +247,8 @@ conditions 参照 Octavia 将控制面下发（provisioning_status）与数据�
 - `Degraded`：存在不是 `Ready` 的 Host。
 - `ResolvedRefs`：各端口引用的 Backend 都存在；为 False 时说明中列出缺失的名称，对应端口拒绝
   连接，`Programmed` 不受影响。删除 Backend 不被阻止。
-- `Available`：每个 port 至少有一个健康 endpoint。PostgreSQL 无 primary 时为 False，但
-  `Programmed` 不受影响。
+- 后端健康（原设想的 `Available`）尚未实现，由 [ADR-0023](../decisions/0023-lb-endpoint-health-in-status.md)
+  （Proposed）重新设计。
 
 LoadBalancer 只落地到已带 finalizer 且未在删除的 LoadBalancerHost：finalizer 保证写入的配置在主机
 删除时被清理。删除 LoadBalancerHost 时它的 Attachment 立即不再出现、不再参与 Programmed 判定；
@@ -318,7 +321,7 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 
 - 领域单测：VIP 候选与认领判定、孤儿判定、`PlanHost` 在各 `ProxyFacts` 组合下的下一步（含
   reload 失败、frontend 未 OPEN、删除）、宣告规则（frontend 各状态、HAProxy 不应答、VIP 段外）、
-  Programmed/Degraded/Available 判定。
+  Programmed/Degraded/ResolvedRefs 判定。
 - envtest：Address 并发认领冲突、同名重建、finalizer、controller 重启后从 status 与 Address 恢复。
 - adapter 集成测试：容器中的真实 HAProxy + dataplaneapi、PowerDNS。
 - agent 集成测试：容器中的真实 HAProxy 与进程内作为对端的 GoBGP：后端全部失败仍宣告；frontend
@@ -330,8 +333,8 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
 
 - 切片 1（API 与 VIP 分配）：`network.ayatori.ddupan.top/v1alpha1 LoadBalancer`、Address 认领/释放与
   孤儿回收已实现；`--loadbalancer-address-pool` 为空时不启用。数据面、Hostname 尚未接入，
-  `Programmed` 恒为 False（Reason `DataPlanePending`）。CRD 暂不加入 `deploy/flux/crds`，
-  待数据面切片可用后再部署。
+  `Programmed` 恒为 False（Reason `DataPlanePending`）。（当时的状态；数据面切片完成后 CRD 已加入
+  `deploy/flux/crds`。）
 - 切片 2（HAProxy adapter）：`haproxy.Hosts` 的 Observe/Apply/Remove 已实现，以真实 HAProxy 3.4 +
   dataplaneapi v3.4.3 容器做 contract test（回读一致、端口增删、不影响其他 LoadBalancer、
   经 VIP 的健康转发与无健康后端时拒绝）。尚未接入 Reconciler。

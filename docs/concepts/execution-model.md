@@ -1,5 +1,8 @@
 # 执行模型
 
+> 状态：设计方向，尚未实现。`execution.ayatori.ddupan.top` 目前只有 `Job`/`JobClass` API 与 CRD，
+> 没有合入的 controller；`Sandbox`、`ManualTask`、`TaskReport` 均未建模。见[路线图](../roadmap.md)。
+
 Ayatori 将执行者统一视为具有不同能力与延迟特性的 executor。
 
 ```text

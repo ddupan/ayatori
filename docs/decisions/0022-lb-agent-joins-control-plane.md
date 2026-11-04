@@ -1,6 +1,6 @@
 # ADR-0022：LB agent 加入控制面，watch 资源并在本机收敛
 
-- 状态：Proposed（依赖 [ADR-0021](0021-client-certificates-via-csr.md)，并须先完成下文「待验证」的事项）
+- 状态：Proposed（依赖的 [ADR-0021](0021-client-certificates-via-csr.md) 已实现；须先完成下文「待验证」的事项）
 - 日期：2026-11-03
 - 依据：维护者讨论（compute 节点改为以 CSR 加入控制面之后，LB 也对齐同一做法）。
 - 部分取代：[ADR-0018](0018-lb-backend-and-host-resources.md) 中以下几点：

@@ -1,7 +1,7 @@
 # Database 系统架构
 
 本页解释 [系统规格](specification.md) 的组件边界；资源与申请分离的依据见
-[ADR-0009](../decisions/0009-database-resource-and-claim.md)。设计已确认，运行链路尚未完成。
+[ADR-0009](../decisions/0009-database-resource-and-claim.md)。三条链路均已实现，见[模块说明](README.md)。
 
 ## 资源与后端
 
@@ -41,18 +41,19 @@ Instance 删除检查 Database 引用，包括 Released 资源，不直接清理
 Retain 保留资源及旧绑定身份；重新绑定必须经过人工数据和访问权限处置，不自动分配。
 Delete 由资源侧明确授权，在 finalizer 保护下按管理范围清理并逐步回读。
 
-角色、凭据与投射的具体管理字段和清理顺序仍需 API 评审，不能用 PV 类比代替数据库权限设计。
+Delete 清理顺序为 NOLOGIN → DROP DATABASE → DROP ROLE → 删除 OpenBao metadata → 移除 finalizer，
+见[释放与回收](README.md#释放与回收)；Ayatori 不投射凭据，没有投射清理步骤。
 
 ## 保持的访问边界
 
-管理 Secret 固定在 controller namespace，管理员维护其 ExternalSecret；controller 只读。
+管理 Secret 固定在 controller namespace，由 ESO 从 Bao 同步（ExternalSecret 随 release 由 Flux 下发）；controller 只读。
 有效值变化刷新管理连接，不直接访问 Bao 获取管理凭据，不自行实现连接池。
 应用凭据写 OpenBao 并在 Tenant status 公布位置，不在控制面投射 Secret（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 TLS、DNS/IP SAN、七键凭据输出和最小权限合同继续适用。
 
 ## 导航
 
-- [API 合同与待细化字段](api-reference.md)
+- [API 合同](api-reference.md)
 - [领域模型](domain-model.md)与[Instance 规格](domain-instance.md)
 - [部署](deployment.md)、[安全](security.md)、[开发测试](development.md)
-- [导入与迁移](migration.md)、[运维](operations.md)
+- [dump/restore 迁移](migration.md)、[运维](operations.md)

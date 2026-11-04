@@ -39,8 +39,7 @@ resourceVersion 留在应用层处理 API 并发，不是领域版本或物理�
 
 - Reconstitute 校验 definition，重建 checkpoint，丢弃旧 evidence。
 - BeginValidation 清空能力证据并进入 Validating。
-- AssessManagement/AssessReadiness 根据本轮完整观察判断 Ready 或安全失败；
-  方法的具体合并方式在实现重构时决定，不保留无意义的中间初始化阶段。
+- AssessManagement/AssessReadiness 根据本轮完整观察判断 Ready 或安全失败，没有中间初始化阶段。
 - CheckExtensions 判定请求集合，不能单独授权供应。
 - RequireProvisioningReady 检查本轮能力与删除状态；不授予 Database 所有权。
 - BeginDeletion 禁止新供应，不执行外部删除。
@@ -51,7 +50,7 @@ RegistryState 与 InitializingRegistry 的设计需求。不能用始终返回 U
 
 ## 应用与连接边界
 
-管理凭据来自 controller namespace 的 Secret；管理员维护 ExternalSecret，ESO 同步。
+管理凭据来自 controller namespace 的 Secret，由 ESO 从 Bao 同步。
 Instance 不直接访问 Bao。有效用户名/密码变化时应用层释放旧连接、用新值装配并重验；
 metadata/无关字段变化不重建。采集途中有效值变化必须丢弃观察，不因 generation 没变而复用。
 controller 不修改 PostgreSQL 密码、管理 Secret 或 Bao 管理凭据。
@@ -86,5 +85,4 @@ finalizer 不阻止并发申请 CR 创建；新请求见 Instance 删除中/不�
 Instance 领域代码、adapter 与测试的 registry 依赖已撤除。AssessManagement 根据完整观察
 直接完成验证；AssessReadiness 失败进入 Validating，依赖恢复后重新验证。领域测试覆盖各检查项
 在这两个入口的失败与恢复。原生权限检查、Instance controller、metadata-only Secret watch
-和引用删除保护已接入，验证矩阵见 [模块说明](README.md#instance-原生管理观测)；
-Database/Tenant 的供应、交付和回收仍未完成。
+和引用删除保护已接入，验证矩阵见 [模块说明](README.md#instance-原生管理观测)。
