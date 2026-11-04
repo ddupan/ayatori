@@ -1,6 +1,6 @@
 # ADR-0022：LB agent 加入控制面，watch 资源并在本机收敛
 
-- 状态：Proposed（依赖的 [ADR-0021](0021-client-certificates-via-csr.md) 已实现；须先完成下文「待验证」的事项）
+- 状态：Proposed（已实现于 `dev/lb-agent`，Dev 已切换；Accepted 之前还剩下文「待验证」中未勾选的三项）
 - 日期：2026-11-03
 - 依据：维护者讨论（compute 节点改为以 CSR 加入控制面之后，LB 也对齐同一做法）。
 - 部分取代：[ADR-0018](0018-lb-backend-and-host-resources.md) 中以下几点：
@@ -70,10 +70,15 @@ Backend，在本机计算期望配置并收敛 HAProxy**，再把结果写回 AP
   另一个角色的权限。
 - 节点通用的权限授予 `system:ayatori:nodes`，角色相关的权限只授予角色组。compute 的 `LibvirtDomain`
   等权限也应只授予 compute 自己的角色组。
-- **首次签发由 Ayatori 部署 role 完成：**
-  1. 为每台主机创建 15 分钟有效的 bootstrap token；
-  2. 把 `bootstrap-kubeconfig` 写到主机上，文件只属于 root；
-  3. 等 agent 提交 CSR，核对申请的确实是这台主机的身份、角色组也正确，才批准，不符合的拒绝。
+- **首次签发（join）由部署方完成**，实现为 homelab-infra 的一次性 playbook
+  `infrastructure/chef/ansible/join.yml`（与 SPIRE 首次 enrollment 同类，不从 CI 运行），compute 与 LB 共用：
+  1. 在控制面为这台主机创建 15 分钟有效的 bootstrap token；
+  2. 把 `bootstrap-kubeconfig` 写进 cookbook 建的凭据目录，文件只属于 agent 的运行用户（LB agent
+     不以 root 运行）；
+  3. 用控制面正在运行的 manager 镜像执行 `client-credentials approve-bootstrap`：只批准以这个 token
+     提交、申请的恰好是这台主机身份与角色组的 CSR。核对逻辑在 Ayatori（`clientcert.ApproveBootstrap`）。
+
+  join 之前 LB 主机就要宣告：agent 第一次需要 API 时才启动证书申请，失败则在后台重试，宣告不受影响。
 
   bootstrap token 只经过部署机，有效期很短，只能用来提交 CSR。私钥只在 LB 主机上生成。
 
@@ -116,10 +121,11 @@ LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册�
 
 ### LoadBalancerHost 由 agent 注册
 
-- agent 以 SSA（field manager `loadbalancer-agent`）创建并维护与自己同名的 LoadBalancerHost。spec 中不再有
-  `dataPlaneURL` 和 `agentURL`，这个对象只承载本机状态和删除语义。
+- agent 以 SSA（field manager `loadbalancer-agent`）创建并维护与自己同名、不带 spec 的 LoadBalancerHost。
+  `agentURL` 已删除；`dataPlaneURL` 改为可选，只在迁移期间供仍远程收敛的环境使用，迁移第 3 步删除。
 - 部署方的 inventory 只保留 `address_pool`，部署 role 不再创建或删除 LoadBalancerHost。
-- **删除仍由人或部署方发起：** controller 持有 finalizer，等 agent 报告本机配置已全部清空后才放行。
+- **删除仍由人或部署方发起：** controller 持有 finalizer，等 agent 报告本机配置已全部清空（condition
+  `Purged=True`，agent 看到自己的 LoadBalancerHost 删除中时清除本机全部配置后写入）后才放行。
   主机不可达时，删除会一直等待，由管理员移除 finalizer 强制完成。agent 不能删除对象，也不能修改
   finalizer。
 - **退役顺序：** 先在主机上停止 agent 并删除凭据，再删除 LoadBalancerHost。Kubernetes 的客户端证书
@@ -131,9 +137,13 @@ LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册�
 agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
 
 - `vips` 与 `AgentReady`：内容和语义沿用 ADR-0018。
-- `loadBalancers[]`：每个 LoadBalancer 在本机的落地进度，包括 namespace/name、本机已收敛到的
-  generation、frontend 是否 OPEN，以及删除是否已完成。
-- `Programmed`：本机最近一次收敛是否成功；失败时 reason 说明是事务、reload 还是校验出了问题。
+- `loadBalancers[]`：每个 LoadBalancer 在本机的代理事实：namespace/name 与 `uid`；`digest`——本机配置与之
+  完全一致的期望配置摘要（`Snapshot.Digest`，controller 用同一函数计算后比较；不用 generation，因为
+  Backend 变化不改变 LoadBalancer 的 generation）；`present`；`reload`（Succeeded、Pending、Failed）与
+  `message`；各 server 的健康检查结论（ADR-0023）。对象删除完成后移除该项。
+- controller 把每台主机的这一项还原为代理事实，交给与远程收敛相同的领域规则（`PlanHost`）判定
+  Attachment、`Programmed` 与 endpoint 健康；不另设每主机的 `Programmed` condition，失败原因在
+  `reload` 与 `message` 中。
 
 只要本机事实有变化，或者距上次写入已满一个周期，agent 就写入一次。
 
@@ -174,9 +184,13 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
   1. 发布能 watch、能收敛的 agent，同时保留 manager 的远程收敛，以开关切换；
   2. 每台主机确认 agent 收敛结果与 manager 一致后，关闭 manager 的远程收敛；
   3. 删除 Data Plane API 凭据，关闭 `:5555`；
-  4. 删除部署 role 的 `ayatori_loadbalancer.hosts`。
+  4. 不再在 GitOps 中声明 LoadBalancerHost（原部署 role 的 `ayatori_loadbalancer.hosts` 已随控制面迁入
+     Chef 改为 GitOps 声明）：先给对象加 `kustomize.toolkit.fluxcd.io/prune: disabled` 并确认生效，再从
+     仓库删除——否则 Flux 删除对象，触发整机清理。
 
   切换期间，同一台主机不能同时有两个写入方。开关按环境整体切换，不按主机切换。
+  开关是 manager 的 `--loadbalancer-agent-convergence` 与 LB 主机 cookbook 的 `agent.converge`。先开 manager
+  （远程写入停止，主机显示 Pending），再逐台开主机：中间没有写入方，HAProxy 按已有配置照常服务。
 
 ## 已接受的代价
 
@@ -223,19 +237,28 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
 
 ## 待验证（Accepted 之前必须完成）
 
-1. envtest 中验证 VAP：`system:ayatori:node:<名称>` 只能创建自己的 LoadBalancerHost、只能写它的
+2026-11-04 的结果附在各项后；未勾选的仍需完成。
+
+1. [x] envtest 中验证 VAP：`system:ayatori:node:<名称>` 只能创建自己的 LoadBalancerHost、只能写它的
    status，不能写其他主机、spec、finalizer，也不能删除；Node 只能写自己的，Lease 只能写
-   `<自己>-loadbalancer`。
-2. envtest 中模拟同一台主机：LB 与 compute 两个身份用户名相同、角色组不同，对同一个 Node 做 SSA，
-   各自只能动自己的角色 label、condition 和 Lease。
+   `<自己>-loadbalancer`。——`agent.TestAgentJoins`（LoadBalancerHost 部分）、`node.TestRoles`（Node、Lease）。
+2. [x] envtest 中模拟同一台主机：LB 与 compute 两个身份用户名相同、角色组不同，对同一个 Node 做 SSA，
+   各自只能动自己的角色 label、condition 和 Lease。——`node.TestRoles`。
 3. agent 集成测试（envtest + 本机 HAProxy）：
-   - 新建、修改、删除 LoadBalancer 与 Backend 后，本机收敛并正确上报；
-   - API 不可达期间不删除任何配置，恢复后按 list 结果清理；
-   - agent 重启后，先按已有配置恢复宣告，再继续收敛。
-4. 中央 controller：按各主机上报汇总 LoadBalancer status；删除 LoadBalancer 与 LoadBalancerHost 时，
+   - [x] 新建、修改、删除 LoadBalancer 与 Backend 后，本机收敛并正确上报；删除 LoadBalancerHost 时清除
+     本机全部配置并报告 `Purged`。——`agent.TestAgentConverges`。
+   - [x] API 不可达期间不删除任何配置，恢复后按 list 结果清理。——`TestAgentConverges`：agent 经可切断的
+     代理访问 API，切断期间删除对象后数轮收敛配置仍在，恢复后被清理。
+   - [x] agent 重启后，先按已有配置恢复宣告，再继续收敛。前半由 `TestAgentAnnouncesFromHAProxy` 覆盖；
+     后半由 `TestAgentConverges`：停机期间删除与新建的 LoadBalancer，重启后分别清理与下发。
+4. [x] 中央 controller：按各主机上报汇总 LoadBalancer status；删除 LoadBalancer 与 LoadBalancerHost 时，
    finalizer 等到所有 agent 报告完成才放行；Lease 过期时 `AgentReady` 为 `Unknown`。
+   ——`controller.TestAgentConvergence`、`TestLoadBalancerHostLifecycle`。
 5. Dev 上：按「下线与迁移」的步骤切换 lb-dev-1/2，切换前后 VIP 不中断；最后关闭 `:5555`，确认控制面
    与 LB 主机之间已没有任何入站连接。
+   - [x] 2026-11-04 以本地构建切换（join、manager 开关、主机 `converge`），每秒探测 VIP 共 1550 次无一失败；
+     agent 上报的摘要与 controller 一致，临时 LoadBalancer 的新建与删除经 agent 在本机完成。
+   - [ ] 关闭 `:5555`：Prod 仍远程收敛，随迁移第 3 步在两个环境都切换后进行。
 
 ## 测试合同
 
