@@ -99,7 +99,7 @@ func TestAgentIdentity(t *testing.T) {
 	t.Run("writes the status of what is assigned to it", func(t *testing.T) {
 		create(t, k, &computev1alpha1.LibvirtNetwork{Name: identNet, Spec: computev1alpha1.LibvirtNetworkSpec{
 			XML: `<network><forward mode='bridge'/><bridge name='br-ident'/></network>`}})
-		mine := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "ident-mine", Spec: computev1alpha1.LibvirtDomainSpec{
+		mine := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: identMine, Spec: computev1alpha1.LibvirtDomainSpec{
 			NodeName: node, DomainXML: domainXML("")}}
 		create(t, k, mine)
 		eventually(t, time.Minute, func() error {
@@ -155,7 +155,7 @@ func TestAgentIdentity(t *testing.T) {
 		},
 		"another node as the running node of its own domain": func() error {
 			var d computev1alpha1.LibvirtDomain
-			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: "ident-mine"}, &d); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: identMine}, &d); err != nil {
 				return err
 			}
 			d.Status.NodeName = other
@@ -171,7 +171,7 @@ func TestAgentIdentity(t *testing.T) {
 		},
 		"a domain spec": func() error {
 			var d computev1alpha1.LibvirtDomain
-			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: "ident-mine"}, &d); err != nil {
+			if err := k.Get(ctx, client.ObjectKey{Namespace: corev1.NamespaceDefault, Name: identMine}, &d); err != nil {
 				return err
 			}
 			d.Spec.RunState = computev1alpha1.RunStateStopped
@@ -200,8 +200,9 @@ func TestAgentIdentity(t *testing.T) {
 }
 
 const (
-	identNet = "ident-net"
-	other    = "node-b"
+	identNet  = "ident-net"
+	identMine = "ident-mine"
+	other     = "node-b"
 )
 
 func lease(name string) *coordinationv1ac.LeaseApplyConfiguration {
