@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,6 +14,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
@@ -29,20 +31,17 @@ const (
 	reasonNoBGPSession = "NoBGPSession"
 )
 
-// startCredentials 在 config.NodeName 设置时准备访问 API 的配置。用证书身份时启动申请与续签：
-// 证书尚未签发时 restConfig 返回错误，宣告不受影响。返回的 stop 停止续签。
+// startCredentials 在 config.NodeName 设置时准备访问 API 的配置。用证书身份时，第一次调用
+// restConfig 才启动申请与续签：部署方 join（写入 bootstrap-kubeconfig）之前 LB 主机就要宣告，
+// 这期间 restConfig 返回错误，由调用方重试，宣告不受影响。返回的 stop 停止续签。
 func startCredentials(config Config, registry prometheus.Registerer) (restConfig func() (*rest.Config, error), stop func(), err error) {
-	stop = func() {}
 	if config.NodeName == "" {
-		return nil, stop, nil
+		return nil, func() {}, nil
 	}
 	if config.CredentialsDir == "" {
-		return func() (*rest.Config, error) { return clientcmd.BuildConfigFromFlags("", config.Kubeconfig) }, stop, nil
+		return func() (*rest.Config, error) { return clientcmd.BuildConfigFromFlags("", config.Kubeconfig) }, func() {}, nil
 	}
 	dir := config.CredentialsDir
-	if stop, err = clientcert.Start(context.Background(), node.Identity(dir, config.NodeName, Role)); err != nil {
-		return nil, nil, err
-	}
 	// 控制面的证书到期指标覆盖不到主机上的证书；agent 停机超过剩余有效期就要重新首次签发（ADR-0022）。
 	registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "ayatori_lb_agent_client_certificate_not_after_timestamp_seconds",
@@ -54,11 +53,31 @@ func startCredentials(config Config, registry prometheus.Registerer) (restConfig
 		}
 		return float64(notAfter.Unix())
 	}))
-	return func() (*rest.Config, error) { return clientcert.RESTConfig(dir) }, stop, nil
+	var mu sync.Mutex
+	var stopRenewal func()
+	restConfig = func() (*rest.Config, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopRenewal == nil {
+			if stopRenewal, err = clientcert.Start(context.Background(), node.Identity(dir, config.NodeName, Role)); err != nil {
+				stopRenewal = nil
+				return nil, fmt.Errorf("等待部署方 join：%w", err)
+			}
+		}
+		return clientcert.RESTConfig(dir)
+	}
+	stop = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopRenewal != nil {
+			stopRenewal()
+		}
+	}
+	return restConfig, stop, nil
 }
 
-// register 等到能构造 API 配置（证书已签发）后注册 Node 并续约 Lease，直到 ctx 结束。
-// 只写 Node 与 Lease，不读任何资源：控制面不可用时宣告照常。
+// register 等到能构造 API 配置（证书已签发）后注册 Node、续约 Lease，并注册与 Node 同名的
+// LoadBalancerHost、写它的 status，直到 ctx 结束。控制面不可用时宣告照常。
 func (a *Agent) register(ctx context.Context) {
 	var config *rest.Config
 	for {
@@ -78,14 +97,22 @@ func (a *Agent) register(ctx context.Context) {
 		a.logger.Error("build scheme", "error", err)
 		return
 	}
+	if err := networkv1alpha1.AddToScheme(scheme); err != nil {
+		a.logger.Error("build scheme", "error", err)
+		return
+	}
 	kube, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		a.logger.Error("build API client", "error", err)
 		return
 	}
+	logf := func(msg string, err error) { a.logger.Debug(msg, "error", err) }
+	go a.reportHost(ctx, kube, logf)
+	if a.config.DataPlane != nil {
+		go a.converge(ctx, config, scheme)
+	}
 	r := &node.Registrar{Client: kube, Node: a.config.NodeName, Role: Role}
-	r.Run(ctx, func() node.Status { return nodeStatus(a.Status()) },
-		func(msg string, err error) { a.logger.Debug(msg, "error", err) })
+	r.Run(ctx, func() node.Status { return nodeStatus(a.Status()) }, logf)
 }
 
 // nodeStatus 把本机事实转为 loadbalancer 角色的就绪：HAProxy 应答且至少一个 BGP 会话已建立，

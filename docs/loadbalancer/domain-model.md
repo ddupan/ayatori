@@ -163,7 +163,7 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | Reconciler | 职责 |
 | --- | --- |
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
-| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）与 agent `/status`（`AgentReady`、`status.vips`）；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
+| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）；agent 的 Lease `<主机>-loadbalancer` 超过 `--loadbalancer-agent-stale-after` 未续约时把 `AgentReady` 置为 `Unknown`（`AgentStale`）并清空 `status.vips`，按 Lease 到期时间排下一次检查；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
 | `BackendReconciler` | Backend status 的唯一写入方：从引用它的 LoadBalancer 汇总各 Host 的观察 |
 
@@ -214,7 +214,18 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
   condition `loadbalancer.ayatori.ddupan.top/Ready` 表示 HAProxy 应答且至少一个 BGP 会话已建立
   （reason `AgentReady`、`HAProxyDown`、`NoBGPSession`）。先按本机现状收敛一轮宣告再连接 API；
   证书尚未签发、控制面不可用时宣告照常。
-- 只读的 `GET /status`（ADR-0018，与 `/metrics` 同一监听）：HAProxy 是否应答、各邻居会话、最近
+- 同时以 SSA（field manager `loadbalancer-agent`）注册与 Node 同名、不带 spec 的 LoadBalancerHost，
+  并写它的 `AgentReady`（HAProxy 应答、至少一个会话、最近 5 轮内收敛过）与 `status.vips`；有变化或
+  距上次写入满 5 分钟时写。`deploy/flux/loadbalancer` 的 RBAC 与准入策略只允许它注册自己、写
+  自己的 status，不能改 spec、finalizer，也不能删除。
+- 配置了 `dataPlane` 时在本机收敛（ADR-0022）：watch 全部 LoadBalancer 与 Backend，以与 controller
+  相同的 `controller.Desired` 计算期望配置，经本机 Data Plane API 写入（每轮每个 LoadBalancer 至多
+  一次写入，删除中的对象删除配置）；再按 `haproxy.Hosts.Owners` 删除已不存在的 LoadBalancer 的配置。
+  informer 首次同步之后才判断「已不存在」，API 不可达期间缓存不变，不清理任何配置。结果写入
+  LoadBalancerHost 的 `status.loadBalancers[]`：`uid`、本机配置与之一致的期望摘要 `digest`
+  （`Snapshot.Digest`，与 controller 比较；Backend 变化不改 generation）、`present`、`reload`、
+  `message` 与各 server 的检查结论。
+- 只读的 `GET /status`（ADR-0018，与 `/metrics` 同一监听，ADR-0022 后只用于本机排障）：HAProxy 是否应答、各邻居会话、最近
   一次成功收敛时间，以及每个有 bind 的 VIP 是否已发给路由器与未发出的原因。原因按三层取第一个
   不满足的：`not-local`（内核不把它当本机地址）、`frontend-not-open`（某个 frontend 或 bind 不是
   OPEN）、`not-advertised`（应宣告，但不在任何已建立会话的 adj-rib-out 中）。前两层是宣告规则
@@ -235,6 +246,11 @@ metricsAddress: 10.60.0.30:9641
 # 以下加入控制面（ADR-0022）；不写 nodeName 时只在本机宣告。
 nodeName: lb-1
 credentialsDir: /etc/ayatori/lb-agent   # 部署方写入 bootstrap-kubeconfig；kubeconfig 二选一，用于开发
+dataPlane:                              # 在本机收敛（ADR-0022）；与 manager 远程收敛二选一
+  url: http://127.0.0.1:5555
+  username: ayatori-agent
+  passwordFile: /etc/ayatori/lb-agent/dataplane-password
+  connectTimeout: 5s                    # 与 --loadbalancer-connect-timeout 相同含义
 ```
 
 ## 状态
@@ -315,7 +331,8 @@ LB 主机部署（homelab-infra）须保证：
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
 | `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）、`tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS）与 `powerdns-api-key`（维护 Hostname 时使用） |
 | `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
-| `--loadbalancer-agent-stale-after`（默认 1m） | agent 最近一次成功收敛距今超过此值即 `AgentReady=False` |
+| `--loadbalancer-agent-convergence` | 代理配置由各主机的 agent 在本机收敛（ADR-0022）：manager 不连接主机，按 LoadBalancerHost 的 `status.loadBalancers[]` 判定 Attachment（摘要与期望一致才算写入完成）与 endpoint 健康；删除 LoadBalancer 等全部 agent 报告已清除，删除 LoadBalancerHost 等 agent 报告 `Purged`。凭据 Secret 只用于 PowerDNS API key。与远程收敛按环境整体切换 |
+| `--loadbalancer-agent-stale-after`（默认 1m） | agent 的 Lease 超过此值未续约即 `AgentReady=Unknown`（`AgentStale`） |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
 凭据 Secret 由部署 role 的 `deploy/flux/loadbalancer` 以 ExternalSecret 从 OpenBao 同步到 controller
@@ -389,3 +406,10 @@ LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<host
   资源 Backend，端口改为 `backendRef`（v1alpha1 内不兼容修改）。引用缺失时端口没有 server，
   LoadBalancer 报告 `ResolvedRefs=False`；controller watch Backend 并收敛同 namespace 中引用它的
   LoadBalancer。
+- ADR-0022 切片 2（`dev/lb-agent`）：LoadBalancerHost 改由 agent 注册并写 status；去掉 `agentURL`，
+  `dataPlaneURL` 改为可选（迁移期间 manager 仍远程收敛时使用）；controller 不再读取 agent `/status`，
+  改按 Lease 判定 `AgentStale`。
+- ADR-0022 切片 3a（`dev/lb-agent`）：agent 在本机收敛并写 `status.loadBalancers[]`；controller 尚未
+  读取它，仍远程收敛。
+- ADR-0022 切片 3b（`dev/lb-agent`）：manager 的 `--loadbalancer-agent-convergence` 开关，开启后只汇总
+  agent 报告；agent 在自己的 LoadBalancerHost 删除中时清除本机全部配置（`Hosts.Purge`）并报告 `Purged`。

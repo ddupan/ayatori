@@ -4,30 +4,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LoadBalancerHostSpec 指向一台 LB 主机上的 Data Plane API（ADR-0018）。凭据按环境统一，留在
-// controller 的凭据 Secret，资源里只有地址。
+// LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
 type LoadBalancerHostSpec struct {
 	// DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller 以 mTLS 与 Basic 凭据访问。
+	// ponytail: 迁移期间 manager 仍远程收敛时使用（ADR-0022「下线与迁移」）；agent 在本机收敛后删除。
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() == 'https'",message="dataPlaneURL must be an https URL"
-	DataPlaneURL string `json:"dataPlaneURL"`
-	// AgentURL 是该主机 LB agent 指标端口的地址，controller 读取其只读的 GET /status。
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() in ['http', 'https']",message="agentURL must be an http or https URL"
-	AgentURL string `json:"agentURL"`
+	// +optional
+	DataPlaneURL string `json:"dataPlaneURL,omitempty"`
 }
 
 type LoadBalancerHostStatus struct {
 	// ObservedGeneration 是本 status 观察的 spec 版本。
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// VIPs 是 agent 最近一次报告的每个 VIP 是否已发给路由器；agent 不应答时清空。只呈现观察，
-	// LoadBalancer 的 Attachment 以它为准。
+	// VIPs 是 agent 报告的每个 VIP 是否已发给路由器；agent 的 Lease 过期时由 controller 清空。
+	// 只呈现观察，LoadBalancer 的 Attachment 以它为准。
 	// +listType=map
 	// +listMapKey=address
 	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	VIPs []AgentVIPStatus `json:"vips,omitempty"`
+	// LoadBalancers 是 agent 在本机收敛各 LoadBalancer 的结果（ADR-0022）：每个 LoadBalancer 一项，
+	// controller 据此汇总 LoadBalancer 的 status。对象删除完成后移除该项。
+	// +listType=map
+	// +listMapKey=namespace
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=1024
+	// +optional
+	LoadBalancers []HostLoadBalancerStatus `json:"loadBalancers,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -44,8 +49,57 @@ type AgentVIPStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由部署方创建，
-// 删除时先清理该主机上全部 LoadBalancer 配置。
+// HostLoadBalancerStatus 是一个 LoadBalancer 在本机的代理配置事实。
+type HostLoadBalancerStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	Namespace string `json:"namespace"`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// UID 区分同名重建的对象：本机配置按 UID 命名。
+	// +kubebuilder:validation:MaxLength=36
+	UID string `json:"uid"`
+	// Digest 是本机配置文件与之完全一致的期望配置摘要；不一致时为空。controller 以同一算法计算
+	// 期望的摘要并比较，Backend 变化不改变 LoadBalancer 的 generation，所以不用 generation。
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Digest string `json:"digest,omitempty"`
+	// Present 表示本机存在属于该 LoadBalancer 的任何配置。
+	Present bool `json:"present"`
+	// Reload 是本机最近一次 reload 的结果：Succeeded、Pending 或 Failed。
+	// +kubebuilder:validation:Enum=Succeeded;Pending;Failed
+	Reload string `json:"reload"`
+	// Message 是 reload 失败或无法观察本机代理时的说明。
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Message string `json:"message,omitempty"`
+	// Servers 是运行中的进程里各 server 的健康检查结论（ADR-0023）。
+	// +listType=map
+	// +listMapKey=port
+	// +listMapKey=address
+	// +listMapKey=endpointPort
+	// +kubebuilder:validation:MaxItems=1024
+	// +optional
+	Servers []HostServerStatus `json:"servers,omitempty"`
+}
+
+type HostServerStatus struct {
+	// Port 是 LoadBalancer 的端口。
+	Port int32 `json:"port"`
+	// +kubebuilder:validation:MaxLength=253
+	Address      string `json:"address"`
+	EndpointPort int32  `json:"endpointPort"`
+	// +kubebuilder:validation:MaxLength=16
+	State string `json:"state"`
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	CheckStatus string `json:"checkStatus,omitempty"`
+	// +optional
+	CheckCode int32 `json:"checkCode,omitempty"`
+}
+
+// LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由该主机的 agent
+// 以与 Node 同名注册并写入 status（ADR-0022）；删除由管理员发起，先清理该主机上全部 LoadBalancer
+// 配置。退役时先停 agent，否则它会重新注册。
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=lbhost
@@ -57,7 +111,8 @@ type AgentVIPStatus struct {
 type LoadBalancerHost struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
-	Spec              LoadBalancerHostSpec `json:"spec"`
+	// +optional
+	Spec LoadBalancerHostSpec `json:"spec,omitzero"`
 	// +optional
 	Status LoadBalancerHostStatus `json:"status,omitzero"`
 }

@@ -1,0 +1,31 @@
+# LB agent 以证书用户 system:ayatori:node:<主机名> 访问 API，角色组 system:ayatori:role:loadbalancer
+# （ADR-0022）。Node 与 Lease 的权限在 deploy/flux/nodes；这里只授予 LB 角色自己的资源：读
+# LoadBalancer 与 Backend，注册与自己同名的 LoadBalancerHost 并写它的 status。不能 delete，也不能写
+# LoadBalancer 与 Backend；"只能是自己、不能动 spec 与 finalizer"由 agent-admission.yaml 约束。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori:loadbalancer-agent
+rules:
+- apiGroups: [network.ayatori.ddupan.top]
+  resources: [loadbalancers, backends]
+  verbs: [get, list, watch]
+- apiGroups: [network.ayatori.ddupan.top]
+  resources: [loadbalancerhosts]
+  verbs: [get, list, watch, create, patch]
+- apiGroups: [network.ayatori.ddupan.top]
+  resources: [loadbalancerhosts/status]
+  verbs: [patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori:loadbalancer-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ayatori:loadbalancer-agent
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:ayatori:role:loadbalancer

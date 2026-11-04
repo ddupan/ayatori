@@ -37,6 +37,11 @@ const (
 	// socket 以相对路径访问：t.TempDir 的绝对路径可能超过 unix socket 的长度上限。
 	socket   = "admin.sock"
 	loopback = "127.0.0.1"
+	routerID = "10.60.0.30"
+	vipPool  = "10.62.0.0/24"
+	// 集成测试中 LoadBalancer 与 Backend 所在的 namespace。
+	testNamespace   = "default"
+	reloadSucceeded = "Succeeded"
 )
 
 var (
@@ -237,7 +242,7 @@ func startAgent(t *testing.T, port int, vips agent.VIPs) (*agent.Agent, context.
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	a, err := agent.New(ctx, agent.Config{
-		ASN: 65100, RouterID: "10.60.0.30", VIPPool: "10.62.0.0/24", HAProxySocket: socket,
+		ASN: 65100, RouterID: routerID, VIPPool: vipPool, HAProxySocket: socket,
 		Neighbors: []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
 		Interval:  metav1.Duration{Duration: 200 * time.Millisecond},
 	}, vips, prometheus.NewRegistry(), slog.New(slog.DiscardHandler))

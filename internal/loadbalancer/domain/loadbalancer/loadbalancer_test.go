@@ -83,3 +83,32 @@ func TestResolvedRefs(t *testing.T) {
 		t.Fatalf("got %v %s %q", ok, reason, message)
 	}
 }
+
+func TestDigest(t *testing.T) {
+	base := Snapshot{Owner: self, Address: vip1, Ports: []Port{{Port: 5432, Endpoints: []Endpoint{{Address: "10.60.0.21", Port: 5432}}}}}
+	same := Snapshot{Owner: self, Address: vip1, Ports: []Port{{Port: 5432, Endpoints: []Endpoint{{Address: "10.60.0.21", Port: 5432}}}}}
+	if same.Digest() != base.Digest() || len(base.Digest()) != 64 {
+		t.Fatal("摘要应稳定且为 sha256")
+	}
+	changed := base
+	changed.Ports = []Port{{Port: 5432, Endpoints: []Endpoint{{Address: "10.60.0.22", Port: 5432}}}}
+	requested := base
+	requested.Requested = vip1
+	switch {
+	case changed.Digest() == base.Digest():
+		t.Fatal("endpoint 变化应改变摘要")
+	case requested.Digest() != base.Digest():
+		t.Fatal("Requested 不落地到主机，不应影响摘要")
+	}
+}
+
+func TestParseReload(t *testing.T) {
+	for _, r := range []Reload{ReloadSucceeded, ReloadPending, ReloadFailed} {
+		if ParseReload(r.String()) != r {
+			t.Errorf("ParseReload(%q) != %v", r.String(), r)
+		}
+	}
+	if ParseReload("") != ReloadFailed {
+		t.Error("未知的值应视为 Failed")
+	}
+}

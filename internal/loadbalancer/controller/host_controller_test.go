@@ -8,15 +8,20 @@ import (
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-func reconcileSecondHost(t *testing.T, r *LoadBalancerHostReconciler) {
+func reconcileSecondHost(t *testing.T, r *LoadBalancerHostReconciler, plane *dataPlane) {
 	t.Helper()
 	key := client.ObjectKey{Name: secondHost}
 	for range 3 {
+		host := &networkv1alpha1.LoadBalancerHost{}
+		if err := r.Client.Get(t.Context(), key, host); err == nil && host.DeletionTimestamp.IsZero() {
+			plane.report(t, r.Client, secondHost)
+		}
 		if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key}); err != nil {
 			t.Fatal(err)
 		}
@@ -37,7 +42,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 	c := environment(t)
 	plane := newDataPlane()
 	lbs := &LoadBalancerReconciler{Client: c, Pool: testPool, Proxy: plane}
-	hosts := &LoadBalancerHostReconciler{Client: c, Proxy: plane, Agent: plane, AgentStaleAfter: time.Minute}
+	hosts := &LoadBalancerHostReconciler{Client: c, Proxy: plane, AgentStaleAfter: time.Minute}
 	createHosts(t, c, "lb1")
 	lb := newLoadBalancer("pg", "")
 	create(t, c, lb)
@@ -52,7 +57,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 		if events := plane.take(); len(events) != 0 {
 			t.Fatalf("没有 finalizer 时删除不会清理，不得写入，got %v", events)
 		}
-		reconcileSecondHost(t, hosts)
+		reconcileSecondHost(t, hosts, plane)
 		reload(t, c, host)
 		reachable := meta.FindStatusCondition(host.Status.Conditions, dataPlaneReachableType)
 		if !controllerutil.ContainsFinalizer(host, LoadBalancerHostFinalizer) || reachable == nil || reachable.Status != "True" {
@@ -76,21 +81,45 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("agent 不应答时清空报告", func(t *testing.T) {
+	t.Run("Lease 过期时清空报告，agent 恢复后重新报告", func(t *testing.T) {
 		plane.unreachable[secondHost] = true
-		reconcileSecondHost(t, hosts)
+		hosts.Now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+		reconcileSecondHost(t, hosts, plane)
 		host := &networkv1alpha1.LoadBalancerHost{}
 		host.Name = secondHost
 		reload(t, c, host)
-		if agentReady := meta.FindStatusCondition(host.Status.Conditions, agentReadyType); agentReady.Reason != agentUnreachable || host.Status.VIPs != nil {
+		agentReady := meta.FindStatusCondition(host.Status.Conditions, agentReadyType)
+		if agentReady.Status != metav1.ConditionUnknown || agentReady.Reason != agentStale || host.Status.VIPs != nil {
 			t.Fatalf("got %+v", host.Status)
 		}
+		if reportOf(host).Reported {
+			t.Fatal("失联 agent 的报告不得用于 Attachment")
+		}
+		hosts.Now = nil
 		delete(plane.unreachable, secondHost)
+		reconcileSecondHost(t, hosts, plane)
+		reload(t, c, host)
+		if agentReady := meta.FindStatusCondition(host.Status.Conditions, agentReadyType); agentReady.Status != metav1.ConditionTrue || len(host.Status.VIPs) != 1 {
+			t.Fatalf("got %+v", host.Status)
+		}
+	})
+
+	t.Run("按 Lease 到期时间排下一次检查", func(t *testing.T) {
+		hosts.AgentStaleAfter = 10 * time.Second
+		defer func() { hosts.AgentStaleAfter = time.Minute }()
+		result, err := hosts.Reconcile(t.Context(), ctrl.Request{Name: secondHost})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 刚续约：下一次检查排在到期之后，而不是固定的 observeInterval。
+		if result.RequeueAfter <= 0 || result.RequeueAfter > 11*time.Second {
+			t.Fatalf("RequeueAfter = %v", result.RequeueAfter)
+		}
 	})
 
 	t.Run("不可达时报告并在删除时等待", func(t *testing.T) {
 		plane.unreachable[secondHost] = true
-		reconcileSecondHost(t, hosts)
+		reconcileSecondHost(t, hosts, plane)
 		host := &networkv1alpha1.LoadBalancerHost{}
 		host.Name = secondHost
 		reload(t, c, host)
@@ -100,7 +129,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 		if err := c.Delete(t.Context(), host); err != nil {
 			t.Fatal(err)
 		}
-		reconcileSecondHost(t, hosts)
+		reconcileSecondHost(t, hosts, plane)
 		reload(t, c, host)
 		if !controllerutil.ContainsFinalizer(host, LoadBalancerHostFinalizer) {
 			t.Fatal("不可达时不得放行删除")
@@ -113,7 +142,7 @@ func TestLoadBalancerHostLifecycle(t *testing.T) {
 
 	t.Run("可达后整机清理再放行", func(t *testing.T) {
 		delete(plane.unreachable, secondHost)
-		reconcileSecondHost(t, hosts)
+		reconcileSecondHost(t, hosts, plane)
 		if events := plane.take(); !slices.Equal(events, []string{"purge " + secondHost}) {
 			t.Fatalf("got %v", events)
 		}

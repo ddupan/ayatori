@@ -33,8 +33,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由部署方创建，
-          删除时先清理该主机上全部 LoadBalancer 配置。
+          LoadBalancerHost 是一台 LB 主机；每个 LoadBalancer 落地到全部 LoadBalancerHost。由该主机的 agent
+          以与 Node 同名注册并写入 status（ADR-0022）；删除由管理员发起，先清理该主机上全部 LoadBalancer
+          配置。退役时先停 agent，否则它会重新注册。
         properties:
           apiVersion:
             description: |-
@@ -54,29 +55,17 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              LoadBalancerHostSpec 指向一台 LB 主机上的 Data Plane API（ADR-0018）。凭据按环境统一，留在
-              controller 的凭据 Secret，资源里只有地址。
+            description: LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
             properties:
-              agentURL:
-                description: AgentURL 是该主机 LB agent 指标端口的地址，controller 读取其只读的 GET
-                  /status。
-                maxLength: 253
-                type: string
-                x-kubernetes-validations:
-                - message: agentURL must be an http or https URL
-                  rule: isURL(self) && url(self).getScheme() in ['http', 'https']
               dataPlaneURL:
-                description: DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller
-                  以 mTLS 与 Basic 凭据访问。
+                description: |-
+                  DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller 以 mTLS 与 Basic 凭据访问。
+                  ponytail: 迁移期间 manager 仍远程收敛时使用（ADR-0022「下线与迁移」）；agent 在本机收敛后删除。
                 maxLength: 253
                 type: string
                 x-kubernetes-validations:
                 - message: dataPlaneURL must be an https URL
                   rule: isURL(self) && url(self).getScheme() == 'https'
-            required:
-            - agentURL
-            - dataPlaneURL
             type: object
           status:
             properties:
@@ -139,14 +128,100 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              loadBalancers:
+                description: |-
+                  LoadBalancers 是 agent 在本机收敛各 LoadBalancer 的结果（ADR-0022）：每个 LoadBalancer 一项，
+                  controller 据此汇总 LoadBalancer 的 status。对象删除完成后移除该项。
+                items:
+                  description: HostLoadBalancerStatus 是一个 LoadBalancer 在本机的代理配置事实。
+                  properties:
+                    digest:
+                      description: |-
+                        Digest 是本机配置文件与之完全一致的期望配置摘要；不一致时为空。controller 以同一算法计算
+                        期望的摘要并比较，Backend 变化不改变 LoadBalancer 的 generation，所以不用 generation。
+                      maxLength: 64
+                      type: string
+                    message:
+                      description: Message 是 reload 失败或无法观察本机代理时的说明。
+                      maxLength: 1024
+                      type: string
+                    name:
+                      maxLength: 63
+                      type: string
+                    namespace:
+                      maxLength: 63
+                      type: string
+                    present:
+                      description: Present 表示本机存在属于该 LoadBalancer 的任何配置。
+                      type: boolean
+                    reload:
+                      description: Reload 是本机最近一次 reload 的结果：Succeeded、Pending 或 Failed。
+                      enum:
+                      - Succeeded
+                      - Pending
+                      - Failed
+                      type: string
+                    servers:
+                      description: Servers 是运行中的进程里各 server 的健康检查结论（ADR-0023）。
+                      items:
+                        properties:
+                          address:
+                            maxLength: 253
+                            type: string
+                          checkCode:
+                            format: int32
+                            type: integer
+                          checkStatus:
+                            maxLength: 16
+                            type: string
+                          endpointPort:
+                            format: int32
+                            type: integer
+                          port:
+                            description: Port 是 LoadBalancer 的端口。
+                            format: int32
+                            type: integer
+                          state:
+                            maxLength: 16
+                            type: string
+                        required:
+                        - address
+                        - endpointPort
+                        - port
+                        - state
+                        type: object
+                      maxItems: 1024
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - port
+                      - address
+                      - endpointPort
+                      x-kubernetes-list-type: map
+                    uid:
+                      description: UID 区分同名重建的对象：本机配置按 UID 命名。
+                      maxLength: 36
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  - present
+                  - reload
+                  - uid
+                  type: object
+                maxItems: 1024
+                type: array
+                x-kubernetes-list-map-keys:
+                - namespace
+                - name
+                x-kubernetes-list-type: map
               observedGeneration:
                 description: ObservedGeneration 是本 status 观察的 spec 版本。
                 format: int64
                 type: integer
               vips:
                 description: |-
-                  VIPs 是 agent 最近一次报告的每个 VIP 是否已发给路由器；agent 不应答时清空。只呈现观察，
-                  LoadBalancer 的 Attachment 以它为准。
+                  VIPs 是 agent 报告的每个 VIP 是否已发给路由器；agent 的 Lease 过期时由 controller 清空。
+                  只呈现观察，LoadBalancer 的 Attachment 以它为准。
                 items:
                   properties:
                     address:
@@ -168,8 +243,6 @@ spec:
                 - address
                 x-kubernetes-list-type: map
             type: object
-        required:
-        - spec
         type: object
         x-kubernetes-validations:
         - message: name must be a DNS label because it appears in LoadBalancer status

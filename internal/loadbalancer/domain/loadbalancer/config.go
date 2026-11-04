@@ -1,6 +1,12 @@
 package loadbalancer
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/netip"
+	"time"
+)
 
 // Port 是期望配置中的一个 VIP 端口：controller 与代理 adapter 之间的契约。
 // 字段合法性由 CRD 保证；翻译为具体代理配置由 adapter 负责。
@@ -64,3 +70,35 @@ const (
 	ReloadPending
 	ReloadFailed
 )
+
+var reloadNames = [...]string{ReloadSucceeded: "Succeeded", ReloadPending: "Pending", ReloadFailed: "Failed"}
+
+// String 是 LoadBalancerHost status.loadBalancers[].reload 中的写法（ADR-0022）。
+func (r Reload) String() string { return reloadNames[r] }
+
+// ParseReload 是 String 的逆；未知的值视为 Failed，宁可报告不可用也不报告已生效。
+func ParseReload(s string) Reload {
+	for r, name := range reloadNames {
+		if name == s {
+			return Reload(r)
+		}
+	}
+	return ReloadFailed
+}
+
+// Digest 是落地到主机的期望配置（UID、VIP 与端口）的摘要。agent 报告本机配置与哪份期望一致，
+// controller 以同一函数计算后比较（ADR-0022）；Backend 变化不改变 LoadBalancer 的 generation，
+// 所以不能用 generation。
+func (s Snapshot) Digest() string {
+	data, err := json.Marshal(struct {
+		UID     string
+		Address netip.Addr
+		Ports   []Port
+	}{s.Owner.UID, s.Address, s.Ports})
+	if err != nil {
+		// 只含基本类型，不会失败。
+		panic(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
