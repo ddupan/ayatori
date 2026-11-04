@@ -98,6 +98,9 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 	if err := (&lbcontroller.AddressReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		return fmt.Errorf("set up LoadBalancer address controller: %w", err)
 	}
+	if err := (&lbcontroller.BackendReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		return fmt.Errorf("set up Backend controller: %w", err)
+	}
 	return nil
 }
 

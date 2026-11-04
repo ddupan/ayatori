@@ -49,6 +49,9 @@ type Attachment struct {
 // 只影响它自己的 Attachment。宣告与撤回由 agent 在本机判断；是否就绪只取 agent 的报告，
 // controller 不自行推算（ADR-0018）。
 func (lb *LoadBalancer) PlanHost(host string, facts ProxyFacts, agent AgentReport, observeErr error, deleting bool) HostAction {
+	if observeErr == nil && !deleting {
+		lb.observeHealth(host, facts.Servers)
+	}
 	switch {
 	case observeErr != nil:
 		lb.attach(host, AttachmentUnavailable, "无法观察主机："+observeErr.Error())

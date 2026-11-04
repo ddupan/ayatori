@@ -78,6 +78,16 @@ rules:
 - apiGroups:
   - network.ayatori.ddupan.top
   resources:
+  - backends/status
+  - loadbalancerhosts/status
+  - loadbalancers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - network.ayatori.ddupan.top
+  resources:
   - loadbalancerhosts
   - loadbalancers
   verbs:
@@ -92,15 +102,6 @@ rules:
   - loadbalancerhosts/finalizers
   - loadbalancers/finalizers
   verbs:
-  - update
-- apiGroups:
-  - network.ayatori.ddupan.top
-  resources:
-  - loadbalancerhosts/status
-  - loadbalancers/status
-  verbs:
-  - get
-  - patch
   - update
 - apiGroups:
   - networking.k8s.io

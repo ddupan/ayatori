@@ -61,6 +61,23 @@ type LoadBalancerStatus struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	Hosts []HostStatus `json:"hosts,omitempty"`
+	// Ports 是各端口的可用成员数（ADR-0023）。
+	// +listType=map
+	// +listMapKey=port
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Ports []PortStatus `json:"ports,omitempty"`
+	// Endpoints 是各端口的各成员在各主机上的健康检查结论，每个（端口、成员、主机）一项（ADR-0023）。
+	// 平铺而非嵌套：kube-state-metrics 的 custom resource state 只展开一层列表，嵌套的明细导不出指标。
+	// 观察不到的主机不列出。
+	// +listType=map
+	// +listMapKey=port
+	// +listMapKey=address
+	// +listMapKey=endpointPort
+	// +listMapKey=host
+	// +kubebuilder:validation:MaxItems=4096
+	// +optional
+	Endpoints []EndpointStatus `json:"endpoints,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -77,6 +94,46 @@ type HostStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+type PortStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Name string `json:"name,omitempty"`
+	Port int32  `json:"port"`
+	// ReadyEndpoints 是至少在一台主机上 UP 的成员数。
+	ReadyEndpoints int32 `json:"readyEndpoints"`
+	// Endpoints 是引用的 Backend 中的成员数。
+	Endpoints int32 `json:"endpoints"`
+}
+
+// EndpointStatus 是一个端口的一个成员在一台主机上的检查结论，对应 HAProxy exporter 的
+// server_status、server_check_status 与 server_check_code。
+type EndpointStatus struct {
+	// Port 是 LoadBalancer 的端口。
+	Port int32 `json:"port"`
+	// +kubebuilder:validation:MaxLength=253
+	Address             string `json:"address"`
+	EndpointPort        int32  `json:"endpointPort"`
+	EndpointObservation `json:",inline"`
+}
+
+// EndpointObservation 是一台主机上最近一次观察到的检查结论。
+type EndpointObservation struct {
+	// +kubebuilder:validation:MaxLength=63
+	Host string `json:"host"`
+	// State 是 UP、DOWN、MAINT、DRAIN、NOLB 或 NOCHECK；翻转途中的「UP 1/3」记为 UP。
+	// +kubebuilder:validation:MaxLength=16
+	State string `json:"state"`
+	// CheckStatus 是最近一次检查的结论，如 L4OK、L4CON、L4TOUT、L7OK、L7STS。
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	CheckStatus string `json:"checkStatus,omitempty"`
+	// CheckCode 是 HTTP 检查的返回码；L4 检查没有。
+	// +optional
+	CheckCode int32 `json:"checkCode,omitempty"`
+	// LastTransitionTime 是 State 最近一次变化的时间。
+	LastTransitionTime metav1.Time `json:"lastTransitionTime"`
+}
+
 // LoadBalancer 是 namespace 内消费方声明的 L4 入口。
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -86,6 +143,7 @@ type HostStatus struct {
 // +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address`
 // +kubebuilder:printcolumn:name="Hostname",type=string,JSONPath=`.status.hostname`
 // +kubebuilder:printcolumn:name="Programmed",type=string,JSONPath=`.status.conditions[?(@.type=='Programmed')].status`
+// +kubebuilder:printcolumn:name="EndpointsReady",type=string,JSONPath=`.status.conditions[?(@.type=='EndpointsReady')].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type LoadBalancer struct {
 	metav1.TypeMeta   `json:",inline"`

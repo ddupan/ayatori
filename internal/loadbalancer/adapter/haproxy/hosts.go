@@ -82,6 +82,11 @@ func (h *Hosts) Observe(ctx context.Context, host loadbalancer.Host, lb *loadbal
 			facts.Matches, facts.Reload = true, loadbalancer.ReloadPending
 		}
 	}
+	if facts.Present {
+		if facts.Servers, err = serverHealth(ctx, api, uid); err != nil {
+			return loadbalancer.ProxyFacts{}, err
+		}
+	}
 	return facts, nil
 }
 

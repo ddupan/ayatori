@@ -53,6 +53,8 @@ type ProxyFacts struct {
 	Reload Reload
 	// Message 是 reload 失败时代理返回的说明。
 	Message string
+	// Servers 是运行中的进程里该 LoadBalancer 各 server 的健康检查结论。
+	Servers []ServerHealth
 }
 
 type Reload uint8

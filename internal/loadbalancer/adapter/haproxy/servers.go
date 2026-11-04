@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"net/netip"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy/dataplaneapi"
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // drains 记录 server 开始排空的时刻。HAProxy 的 lastchg 只随健康状态变化，不能表示排空时长。
@@ -183,6 +186,43 @@ func adminStates(ctx context.Context, api *dataplaneapi.ClientWithResponses, bac
 		states[value(server.Name)] = value(server.AdminState)
 	}
 	return states, nil
+}
+
+// serverHealth 读取运行中的进程里该 LoadBalancer 全部 server 的健康检查结论（ADR-0023）。
+// 进程尚未加载的 backend 不在 stats 中，结果为空。
+func serverHealth(ctx context.Context, api *dataplaneapi.ClientWithResponses, uid string) ([]loadbalancer.ServerHealth, error) {
+	response, err := api.GetStatsWithResponse(ctx, &dataplaneapi.GetStatsParams{Type: new(dataplaneapi.GetStatsParamsTypeServer)})
+	if err := check(response, err); err != nil {
+		return nil, err
+	}
+	var servers []loadbalancer.ServerHealth
+	for _, stat := range value(value(response.JSON200).Stats) {
+		// backend 名是 lb_<uid>_<端口>_backend，server 名是 <地址>:<端口>（translate）。
+		rest, ok := strings.CutPrefix(value(stat.BackendName), sectionPrefix(uid))
+		if !ok || stat.Stats == nil {
+			continue
+		}
+		portText, _ := strings.CutSuffix(rest, "_backend")
+		port, err := strconv.Atoi(portText)
+		name := value(stat.Name)
+		i := strings.LastIndex(name, ":")
+		if err != nil || i < 0 {
+			continue
+		}
+		endpointPort, err := strconv.Atoi(name[i+1:])
+		if err != nil {
+			continue
+		}
+		servers = append(servers, loadbalancer.ServerHealth{
+			Port:     int32(port),
+			Endpoint: loadbalancer.Endpoint{Address: name[:i], Port: int32(endpointPort)},
+			State:    loadbalancer.NormalizeState(string(value(stat.Stats.Status))),
+			// 检查进行中时 HAProxy 在结论前加「* 」。
+			CheckStatus: strings.TrimPrefix(string(value(stat.Stats.CheckStatus)), "* "),
+			CheckCode:   int32(value(stat.Stats.CheckCode)),
+		})
+	}
+	return servers, nil
 }
 
 func currentSessions(ctx context.Context, api *dataplaneapi.ClientWithResponses, backend, name string) (int, error) {

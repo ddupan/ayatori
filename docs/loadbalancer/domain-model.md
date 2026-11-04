@@ -165,6 +165,7 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
 | `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）与 agent `/status`（`AgentReady`、`status.vips`）；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
+| `BackendReconciler` | Backend status 的唯一写入方：从引用它的 LoadBalancer 汇总各 Host 的观察 |
 
 Address 复用内置 `networking.k8s.io/v1 IPAddress`（envtest 1.37 验证：Service CIDR 外的地址
 可以创建，名称强制规范化，重复创建返回 AlreadyExists，非 `ipallocator.k8s.io` managed-by 标签的
@@ -237,14 +238,22 @@ LoadBalancer status：
   但 agent 报告未宣告，说明中带原因）、`Ready`（agent 报告已把 VIP 发给路由器）、`Removed`（删除时配置已清除）、
   `Unavailable`（无法观察、reload 失败或 agent 不应答）。agent 的报告是观察：agent 不应答而实际仍在
   宣告时这里是 `Unavailable`，路由以路由器为准。
-- 各 endpoint 的健康观察（ADR-0018 中的 Backend `status.endpoints`）尚未实现；只做呈现，不参与
+- `ports[]`：每个端口的可用成员数 `readyEndpoints`（至少在一台 Host 上 UP）与成员数 `endpoints`。
+- `endpoints[]`：每个（端口、成员、Host）一项，Host 上 HAProxy 的检查结论：`state`（UP、DOWN、MAINT、
+  DRAIN、NOLB、NOCHECK）、`checkStatus`、`checkCode` 与 state 最近一次变化的 `lastTransitionTime`
+  （ADR-0023）。平铺是为了让 kube-state-metrics 能导出；本轮观察不到的 Host 不列出。只做呈现，不参与
   状态迁移——健康摘除由 HAProxy 在数据面完成。
+
+Backend status 由 `BackendReconciler` 从引用它的 LoadBalancer 汇总：`observations[]` 每个（成员、
+LoadBalancer 端口、Host）一项，`Ready` 表示至少一个成员在某台 Host 上 UP。
 
 conditions 参照 Octavia 将控制面下发（provisioning_status）与数据面健康（operating_status）
 分开，命名沿用 Gateway API：
 
 - `Programmed`：Address 已确认，且至少一台 Host 为 `Ready`。
 - `Degraded`：存在不是 `Ready` 的 Host。
+- `EndpointsReady`：每个端口都至少有一个成员在某台 Host 上 UP；为 False 时说明中列出没有可用成员的
+  端口。与 `Degraded` 分开：后端全挂由消费方处理，Host 未收敛由 LB 运维处理。
 - `ResolvedRefs`：各端口引用的 Backend 都存在；为 False 时说明中列出缺失的名称，对应端口拒绝
   连接，`Programmed` 不受影响。删除 Backend 不被阻止。
 - 后端健康（原设想的 `Available`）尚未实现，由 [ADR-0023](../decisions/0023-lb-endpoint-health-in-status.md)

@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -154,9 +157,131 @@ spec:
                 - V2
                 type: string
             type: object
+          status:
+            description: BackendStatus 汇总引用它的各 LoadBalancer 在各主机上的观察（ADR-0023），只呈现观察。
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observations:
+                description: |-
+                  Observations 是每个成员在每个引用它的 LoadBalancer 端口、每台主机上的一次检查结论。平铺的
+                  原因同 LoadBalancer 的 status.endpoints。
+                items:
+                  properties:
+                    address:
+                      maxLength: 253
+                      type: string
+                    checkCode:
+                      description: CheckCode 是 HTTP 检查的返回码；L4 检查没有。
+                      format: int32
+                      type: integer
+                    checkStatus:
+                      description: CheckStatus 是最近一次检查的结论，如 L4OK、L4CON、L4TOUT、L7OK、L7STS。
+                      maxLength: 16
+                      type: string
+                    host:
+                      maxLength: 63
+                      type: string
+                    lastTransitionTime:
+                      description: LastTransitionTime 是 State 最近一次变化的时间。
+                      format: date-time
+                      type: string
+                    loadBalancer:
+                      description: LoadBalancer 是同 namespace 中引用本 Backend 的 LoadBalancer
+                        名称。
+                      maxLength: 63
+                      type: string
+                    loadBalancerPort:
+                      format: int32
+                      type: integer
+                    port:
+                      format: int32
+                      type: integer
+                    state:
+                      description: State 是 UP、DOWN、MAINT、DRAIN、NOLB 或 NOCHECK；翻转途中的「UP
+                        1/3」记为 UP。
+                      maxLength: 16
+                      type: string
+                  required:
+                  - address
+                  - host
+                  - lastTransitionTime
+                  - loadBalancer
+                  - loadBalancerPort
+                  - port
+                  - state
+                  type: object
+                maxItems: 4096
+                type: array
+                x-kubernetes-list-map-keys:
+                - address
+                - port
+                - loadBalancer
+                - loadBalancerPort
+                - host
+                x-kubernetes-list-type: map
+            type: object
         required:
         - spec
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}

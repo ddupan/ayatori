@@ -35,55 +35,61 @@ homelab 现在靠 VyOS 上 HAProxy 的 Prometheus 指标回答这三个问题（
 状态类只在健康翻转时变化，写进 status 的代价可以忽略，`kubectl get` 也能直接看到。计数类每秒
 都在变，写进 status 等于持续写 API，KSM 拿到的也只是收敛周期上的快照。
 
-### 状态：Backend 与 LoadBalancer 的 status
+### 状态：LoadBalancer 与 Backend 的 status
 
-**Backend.status.endpoints[]**：每个 endpoint 一项，`observations[]` 是每台主机、每个引用它的端口
-上的一次检查结论。
+明细都是**平铺**的一层列表：kube-state-metrics 的 custom resource state 只展开一层列表（v2.20 实测，
+`endpoints[*].hosts[*]` 这样的嵌套导不出任何指标），而这份 status 的主要消费方就是指标。
 
-```yaml
-status:
-  observedGeneration: 3
-  endpoints:
-    - address: 10.60.0.11
-      port: 5432
-      observations:
-        - host: lb-prod-1
-          loadBalancer: sandbox/postgresql
-          port: 5432
-          state: UP                 # UP、DOWN、MAINT、DRAIN、NOLB 等，同 server_status
-          checkStatus: L7OK         # 同 server_check_status：L4OK、L4TOUT、L4CON、L7OK、L7STS 等
-          checkCode: 200            # 同 server_check_code；L4 检查没有
-          lastTransitionTime: "2026-11-03T16:41:00Z"   # state 最近一次变化
-        - host: lb-prod-2
-          ...
-  conditions:
-    - type: Ready                   # 至少一个 endpoint 在某台主机上 UP
-      status: "True"
-```
-
-- 一个 Backend 被多个端口引用时，每个端口在每台主机上各有一份 HAProxy backend section、各自检查
-  （ADR-0018），所以按（主机、LoadBalancer、端口）各记一条。列表大小是
-  endpoint × 引用数 × 主机数，以现有上限（64 个 endpoint、16 台主机）为界。
-- 主机不可达（ADR-0022 后为 `AgentReady` 不是 True）时，删去该主机的观察。看不到的主机不能替
-  任何 endpoint 作证。
-- `lastTransitionTime` 只在观察到 `state` 变化时更新。HAProxy 报的是「距上次变化的秒数」，每次读取
-  换算出的时间都会有秒级抖动，直接写入会让每一轮都产生新版本。
-
-**LoadBalancer.status.ports[]**：每个端口给出它引用的 Backend 此刻的可用情况，供 `kubectl get` 一眼
-看出端口是否可用；明细在 Backend 上。
+**LoadBalancer.status**：由 LoadBalancer controller 在收敛时写入，它是唯一写入方。
 
 ```yaml
 status:
   ports:
     - name: postgresql
       port: 5432
-      readyEndpoints: 1   # 至少一台主机上 UP 的 endpoint 数，同 backend_active_servers 的跨主机合并
+      readyEndpoints: 1     # 至少一台主机上 UP 的成员数，同 backend_active_servers 的跨主机合并
       endpoints: 2
+  endpoints:                # 每个（端口、成员、主机）一项
+    - port: 5432
+      address: 10.60.0.11
+      endpointPort: 5432
+      host: lb-prod-1
+      state: UP             # UP、DOWN、MAINT、DRAIN、NOLB、NOCHECK，同 server_status；「UP 1/3」记为 UP
+      checkStatus: L7OK     # 同 server_check_status：L4OK、L4TOUT、L4CON、L7OK、L7STS 等
+      checkCode: 200        # 同 server_check_code；L4 检查没有
+      lastTransitionTime: "2026-11-03T16:41:00Z"   # state 最近一次变化
 ```
 
-**新条件 `EndpointsReady`**（LoadBalancer）：所有端口都至少有一个 ready endpoint 时为 True；
-否则 False，reason `NoReadyEndpoints`，message 列出没有可用成员的端口。`Degraded` 的含义不变
-（主机层面）。「主机没收敛」与「后端全挂」的处理人不同，两者分开。
+**Backend.status**：由 `BackendReconciler` 从引用它的 LoadBalancer 的 `status.endpoints` 汇总，它是
+唯一写入方；明细因此在两处各有一份，换来每个对象只有一个写入方。
+
+```yaml
+status:
+  observations:             # 每个（成员、引用它的 LoadBalancer 端口、主机）一项
+    - address: 10.60.0.11
+      port: 5432
+      loadBalancer: postgresql
+      loadBalancerPort: 5432
+      host: lb-prod-1
+      state: UP
+      checkStatus: L7OK
+      checkCode: 200
+      lastTransitionTime: "2026-11-03T16:41:00Z"
+  conditions:
+    - type: Ready           # 至少一个成员在某台主机上 UP；没有端口引用时为 False（Unreferenced）
+      status: "True"
+```
+
+- 一个 Backend 被多个端口引用时，每个端口在每台主机上各有一份 HAProxy backend section、各自检查
+  （ADR-0018），所以按（成员、LoadBalancer、端口、主机）各记一条。
+- 主机不可达（ADR-0022 后为 `AgentReady` 不是 True）时，删去该主机的观察。看不到的主机不能替
+  任何成员作证。
+- `lastTransitionTime` 只在观察到 `state` 变化时更新。HAProxy 报的是「距上次变化的秒数」，每次读取
+  换算出的时间都会有秒级抖动，直接写入会让每一轮都产生新版本。
+
+**新条件 `EndpointsReady`**（LoadBalancer）：所有端口都至少有一个 ready 成员时为 True；否则 False，
+reason `NoReadyEndpoints`，message 列出没有可用成员的端口。`Degraded` 的含义不变（主机层面）。
+「主机没收敛」与「后端全挂」的处理人不同，两者分开。
 
 ### 计数：agent 的 `/metrics`
 
@@ -111,8 +117,10 @@ agent 从本机 stats socket 读取计数，以 exporter 的指标名加 `ayator
 
 ### 告警
 
-Ayatori 的部署配置随本 ADR 提供 KSM custom resource state 定义，把 `observations[]` 导出为
-`ayatori_backend_endpoint_status{namespace,name,endpoint,host,load_balancer,port,state}` 等指标。
+部署配置（cookbook `homelab_ayatori`）随本 ADR 提供 KSM custom resource state 定义，把
+`status.endpoints[]` 导出为 `ayatori_loadbalancer_endpoint_status{namespace,name,port,endpoint,endpoint_port,host,state,check_status}`、
+`ayatori_loadbalancer_endpoint_check_code` 等指标，`status.ports[]` 导出为
+`ayatori_loadbalancer_port_ready_endpoints`。
 「端口没有可用成员」「只能有一个的后端同时有两个 UP」之类的告警由部署方基于它们编写。
 
 ## 已接受的代价
@@ -129,12 +137,15 @@ Ayatori 的部署配置随本 ADR 提供 KSM custom resource state 定义，把 
 - **计数类也写进 status**：每秒都在变，等于持续写 API；KSM 也只能拿到收敛周期上的快照。
 - **Backend 只放汇总（每个 endpoint 一个 ready）**：看不出主机之间是否一致，也看不出检查失败在
   哪一层（连不上、超时、返回码不对），监控需要这些区分。
+- **按成员、主机嵌套的列表**：读起来更直观，但 KSM 只展开一层列表，嵌套的明细导不出指标。
+- **各 LoadBalancer 以 SSA 各写 Backend status 中属于自己的条目**：不重复存储，但每个 Backend 有多个
+  写入方，LoadBalancer 删除或不再引用时必须主动清掉自己的条目，漏掉就会留下残留。
 - **endpoint 不健康时把 LoadBalancer 标为 Degraded**：混淆了两类责任。主机层面的问题归 LB 运维，
   后端全挂归消费方。
 
 ## 测试合同
 
-- 领域单测：多主机、多端口的 server 状态汇总为 `observations[]`、`ports[]` 与 `EndpointsReady`；
+- 领域单测：多主机、多端口的 server 状态汇总为 `endpoints[]`、`ports[]` 与 `EndpointsReady`；
   主机不可达时删去其观察；`lastTransitionTime` 只在 state 变化时更新；端口引用的 Backend 不存在时
   `readyEndpoints` 为 0。
 - envtest：健康状态变化后 Backend 与 LoadBalancer 的 status 随之更新；内容不变时不产生新版本。
