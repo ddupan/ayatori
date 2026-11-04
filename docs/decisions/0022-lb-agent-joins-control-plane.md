@@ -247,10 +247,10 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
 3. agent 集成测试（envtest + 本机 HAProxy）：
    - [x] 新建、修改、删除 LoadBalancer 与 Backend 后，本机收敛并正确上报；删除 LoadBalancerHost 时清除
      本机全部配置并报告 `Purged`。——`agent.TestAgentConverges`。
-   - [ ] API 不可达期间不删除任何配置，恢复后按 list 结果清理。前半已验证（停掉 apiserver 后数轮收敛，
-     配置仍在）；「恢复后清理」只由启动时清理已不存在对象的配置间接覆盖，尚缺 API 恢复后的用例。
-   - [ ] agent 重启后，先按已有配置恢复宣告，再继续收敛。前半由 `TestAgentAnnouncesFromHAProxy` 覆盖；
-     重启后继续收敛尚无专门用例。
+   - [x] API 不可达期间不删除任何配置，恢复后按 list 结果清理。——`TestAgentConverges`：agent 经可切断的
+     代理访问 API，切断期间删除对象后数轮收敛配置仍在，恢复后被清理。
+   - [x] agent 重启后，先按已有配置恢复宣告，再继续收敛。前半由 `TestAgentAnnouncesFromHAProxy` 覆盖；
+     后半由 `TestAgentConverges`：停机期间删除与新建的 LoadBalancer，重启后分别清理与下发。
 4. [x] 中央 controller：按各主机上报汇总 LoadBalancer status；删除 LoadBalancer 与 LoadBalancerHost 时，
    finalizer 等到所有 agent 报告完成才放行；Lease 过期时 `AgentReady` 为 `Unknown`。
    ——`controller.TestAgentConvergence`、`TestLoadBalancerHostLifecycle`。
