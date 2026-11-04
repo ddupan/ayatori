@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,20 +31,17 @@ const (
 	reasonNoBGPSession = "NoBGPSession"
 )
 
-// startCredentials 在 config.NodeName 设置时准备访问 API 的配置。用证书身份时启动申请与续签：
-// 证书尚未签发时 restConfig 返回错误，宣告不受影响。返回的 stop 停止续签。
+// startCredentials 在 config.NodeName 设置时准备访问 API 的配置。用证书身份时，第一次调用
+// restConfig 才启动申请与续签：部署方 join（写入 bootstrap-kubeconfig）之前 LB 主机就要宣告，
+// 这期间 restConfig 返回错误，由调用方重试，宣告不受影响。返回的 stop 停止续签。
 func startCredentials(config Config, registry prometheus.Registerer) (restConfig func() (*rest.Config, error), stop func(), err error) {
-	stop = func() {}
 	if config.NodeName == "" {
-		return nil, stop, nil
+		return nil, func() {}, nil
 	}
 	if config.CredentialsDir == "" {
-		return func() (*rest.Config, error) { return clientcmd.BuildConfigFromFlags("", config.Kubeconfig) }, stop, nil
+		return func() (*rest.Config, error) { return clientcmd.BuildConfigFromFlags("", config.Kubeconfig) }, func() {}, nil
 	}
 	dir := config.CredentialsDir
-	if stop, err = clientcert.Start(context.Background(), node.Identity(dir, config.NodeName, Role)); err != nil {
-		return nil, nil, err
-	}
 	// 控制面的证书到期指标覆盖不到主机上的证书；agent 停机超过剩余有效期就要重新首次签发（ADR-0022）。
 	registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "ayatori_lb_agent_client_certificate_not_after_timestamp_seconds",
@@ -55,7 +53,27 @@ func startCredentials(config Config, registry prometheus.Registerer) (restConfig
 		}
 		return float64(notAfter.Unix())
 	}))
-	return func() (*rest.Config, error) { return clientcert.RESTConfig(dir) }, stop, nil
+	var mu sync.Mutex
+	var stopRenewal func()
+	restConfig = func() (*rest.Config, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopRenewal == nil {
+			if stopRenewal, err = clientcert.Start(context.Background(), node.Identity(dir, config.NodeName, Role)); err != nil {
+				stopRenewal = nil
+				return nil, fmt.Errorf("等待部署方 join：%w", err)
+			}
+		}
+		return clientcert.RESTConfig(dir)
+	}
+	stop = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopRenewal != nil {
+			stopRenewal()
+		}
+	}
+	return restConfig, stop, nil
 }
 
 // register 等到能构造 API 配置（证书已签发）后注册 Node、续约 Lease，并注册与 Node 同名的

@@ -69,12 +69,11 @@ func TestAgentJoins(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	testenv.BootstrapToken(t, admin, cfg, dir, "lbjoin")
 	port := freePort(t)
 	startRouter(t, port)
 	registry := prometheus.NewRegistry()
 	ctx, cancel := context.WithCancel(t.Context())
-	// HAProxy 尚未启动：agent 照常运行，角色报告未就绪。
+	// 部署方尚未 join、HAProxy 也未启动：agent 照常启动并宣告，加入控制面留到 join 之后。
 	a, err := agent.New(ctx, agent.Config{
 		ASN: 65100, RouterID: routerID, VIPPool: vipPool, HAProxySocket: socket,
 		Neighbors: []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
@@ -87,6 +86,9 @@ func TestAgentJoins(t *testing.T) {
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
+	// join 晚于 agent 启动：agent 在后台重试，写入 bootstrap-kubeconfig 后才申请证书。
+	time.Sleep(2 * time.Second)
+	testenv.BootstrapToken(t, admin, cfg, dir, "lbjoin")
 
 	approve, stop := context.WithTimeout(t.Context(), time.Minute)
 	defer stop()
