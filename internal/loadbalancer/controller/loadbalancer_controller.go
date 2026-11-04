@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"slices"
 	"strings"
@@ -60,13 +61,17 @@ type DNSBackend interface {
 
 // LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置，并写 LoadBalancer status。
 // 路由由各主机的 LB agent 自行宣告（ADR-0017）；主机是 LoadBalancerHost 资源，Attachment 是否就绪
-// 以其 status 中 agent 的报告为准（ADR-0018）。Proxy 为空时只分配 VIP；DNS 为空时不维护 Hostname。
+// 以其 status 中 agent 的报告为准（ADR-0018）。AgentConvergence 时代理配置由各主机的 agent 在本机
+// 收敛，这里只汇总它们的报告（ADR-0022）；否则经 Proxy 远程收敛，Proxy 为空时只分配 VIP。
+// DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
-	Client  client.Client
-	Pool    address.Pool
-	Proxy   ProxyBackend
-	DNS     DNSBackend
-	DNSZone string
+	Client client.Client
+	Pool   address.Pool
+	Proxy  ProxyBackend
+	// AgentConvergence 与 Proxy 二选一，按环境整体切换：同一台主机不能有两个写入方。
+	AgentConvergence bool
+	DNS              DNSBackend
+	DNSZone          string
 	// Now 只供测试替换。
 	Now func() time.Time
 }
@@ -162,12 +167,20 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 
 // converge 在每台主机上至多执行一次写入；主机之间相互独立，失败只影响该主机的 Attachment。
 func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) error {
-	if r.Proxy == nil {
+	if r.Proxy == nil && !r.AgentConvergence {
 		return nil
 	}
 	hosts, err := r.hosts(ctx)
 	if err != nil {
 		return err
+	}
+	if r.AgentConvergence {
+		for _, target := range hosts {
+			// 写入由 agent 在本机执行，这里只用 PlanHost 判定 Attachment。
+			facts, err := reported(target, lb)
+			lb.PlanHost(target.host.Name, facts, target.agent, err, deleting)
+		}
+		return nil
 	}
 	for _, target := range hosts {
 		host := target.host
@@ -188,10 +201,41 @@ func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.
 	return nil
 }
 
-// hostTarget 是一台参与落地的主机与其 agent 最近一次报告（由 LoadBalancerHost controller 写入 status）。
+// hostTarget 是一台参与落地的主机与其 agent 写入 status 的报告。
 type hostTarget struct {
 	host  loadbalancer.Host
 	agent loadbalancer.AgentReport
+	// loadBalancers 是 agent 在本机收敛的结果（ADR-0022）。
+	loadBalancers []networkv1alpha1.HostLoadBalancerStatus
+}
+
+var errAgentNotReporting = errors.New("agent 未报告")
+
+// reported 把主机 agent 对该 LoadBalancer 的报告还原为代理事实（ADR-0022）。agent 失联时无法观察；
+// 没有该对象的报告（agent 尚未看到它，或已删除完成）时为不存在。配置与期望的摘要相同才算一致。
+func reported(target hostTarget, lb *loadbalancer.LoadBalancer) (loadbalancer.ProxyFacts, error) {
+	if !target.agent.Reported {
+		return loadbalancer.ProxyFacts{}, errAgentNotReporting
+	}
+	snapshot := lb.Snapshot()
+	i := slices.IndexFunc(target.loadBalancers, func(s networkv1alpha1.HostLoadBalancerStatus) bool {
+		return s.Namespace == snapshot.Owner.Namespace && s.Name == snapshot.Owner.Name && s.UID == snapshot.Owner.UID
+	})
+	if i < 0 {
+		return loadbalancer.ProxyFacts{}, nil
+	}
+	report := target.loadBalancers[i]
+	facts := loadbalancer.ProxyFacts{
+		Present: report.Present, Matches: report.Digest != "" && report.Digest == snapshot.Digest(),
+		Reload: loadbalancer.ParseReload(report.Reload), Message: report.Message,
+	}
+	for _, s := range report.Servers {
+		facts.Servers = append(facts.Servers, loadbalancer.ServerHealth{
+			Port: s.Port, Endpoint: loadbalancer.Endpoint{Address: s.Address, Port: s.EndpointPort},
+			State: s.State, CheckStatus: s.CheckStatus, CheckCode: s.CheckCode,
+		})
+	}
+	return facts, nil
 }
 
 // hosts 返回参与落地的主机，按名称排序。只用已带 finalizer 且未在删除的主机：finalizer 保证
@@ -205,7 +249,7 @@ func (r *LoadBalancerReconciler) hosts(ctx context.Context) ([]hostTarget, error
 	for i := range list.Items {
 		object := &list.Items[i]
 		if object.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
-			hosts = append(hosts, hostTarget{host: hostOf(object), agent: reportOf(object)})
+			hosts = append(hosts, hostTarget{host: hostOf(object), agent: reportOf(object), loadBalancers: object.Status.LoadBalancers})
 		}
 	}
 	slices.SortFunc(hosts, func(a, b hostTarget) int { return strings.Compare(a.host.Name, b.host.Name) })

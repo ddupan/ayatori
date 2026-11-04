@@ -171,6 +171,8 @@ type Agent struct {
 	status loadbalancer.AgentStatus
 	// loadBalancers 是最近一轮本机收敛的结果；不在本机收敛时为空。
 	loadBalancers []networkv1alpha1.HostLoadBalancerStatus
+	// purged 表示自己的 LoadBalancerHost 删除中、本机配置已全部清除。
+	purged bool
 }
 
 // New 启动 speaker；vips 在生产中为 Loopback。

@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -124,6 +125,7 @@ func TestAgentConverges(t *testing.T) {
 		}))
 	})
 	t.Run("删除时清理，对象消失后移除报告", func(t *testing.T) { f.deletes(t, lb) })
+	t.Run("删除 LoadBalancerHost 时清除本机全部配置并报告 Purged", func(t *testing.T) { f.purges(t, lb.Spec) })
 	t.Run("API 不可达期间不清理任何配置", func(t *testing.T) { f.keepsWhileAPIDown(t, env, lb.Spec) })
 }
 
@@ -187,6 +189,47 @@ func (f convergence) deletes(t *testing.T, lb *networkv1alpha1.LoadBalancer) {
 		t.Fatal(err)
 	}
 	waitForLong(t, "对象删除后不再报告", f.reported(t, lb.Name, func(s *networkv1alpha1.HostLoadBalancerStatus) bool { return s == nil }))
+}
+
+func (f convergence) purges(t *testing.T, spec networkv1alpha1.LoadBalancerSpec) {
+	doomed := &networkv1alpha1.LoadBalancer{Spec: spec}
+	doomed.Namespace, doomed.Name = testNamespace, "doomed"
+	if err := f.k.Create(t.Context(), doomed); err != nil {
+		t.Fatal(err)
+	}
+	doomed.Status.Address = "10.62.0.7"
+	if err := f.k.Status().Update(t.Context(), doomed); err != nil {
+		t.Fatal(err)
+	}
+	waitForLong(t, "收敛", f.owners(t, string(doomed.UID)))
+	// controller 的 finalizer 让对象停在删除中，直到 agent 报告 Purged。
+	host := &networkv1alpha1.LoadBalancerHost{}
+	if err := f.k.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
+		t.Fatal(err)
+	}
+	host.Finalizers = []string{"network.ayatori.ddupan.top/loadbalancerhost"}
+	if err := f.k.Update(t.Context(), host); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.k.Delete(t.Context(), host); err != nil {
+		t.Fatal(err)
+	}
+	waitForLong(t, "本机配置全部清除", f.owners(t))
+	waitForLong(t, "报告 Purged", func() bool {
+		if err := f.k.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
+			return false
+		}
+		return meta.IsStatusConditionTrue(host.Status.Conditions, controller.PurgedType)
+	})
+	host.Finalizers = nil
+	if err := f.k.Update(t.Context(), host); err != nil {
+		t.Fatal(err)
+	}
+	// agent 仍在运行就会重新注册（退役须先停 agent），之后照常收敛。
+	waitForLong(t, "重新注册后照常收敛", f.owners(t, string(doomed.UID)))
+	if err := f.k.Delete(t.Context(), doomed); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f convergence) keepsWhileAPIDown(t *testing.T, env *envtest.Environment, spec networkv1alpha1.LoadBalancerSpec) {

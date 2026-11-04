@@ -101,3 +101,14 @@ func TestDigest(t *testing.T) {
 		t.Fatal("Requested 不落地到主机，不应影响摘要")
 	}
 }
+
+func TestParseReload(t *testing.T) {
+	for _, r := range []Reload{ReloadSucceeded, ReloadPending, ReloadFailed} {
+		if ParseReload(r.String()) != r {
+			t.Errorf("ParseReload(%q) != %v", r.String(), r)
+		}
+	}
+	if ParseReload("") != ReloadFailed {
+		t.Error("未知的值应视为 Failed")
+	}
+}
