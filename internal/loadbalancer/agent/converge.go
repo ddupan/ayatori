@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
@@ -29,10 +30,6 @@ const (
 	writeTimeout     = 10 * time.Second
 )
 
-var reloadNames = map[loadbalancer.Reload]string{
-	loadbalancer.ReloadSucceeded: "Succeeded", loadbalancer.ReloadPending: "Pending", loadbalancer.ReloadFailed: "Failed",
-}
-
 // converge watch LoadBalancer 与 Backend，在本机 HAProxy 上收敛（ADR-0022）。期望配置与 controller
 // 远程收敛时相同（controller.Desired），每轮每个 LoadBalancer 至多一次写入。只有 informer 完成首次
 // 同步后才判断「对象已不存在」：API 不可达期间缓存不变，不会清理任何配置。
@@ -47,13 +44,16 @@ func (a *Agent) converge(ctx context.Context, config *rest.Config, scheme *runti
 		ConnectTimeout: a.config.DataPlane.ConnectTimeout.Duration, Resolvers: a.config.DataPlane.Resolvers,
 	}
 	host := loadbalancer.Host{Name: a.config.NodeName, ProxyURL: a.config.DataPlane.URL}
-	objects, err := cache.New(config, cache.Options{Scheme: scheme})
+	// 自己的 LoadBalancerHost 只看同名的那个：删除它时清除本机全部配置。
+	objects, err := cache.New(config, cache.Options{Scheme: scheme, ByObject: map[client.Object]cache.ByObject{
+		&networkv1alpha1.LoadBalancerHost{}: {Field: fields.OneTermEqualSelector("metadata.name", a.config.NodeName)},
+	}})
 	if err != nil {
 		a.logger.Error("build API cache", "error", err)
 		return
 	}
 	changed := make(chan struct{}, 1)
-	for _, object := range []client.Object{&networkv1alpha1.LoadBalancer{}, &networkv1alpha1.Backend{}} {
+	for _, object := range []client.Object{&networkv1alpha1.LoadBalancer{}, &networkv1alpha1.Backend{}, &networkv1alpha1.LoadBalancerHost{}} {
 		informer, err := objects.GetInformer(ctx, object)
 		if err != nil {
 			a.logger.Error("watch", "error", err)
@@ -74,12 +74,16 @@ func (a *Agent) converge(ctx context.Context, config *rest.Config, scheme *runti
 	ticker := time.NewTicker(ConvergeInterval)
 	defer ticker.Stop()
 	for {
-		reports, err := a.convergeOnce(ctx, objects, hosts, host)
+		purged, err := a.purge(ctx, objects, hosts, host)
+		var reports []networkv1alpha1.HostLoadBalancerStatus
+		if err == nil && purged == nil {
+			reports, err = a.convergeOnce(ctx, objects, hosts, host)
+		}
 		if err != nil {
 			a.logger.Warn("本机收敛失败", "error", err)
 		} else {
 			a.mu.Lock()
-			a.loadBalancers = reports
+			a.loadBalancers, a.purged = reports, purged != nil && *purged
 			a.mu.Unlock()
 		}
 		select {
@@ -89,6 +93,22 @@ func (a *Agent) converge(ctx context.Context, config *rest.Config, scheme *runti
 		case <-ticker.C:
 		}
 	}
+}
+
+// purge 在自己的 LoadBalancerHost 删除中时清除本机全部配置，返回是否已清除完毕；未在删除时返回
+// nil，照常收敛。删除由管理员发起，controller 等 agent 报告 Purged 再放行（ADR-0022）。
+func (a *Agent) purge(ctx context.Context, reader client.Reader, hosts *haproxy.Hosts, host loadbalancer.Host) (*bool, error) {
+	self := &networkv1alpha1.LoadBalancerHost{}
+	if err := reader.Get(ctx, client.ObjectKey{Name: a.config.NodeName}, self); err != nil {
+		return nil, client.IgnoreNotFound(err)
+	}
+	if self.DeletionTimestamp.IsZero() {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	done, err := hosts.Purge(ctx, host)
+	return &done, err
 }
 
 // convergeOnce 收敛全部 LoadBalancer 一轮，再删除本机上已不存在的 LoadBalancer 的配置。
@@ -137,10 +157,10 @@ func (a *Agent) convergeOne(ctx context.Context, hosts *haproxy.Hosts, host load
 	report := networkv1alpha1.HostLoadBalancerStatus{Namespace: object.Namespace, Name: object.Name, UID: string(object.UID)}
 	facts, err := hosts.Observe(ctx, host, lb)
 	if err != nil {
-		report.Reload, report.Message = reloadNames[loadbalancer.ReloadFailed], "无法观察本机代理："+err.Error()
+		report.Reload, report.Message = loadbalancer.ReloadFailed.String(), "无法观察本机代理："+err.Error()
 		return report
 	}
-	report.Present, report.Reload, report.Message = facts.Present, reloadNames[facts.Reload], facts.Message
+	report.Present, report.Reload, report.Message = facts.Present, facts.Reload.String(), facts.Message
 	if facts.Matches {
 		report.Digest = lb.Snapshot().Digest()
 	}

@@ -71,6 +71,21 @@ const (
 	ReloadFailed
 )
 
+var reloadNames = [...]string{ReloadSucceeded: "Succeeded", ReloadPending: "Pending", ReloadFailed: "Failed"}
+
+// String 是 LoadBalancerHost status.loadBalancers[].reload 中的写法（ADR-0022）。
+func (r Reload) String() string { return reloadNames[r] }
+
+// ParseReload 是 String 的逆；未知的值视为 Failed，宁可报告不可用也不报告已生效。
+func ParseReload(s string) Reload {
+	for r, name := range reloadNames {
+		if name == s {
+			return Reload(r)
+		}
+	}
+	return ReloadFailed
+}
+
 // Digest 是落地到主机的期望配置（UID、VIP 与端口）的摘要。agent 报告本机配置与哪份期望一致，
 // controller 以同一函数计算后比较（ADR-0022）；Backend 变化不改变 LoadBalancer 的 generation，
 // 所以不能用 generation。

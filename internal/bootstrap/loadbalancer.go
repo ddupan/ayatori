@@ -30,6 +30,7 @@ type loadBalancerOptions struct {
 	resolvers      string
 	dnsURL         string
 	dnsZone        string
+	agentConverge  bool
 }
 
 func (o *loadBalancerOptions) bindFlags(flags *flag.FlagSet) {
@@ -43,6 +44,8 @@ func (o *loadBalancerOptions) bindFlags(flags *flag.FlagSet) {
 	flags.StringVar(&o.resolvers, "loadbalancer-resolvers", "", "DNS endpoint 使用的 HAProxy resolvers section 名称")
 	flags.StringVar(&o.dnsURL, "loadbalancer-dns-url", "", "PowerDNS API 地址；与 --loadbalancer-dns-zone 同时设置时维护 Hostname")
 	flags.StringVar(&o.dnsZone, "loadbalancer-dns-zone", "", "Ayatori 独占的 LoadBalancer zone，如 lb.lab.ddupan.top")
+	flags.BoolVar(&o.agentConverge, "loadbalancer-agent-convergence", false,
+		"代理配置由各 LB 主机的 agent 在本机收敛，manager 只汇总报告、不连接主机（ADR-0022）；与远程收敛按环境整体切换")
 }
 
 func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, options loadBalancerOptions) error {
@@ -60,11 +63,23 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 	if options.dnsZone != "" && options.credentials == "" {
 		return errors.New("LoadBalancer DNS requires --loadbalancer-credentials=<namespace>/<name>")
 	}
+	var secret *corev1.Secret
 	if options.credentials != "" {
-		secret, err := loadBalancerCredentials(ctx, manager, options.credentials)
-		if err != nil {
+		if secret, err = loadBalancerCredentials(ctx, manager, options.credentials); err != nil {
 			return err
 		}
+	}
+	switch {
+	case options.agentConverge:
+		// 不连接主机：Data Plane API 的证书与 Basic 凭据不再需要，凭据 Secret 只提供 PowerDNS API key。
+		reconciler.AgentConvergence = true
+		hosts := &lbcontroller.LoadBalancerHostReconciler{
+			Client: manager.GetClient(), AgentConvergence: true, AgentStaleAfter: options.agentStale,
+		}
+		if err := hosts.SetupWithManager(manager); err != nil {
+			return fmt.Errorf("set up LoadBalancerHost controller: %w", err)
+		}
+	case secret != nil:
 		certificate, err := newClientCertificate(secret, manager.GetAPIReader())
 		if err != nil {
 			return err
@@ -83,10 +98,10 @@ func registerLoadBalancerControllers(ctx context.Context, manager ctrl.Manager, 
 		if err := hosts.SetupWithManager(manager); err != nil {
 			return fmt.Errorf("set up LoadBalancerHost controller: %w", err)
 		}
-		if options.dnsZone != "" {
-			reconciler.DNS = powerdns.New(options.dnsURL, string(secret.Data["powerdns-api-key"]), options.dnsZone, &http.Client{Timeout: 30 * time.Second})
-			reconciler.DNSZone = options.dnsZone
-		}
+	}
+	if options.dnsZone != "" {
+		reconciler.DNS = powerdns.New(options.dnsURL, string(secret.Data["powerdns-api-key"]), options.dnsZone, &http.Client{Timeout: 30 * time.Second})
+		reconciler.DNSZone = options.dnsZone
 	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		return fmt.Errorf("set up LoadBalancer controller: %w", err)

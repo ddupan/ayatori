@@ -12,6 +12,7 @@ import (
 
 	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
+	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
 )
 
 const (
@@ -30,6 +31,7 @@ type hostReport struct {
 	vips            []networkv1alpha1.AgentVIPStatus
 	// loadBalancers 为 nil 时不在本机收敛，agent 不持有该字段。
 	loadBalancers []networkv1alpha1.HostLoadBalancerStatus
+	purged        bool
 }
 
 // reportHost 以 SSA 注册与 Node 同名的 LoadBalancerHost（不带 spec，ADR-0022），并写入 AgentReady 与
@@ -70,6 +72,7 @@ func (a *Agent) hostReport() hostReport {
 	if a.config.DataPlane != nil {
 		a.mu.Lock()
 		report.loadBalancers = append([]networkv1alpha1.HostLoadBalancerStatus{}, a.loadBalancers...)
+		report.purged = a.purged
 		a.mu.Unlock()
 	}
 	for _, vip := range status.VIPs {
@@ -98,23 +101,23 @@ func (a *Agent) applyHost(ctx context.Context, kube client.Client, report hostRe
 	}
 	// Apply 会把服务端返回的对象（含 managedFields）写回参数，status 用新的对象。
 	object := a.hostObject()
-	status := map[string]any{
-		"vips": vips,
-		"conditions": []any{map[string]any{
-			"type": agentReadyType, "status": string(ready), "reason": report.reason, "message": report.message,
-			"lastTransitionTime": transition.UTC().Format(time.RFC3339),
-		}},
+	conditions := []metav1.Condition{{
+		Type: agentReadyType, Status: ready, Reason: report.reason, Message: report.message, LastTransitionTime: transition,
+	}}
+	if report.purged {
+		// 只在清除完毕时写；不再持有时 SSA 移除它。
+		conditions = append(conditions, metav1.Condition{Type: controller.PurgedType, Status: metav1.ConditionTrue,
+			Reason: controller.PurgedType, Message: "LoadBalancerHost 删除中，本机配置已全部清除", LastTransitionTime: metav1.Now()})
+	}
+	status := map[string]any{"vips": vips}
+	var err error
+	if status["conditions"], err = unstructuredList(conditions); err != nil {
+		return err
 	}
 	if report.loadBalancers != nil {
-		items := make([]any, 0, len(report.loadBalancers))
-		for i := range report.loadBalancers {
-			item, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&report.loadBalancers[i])
-			if err != nil {
-				return err
-			}
-			items = append(items, item)
+		if status["loadBalancers"], err = unstructuredList(report.loadBalancers); err != nil {
+			return err
 		}
-		status["loadBalancers"] = items
 	}
 	object.Object["status"] = status
 	// controller 在 Lease 过期时覆盖 AgentReady 与 vips；agent 恢复后以 force 收回。
@@ -127,4 +130,17 @@ func (a *Agent) hostObject() *unstructured.Unstructured {
 	object.SetGroupVersionKind(networkv1alpha1.GroupVersion.WithKind("LoadBalancerHost"))
 	object.SetName(a.config.NodeName)
 	return object
+}
+
+// unstructuredList 把 status 中的列表转为 SSA 所用的 unstructured 形式。
+func unstructuredList[T any](items []T) ([]any, error) {
+	result := make([]any, 0, len(items))
+	for i := range items {
+		item, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&items[i])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, nil
 }
