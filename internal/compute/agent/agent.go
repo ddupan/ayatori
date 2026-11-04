@@ -101,7 +101,7 @@ type Agent struct {
 	// observed 是最近一轮 reconcile 的结果，reported 是已经写入 API 的结果；两者不同时才写。
 	observed map[string]observation
 	reported map[string]observation
-	// connected 表示 libvirt 是否连通，写入 Node 的 Ready condition。
+	// connected 表示 libvirt 是否连通，写入 Node 的 compute.ayatori.ddupan.top/Ready（只表示 compute 角色，不是 Node Ready）。
 	connected bool
 	facts     atomic.Pointer[nodeFacts]
 }
