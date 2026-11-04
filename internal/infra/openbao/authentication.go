@@ -180,9 +180,9 @@ func (s *KubernetesSession) watch(ctx context.Context, secret *bao.Secret) {
 		case <-ctx.Done():
 			s.clear()
 			watcher.Stop()
-			<-watcher.DoneCh()
+			<-watcher.DoneCh() //nolint:errcheck // 已主动停止，只等待在途续期请求结束
 			return
-		case <-watcher.DoneCh():
+		case <-watcher.DoneCh(): //nolint:errcheck // 续期失败或 lease 到期都由 Start 限速后重新登录，原因不影响处理
 			watcher.Stop()
 			return
 		case <-watcher.RenewCh():

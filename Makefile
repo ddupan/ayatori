@@ -210,7 +210,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.14.0
+GOLANGCI_LINT_VERSION ?= v2.15.0
 # renovate: datasource=go depName=github.com/oapi-codegen/oapi-codegen/v2
 OAPI_CODEGEN_VERSION ?= v2.8.0
 # 与 LB 主机部署的 dataplaneapi 版本一致；升级时同时更新校验和并重新生成。
