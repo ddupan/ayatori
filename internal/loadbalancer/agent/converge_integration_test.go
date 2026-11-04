@@ -4,14 +4,18 @@ package agent_test
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,7 +51,8 @@ const (
 )
 
 // TestAgentConverges：agent watch LoadBalancer 与 Backend，经本机 Data Plane API 收敛 HAProxy，并在
-// LoadBalancerHost 中报告与哪份期望一致（ADR-0022）；删除时清理，已不存在的 LoadBalancer 的配置也清理。
+// LoadBalancerHost 中报告与哪份期望一致（ADR-0022）；删除时清理，已不存在的 LoadBalancer 的配置也清理；
+// 重启或 API 恢复后，按当时的对象补上停机期间的变化。
 func TestAgentConverges(t *testing.T) {
 	ctrl.SetLogger(logr.Discard())
 	id, port := testenv.Container(t, "haproxy", 5555)
@@ -102,7 +107,10 @@ func TestAgentConverges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	startConvergingAgent(t, cfg, port)
+	// agent 经可切断的代理访问 API，测试自己直连。
+	api := startAPIProxy(t, cfg.Host)
+	start := func() func() { return startConvergingAgent(t, api.url(), cfg, port) }
+	stop := start()
 	f := convergence{k: k, hosts: hosts, proxy: proxy}
 
 	want := f.digest(t, lb)
@@ -126,7 +134,8 @@ func TestAgentConverges(t *testing.T) {
 	})
 	t.Run("删除时清理，对象消失后移除报告", func(t *testing.T) { f.deletes(t, lb) })
 	t.Run("删除 LoadBalancerHost 时清除本机全部配置并报告 Purged", func(t *testing.T) { f.purges(t, lb.Spec) })
-	t.Run("API 不可达期间不清理任何配置", func(t *testing.T) { f.keepsWhileAPIDown(t, env, lb.Spec) })
+	t.Run("重启后补上停机期间的增删", func(t *testing.T) { f.resumesAfterRestart(t, stop, start, lb.Spec) })
+	t.Run("API 不可达期间不清理，恢复后按 list 清理", func(t *testing.T) { f.keepsWhileAPIDown(t, api, lb.Spec) })
 }
 
 // convergence 从 API 与本机代理两侧观察 agent 的收敛。
@@ -232,36 +241,154 @@ func (f convergence) purges(t *testing.T, spec networkv1alpha1.LoadBalancerSpec)
 	}
 }
 
-func (f convergence) keepsWhileAPIDown(t *testing.T, env *envtest.Environment, spec networkv1alpha1.LoadBalancerSpec) {
-	kept := &networkv1alpha1.LoadBalancer{Spec: spec}
-	kept.Namespace, kept.Name = testNamespace, "kept"
-	if err := f.k.Create(t.Context(), kept); err != nil {
+// create 创建以 spec 为规格、VIP 为 address 的 LoadBalancer，等到本机只有它的配置。
+func (f convergence) create(t *testing.T, name, address string, spec networkv1alpha1.LoadBalancerSpec) *networkv1alpha1.LoadBalancer {
+	t.Helper()
+	lb := &networkv1alpha1.LoadBalancer{Spec: spec}
+	lb.Namespace, lb.Name = testNamespace, name
+	if err := f.k.Create(t.Context(), lb); err != nil {
 		t.Fatal(err)
 	}
-	kept.Status.Address = "10.62.0.6"
-	if err := f.k.Status().Update(t.Context(), kept); err != nil {
+	lb.Status.Address = address
+	if err := f.k.Status().Update(t.Context(), lb); err != nil {
 		t.Fatal(err)
 	}
-	waitForLong(t, "收敛", f.owners(t, string(kept.UID)))
-	// 有 watch 连接时 envtest 等不到 apiserver 正常退出，会在超时后强制结束；以能否访问为准。
-	_ = env.Stop()
-	if err := f.k.Get(t.Context(), client.ObjectKeyFromObject(kept), kept); err == nil {
-		t.Fatal("API 仍可访问")
+	waitForLong(t, "收敛 "+name, f.owners(t, string(lb.UID)))
+	return lb
+}
+
+func (f convergence) resumesAfterRestart(t *testing.T, stop func(), start func() func(), spec networkv1alpha1.LoadBalancerSpec) {
+	gone := f.create(t, "gone", "10.62.0.8", spec)
+	stop()
+	if err := f.k.Delete(t.Context(), gone); err != nil {
+		t.Fatal(err)
 	}
-	// 几轮收敛之后，配置仍在：缓存只随 API 的事件变化。
+	added := &networkv1alpha1.LoadBalancer{Spec: spec}
+	added.Namespace, added.Name = testNamespace, "added"
+	if err := f.k.Create(t.Context(), added); err != nil {
+		t.Fatal(err)
+	}
+	added.Status.Address = "10.62.0.6"
+	if err := f.k.Status().Update(t.Context(), added); err != nil {
+		t.Fatal(err)
+	}
+	start()
+	waitForLong(t, "停机期间删除的配置被清理、新建的被下发", f.owners(t, string(added.UID)))
+	want := f.digest(t, added)
+	waitForLong(t, "报告新建的", f.reported(t, added.Name, func(s *networkv1alpha1.HostLoadBalancerStatus) bool {
+		return s != nil && s.Digest == want && s.Present && s.Reload == reloadSucceeded
+	}))
+	waitForLong(t, "不再报告已删除的", f.reported(t, gone.Name, func(s *networkv1alpha1.HostLoadBalancerStatus) bool { return s == nil }))
+	if err := f.k.Delete(t.Context(), added); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f convergence) keepsWhileAPIDown(t *testing.T, api *apiProxy, spec networkv1alpha1.LoadBalancerSpec) {
+	kept := f.create(t, "kept", "10.62.0.6", spec)
+	api.cut()
+	// agent 看不到这次删除；几轮收敛之后配置仍在：缓存只随 API 的事件变化。
+	if err := f.k.Delete(t.Context(), kept); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(3 * agent.ConvergeInterval)
 	if got, err := f.hosts.Owners(t.Context(), f.proxy); err != nil || !slices.Equal(got, []string{string(kept.UID)}) {
 		t.Fatalf("Owners() = %v, %v", got, err)
 	}
+	api.restore(t)
+	waitForLong(t, "API 恢复后清理", f.owners(t))
 }
 
-// startConvergingAgent 以管理员 kubeconfig 启动在本机收敛的 agent：身份与准入由 TestAgentJoins 验证。
-func startConvergingAgent(t *testing.T, cfg *rest.Config, dataPlanePort int) {
+// apiProxy 把 TCP 连接转发到 apiserver；cut 停止监听并断开全部连接，restore 在同一地址恢复。
+type apiProxy struct {
+	target, addr string
+	mu           sync.Mutex
+	listener     net.Listener
+	conns        []net.Conn
+}
+
+func startAPIProxy(t *testing.T, host string) *apiProxy {
+	t.Helper()
+	target, err := url.Parse(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &apiProxy{target: target.Host, addr: listener.Addr().String()}
+	p.serve(listener)
+	t.Cleanup(p.cut)
+	return p
+}
+
+func (p *apiProxy) url() string { return "https://" + p.addr }
+
+func (p *apiProxy) serve(listener net.Listener) {
+	p.mu.Lock()
+	p.listener = listener
+	p.mu.Unlock()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go p.pipe(listener, conn)
+		}
+	}()
+}
+
+func (p *apiProxy) pipe(listener net.Listener, conn net.Conn) {
+	upstream, err := net.Dial("tcp", p.target)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	p.mu.Lock()
+	if p.listener != listener { // 已切断
+		p.mu.Unlock()
+		_, _ = conn.Close(), upstream.Close()
+		return
+	}
+	p.conns = append(p.conns, conn, upstream)
+	p.mu.Unlock()
+	go func() { _, _ = io.Copy(upstream, conn); _ = upstream.Close() }()
+	_, _ = io.Copy(conn, upstream)
+	_ = conn.Close()
+}
+
+func (p *apiProxy) cut() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.listener != nil {
+		_ = p.listener.Close()
+	}
+	p.listener = nil
+	for _, conn := range p.conns {
+		_ = conn.Close()
+	}
+	p.conns = nil
+}
+
+func (p *apiProxy) restore(t *testing.T) {
+	t.Helper()
+	listener, err := net.Listen("tcp", p.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.serve(listener)
+}
+
+// startConvergingAgent 以管理员 kubeconfig 经 server 启动在本机收敛的 agent，返回停止它的函数；
+// 身份与准入由 TestAgentJoins 验证。
+func startConvergingAgent(t *testing.T, server string, cfg *rest.Config, dataPlanePort int) func() {
 	t.Helper()
 	dir := t.TempDir()
 	kubeconfig := filepath.Join(dir, "kubeconfig")
 	if err := clientcmd.WriteToFile(clientcmdapi.Config{
-		Clusters:       map[string]*clientcmdapi.Cluster{"c": {Server: cfg.Host, CertificateAuthorityData: cfg.CAData}},
+		Clusters:       map[string]*clientcmdapi.Cluster{"c": {Server: server, CertificateAuthorityData: cfg.CAData}},
 		AuthInfos:      map[string]*clientcmdapi.AuthInfo{"admin": {ClientCertificateData: cfg.CertData, ClientKeyData: cfg.KeyData}},
 		Contexts:       map[string]*clientcmdapi.Context{"c": {Cluster: "c", AuthInfo: "admin"}},
 		CurrentContext: "c",
@@ -288,5 +415,7 @@ func startConvergingAgent(t *testing.T, cfg *rest.Config, dataPlanePort int) {
 	}
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
-	t.Cleanup(func() { cancel(); <-done })
+	stop := func() { cancel(); <-done }
+	t.Cleanup(stop)
+	return stop
 }
