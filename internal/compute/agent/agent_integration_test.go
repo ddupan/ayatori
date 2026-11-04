@@ -93,7 +93,7 @@ func runAgent(t *testing.T, config agent.Config) runningAgent {
 	return runningAgent{cancel, done, registry}
 }
 
-// metric 返回名为 name、标签恰好为 labels 的 gauge 的值；不存在时 ok 为 false。
+// metric 返回名为 name、标签恰好为 labels 的 gauge 或 counter 的值；不存在时 ok 为 false。
 func (r runningAgent) metric(t *testing.T, name string, labels map[string]string) (value float64, ok bool) {
 	t.Helper()
 	families, err := r.registry.Gather()
@@ -110,11 +110,29 @@ func (r runningAgent) metric(t *testing.T, name string, labels map[string]string
 				got[l.GetName()] = l.GetValue()
 			}
 			if maps.Equal(got, labels) {
-				return m.GetGauge().GetValue(), true
+				return m.GetGauge().GetValue() + m.GetCounter().GetValue(), true
 			}
 		}
 	}
 	return 0, false
+}
+
+// families 列出名字以 prefix 开头的序列，用于记录 test 驱动实际给出了哪些数据。
+func (r runningAgent) families(t *testing.T, prefix string) []string {
+	t.Helper()
+	families, err := r.registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, f := range families {
+		if strings.HasPrefix(f.GetName(), prefix) {
+			for _, m := range f.GetMetric() {
+				out = append(out, fmt.Sprintf("%s%v", f.GetName(), m.GetLabel()))
+			}
+		}
+	}
+	return out
 }
 
 // expectMetric 等到 gauge 满足 ok；ok 收到 found=false 表示序列不存在。
@@ -303,6 +321,10 @@ func (s *suite) definesSelected(t *testing.T) {
 		func(v float64, found bool) bool { return found && time.Since(time.Unix(int64(v), 0)) < time.Minute })
 	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": "local", "type": "capacity"},
 		func(v float64, found bool) bool { return found && v > 0 })
+	// 资源用量来自 GetAllDomainStats。
+	s.expectMetric(t, "ayatori_compute_agent_domain_cpu_seconds_total", domainLabels("vm1"),
+		func(_ float64, found bool) bool { return found })
+	t.Logf("domain metrics: %v", s.agent.families(t, "ayatori_compute_agent_domain_"))
 }
 
 func (s *suite) restoresDrift(t *testing.T) {

@@ -27,6 +27,7 @@ func (a *Agent) reconcile() {
 	connected := a.connect()
 	a.metrics.libvirtUp.Set(boolGauge(connected))
 	if !connected {
+		a.metrics.domains.snapshot.Store(&[]instanceStats{})
 		return
 	}
 	observed := map[string]observation{}
@@ -56,8 +57,31 @@ func (a *Agent) reconcile() {
 	a.observed = observed
 	a.metrics.observe(a.succeeded, seen, a.seen)
 	a.seen = seen
+	a.collectDomainStats(seen)
 	facts := a.nodeFacts()
 	a.facts.Store(&facts)
+}
+
+// collectDomainStats 读取本 Agent 管理的运行中实例的资源用量，替换指标快照。读取失败时清空快照：
+// 宁可缺数据，也不导出停滞的累计量。
+func (a *Agent) collectDomainStats(seen map[objectID]bool) {
+	ours := map[string]objectID{}
+	for id := range seen {
+		if id.kind == kindDomain {
+			ours[domainName(id.namespace, id.name)] = id
+		}
+	}
+	snapshot := []instanceStats{}
+	stats, err := a.hv.AllDomainStats()
+	if err != nil {
+		a.logger.Error("read domain stats", "error", err)
+	}
+	for _, s := range stats {
+		if id, ok := ours[s.Name]; ok {
+			snapshot = append(snapshot, instanceStats{id.namespace, id.name, s})
+		}
+	}
+	a.metrics.domains.snapshot.Store(&snapshot)
 }
 
 // connect 在没有连接或连接已断开时重连 libvirt。

@@ -299,6 +299,65 @@ func (c *Client) HostCPU() (libvirtxml.CapsHostCPU, error) {
 	return *caps.Host.CPU, nil
 }
 
+// DomainStats 是运行中实例的资源用量。累计量自实例启动起计。
+type DomainStats struct {
+	Name string
+	// CPUTime 是累计 CPU 时间（纳秒）。
+	CPUTime uint64
+	// Memory 是 balloon 报告的内存（字节）：current 为客户机当前可用，maximum 为配置量，rss 为宿主机
+	// 上 QEMU 进程的驻留内存。客户机不支持 balloon 时缺项。
+	Memory map[string]uint64
+	Disks  []IOStats
+	Nics   []IOStats
+}
+
+// IOStats 是一块磁盘或一块网卡的累计字节数：磁盘为读、写，网卡为收、发。
+type IOStats struct {
+	Device  string
+	In, Out uint64
+}
+
+// AllDomainStats 返回所有运行中实例的资源用量。
+func (c *Client) AllDomainStats() ([]DomainStats, error) {
+	records, err := c.conn.GetAllDomainStats(nil,
+		golibvirt.DOMAIN_STATS_CPU_TOTAL|golibvirt.DOMAIN_STATS_BALLOON|golibvirt.DOMAIN_STATS_BLOCK|golibvirt.DOMAIN_STATS_INTERFACE,
+		golibvirt.CONNECT_GET_ALL_DOMAINS_STATS_ACTIVE)
+	if err != nil {
+		return nil, err
+	}
+	stats := make([]DomainStats, 0, len(records))
+	for _, r := range records {
+		name, err := r.Domain.GetName()
+		free(r.Domain.Free)
+		if err != nil {
+			return nil, err
+		}
+		s := DomainStats{Name: name, Memory: map[string]uint64{}}
+		if r.Cpu != nil && r.Cpu.TimeSet {
+			s.CPUTime = r.Cpu.Time
+		}
+		if b := r.Balloon; b != nil {
+			if b.CurrentSet {
+				s.Memory["current"] = b.Current * 1024
+			}
+			if b.MaximumSet {
+				s.Memory["maximum"] = b.Maximum * 1024
+			}
+			if b.RssSet {
+				s.Memory["rss"] = b.Rss * 1024
+			}
+		}
+		for _, b := range r.Block {
+			s.Disks = append(s.Disks, IOStats{Device: b.Name, In: b.RdBytes, Out: b.WrBytes})
+		}
+		for _, n := range r.Net {
+			s.Nics = append(s.Nics, IOStats{Device: n.Name, In: n.RxBytes, Out: n.TxBytes})
+		}
+		stats = append(stats, s)
+	}
+	return stats, nil
+}
+
 // IsNotFound 判断 domain、network、pool 或卷不存在。
 func IsNotFound(err error) bool {
 	var e golibvirt.Error
