@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -23,10 +24,13 @@ type observation struct {
 
 // reconcile 按本地状态收敛本机 libvirt。network 与 pool 先于 domain：domain 引用它们。
 func (a *Agent) reconcile() {
-	if !a.connect() {
+	connected := a.connect()
+	a.metrics.libvirtUp.Set(boolGauge(connected))
+	if !connected {
 		return
 	}
 	observed := map[string]observation{}
+	seen := map[objectID]bool{}
 	for _, kind := range []string{kindNetwork, kindPool, kindDomain} {
 		for _, r := range a.store.List(kind) {
 			if r.Deleted {
@@ -41,10 +45,17 @@ func (a *Agent) reconcile() {
 			}
 			if obs != nil {
 				observed[kind+"/"+r.Key] = *obs
+				id := objectID{obs.kind, obs.namespace, obs.name}
+				seen[id] = true
+				if err == nil {
+					a.succeeded[id] = time.Now()
+				}
 			}
 		}
 	}
 	a.observed = observed
+	a.metrics.observe(a.succeeded, seen, a.seen)
+	a.seen = seen
 	facts := a.nodeFacts()
 	a.facts.Store(&facts)
 }
@@ -137,7 +148,16 @@ func (a *Agent) applyPool(r state.Record, p *computev1alpha1.LibvirtStoragePool)
 	if err := a.define(r, want, read, a.hv.DefinePool, poolHash); err != nil {
 		return err
 	}
-	return a.hv.StartPool(p.Name)
+	if err := a.hv.StartPool(p.Name); err != nil {
+		return err
+	}
+	capacity, available, err := a.hv.PoolSpace(p.Name)
+	if err != nil {
+		return err
+	}
+	a.metrics.poolBytes.WithLabelValues(p.Name, "capacity").Set(float64(capacity))
+	a.metrics.poolBytes.WithLabelValues(p.Name, "available").Set(float64(available))
+	return nil
 }
 
 // define 在需要时下发 want，并记录输入与读回配置的 hash。read 返回对象的现状（持久配置）。
@@ -196,6 +216,11 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 		return fail(err)
 	}
 	name := domainName(d.Namespace, d.Name)
+	running := a.metrics.running.WithLabelValues(d.Namespace, d.Name)
+	shouldRun := func(poweredOff bool) {
+		a.metrics.shouldRun.WithLabelValues(d.Namespace, d.Name).Set(boolGauge(d.Spec.RunState != computev1alpha1.RunStateStopped && !poweredOff))
+	}
+	shouldRun(r.PoweredOff)
 	read := func() (libvirt.Object, error) {
 		dom, err := a.hv.Domain(name)
 		return libvirt.Object{Found: dom.Found, XML: dom.XML}, err
@@ -207,6 +232,7 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 	if err != nil {
 		return fail(err)
 	}
+	running.Set(boolGauge(cur.Running()))
 	poweredOff := r.PoweredOff
 	switch {
 	case cur.Running():
@@ -222,10 +248,12 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 		if cur, err = a.hv.Domain(name); err != nil {
 			return fail(err)
 		}
+		running.Set(boolGauge(cur.Running()))
 	}
 	if err := a.store.Update(r.Kind, r.Key, func(rec *state.Record) { rec.PoweredOff = poweredOff }); err != nil {
 		return fail(err)
 	}
+	shouldRun(poweredOff)
 	status.State, status.Reason = cur.State, cur.Reason
 	return status, nil
 }

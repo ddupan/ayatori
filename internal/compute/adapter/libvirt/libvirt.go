@@ -147,6 +147,20 @@ func (c *Client) StartPool(name string) error {
 	return p.Create(0)
 }
 
+// PoolSpace 返回 pool 的容量与可用空间（字节）。
+func (c *Client) PoolSpace(name string) (capacity, available uint64, err error) {
+	p, err := c.conn.LookupStoragePoolByName(name)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer free(p.Free)
+	info, err := p.GetInfo()
+	if err != nil {
+		return 0, 0, err
+	}
+	return info.Capacity, info.Available, nil
+}
+
 // RemovePool 停止并删除定义，不删除底层存储。
 func (c *Client) RemovePool(name string) error {
 	p, err := c.conn.LookupStoragePoolByName(name)
