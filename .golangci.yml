@@ -11,6 +11,7 @@ linters:
     - ginkgolinter
     - goconst
     - gocyclo
+    - gosec
     - govet
     - ineffassign
     - lll
@@ -25,6 +26,10 @@ linters:
     - unused
     - loggercheck
   settings:
+    gosec:
+      excludes:
+        # Kubernetes API 大量使用 int32，转换的值域由构造保证；逐处标注只是噪音。
+        - G115
     depguard:
       rules:
         forbid-sort-pkg:
@@ -41,6 +46,10 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # 测试里的假凭据、临时后端子进程与文件权限是预期行为；真实密钥泄漏由 gitleaks 检查。
+      - linters:
+          - gosec
+        path: (_test\.go$|^internal/testenv/)
       - linters:
           - lll
         path: api/*

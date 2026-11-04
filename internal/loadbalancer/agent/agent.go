@@ -46,7 +46,7 @@ type Neighbor struct {
 
 // LoadConfig 读取并校验配置；缺省间隔为 2 秒。
 func LoadConfig(path string) (Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // 路径来自启动参数，读取它正是本函数的职责
 	if err != nil {
 		return Config{}, err
 	}

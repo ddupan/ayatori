@@ -10,7 +10,13 @@ on:
       - 'internal/testenv/**'
       - 'hack/integration-test.sh'
       - '.gitea/workflows/loadbalancer-integration.yml'
+      - '.gitea/actions/setup-go/**'
   workflow_dispatch:
+
+# 同一 PR 推新提交时取消旧的运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -21,22 +27,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
-      - name: Use Artifact Keeper caches
-        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
-        with:
-          go: 'true'
-          go-version-file: go.mod
-
-      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
-      - name: Cache Go modules, build cache and tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            bin
-          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+      - name: Set up Go
+        uses: ./.gitea/actions/setup-go
 
       - name: Lint integration build
         run: make lint-loadbalancer-integration
@@ -50,23 +42,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # Go 工具链与模块、Docker Hub 镜像走 Artifact Keeper 的 pull-through 缓存，不直连外网。
-      - name: Use Artifact Keeper caches
-        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+      # Docker Hub 镜像（集成测试的后端容器）同样走 Artifact Keeper。
+      - name: Set up Go
+        uses: ./.gitea/actions/setup-go
         with:
-          go: 'true'
-          go-version-file: go.mod
           docker: 'true'
-
-      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
-      - name: Cache Go modules, build cache and tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            bin
-          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
 
       # Runner 提供本 job 可用的 Docker；workflow 只验证，不重复启动 daemon。
       - name: Verify Docker availability

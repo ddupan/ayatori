@@ -203,13 +203,13 @@ func serverHealth(ctx context.Context, api *dataplaneapi.ClientWithResponses, ui
 			continue
 		}
 		portText, _ := strings.CutSuffix(rest, "_backend")
-		port, err := strconv.Atoi(portText)
+		port, err := strconv.ParseInt(portText, 10, 32)
 		name := value(stat.Name)
 		i := strings.LastIndex(name, ":")
 		if err != nil || i < 0 {
 			continue
 		}
-		endpointPort, err := strconv.Atoi(name[i+1:])
+		endpointPort, err := strconv.ParseInt(name[i+1:], 10, 32)
 		if err != nil {
 			continue
 		}

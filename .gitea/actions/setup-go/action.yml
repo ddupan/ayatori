@@ -1,0 +1,27 @@
+name: Setup Go
+description: 各 Go job 共用的准备步骤：Go 工具链与依赖走 Artifact Keeper，缓存 Go 模块、构建缓存与 bin 工具
+inputs:
+  docker:
+    description: Docker Hub 镜像也走 Artifact Keeper（集成测试的后端容器）
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
+    - uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+      with:
+        go: 'true'
+        go-version-file: go.mod
+        docker: ${{ inputs.docker }}
+
+    # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint）直接从 GitHub 下载，一并缓存。
+    # 各 job 编译的包与构建标签不同，按 job 分开缓存。缓存只在 job 成功时保存，
+    # go.sum/Makefile 变化后用 restore-keys 先恢复上一份再增量构建，避免冷缓存全量编译。
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+          bin
+        key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile') }}
+        restore-keys: go-${{ github.workflow }}-${{ github.job }}-
