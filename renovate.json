@@ -23,6 +23,12 @@
       "groupName": "go toolchain"
     },
     {
+      "description": "go 指令是最低版本约束，默认策略下新补丁版本已满足约束而不会更新；bump 让它与镜像一起升到新版本。",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
+    },
+    {
       "description": "生成器升级会改变生成物，Verify 的 git diff 检查会失败，需要在分支上重新生成后提交。",
       "matchDepNames": ["sigs.k8s.io/controller-tools", "github.com/oapi-codegen/oapi-codegen/v2"],
       "commitMessageSuffix": "(需手动步骤)",
