@@ -81,7 +81,7 @@ func join(t *testing.T, admin kubernetes.Interface, cfg *rest.Config, role, toke
 }
 
 // TestRoles：同一台主机上的两个角色各自加入，共同持有一个 Node，各写各的角色；deploy/flux/nodes 的
-// 准入策略不允许一个角色的 agent 改动另一台主机或另一个角色。
+// 准入策略不允许一个角色的 agent 改动另一台主机、另一个角色或 Node 的 Ready。
 func TestRoles(t *testing.T) {
 	ctrl.SetLogger(logr.Discard())
 	ctx := t.Context()
@@ -153,6 +153,10 @@ func TestRoles(t *testing.T) {
 			return agent.Status().Apply(ctx, corev1ac.Node(host).WithStatus(corev1ac.NodeStatus().WithConditions(
 				corev1ac.NodeCondition().WithType(node.ConditionType(loadbalancer)).WithStatus(corev1.ConditionFalse))),
 				client.FieldOwner(loadbalancer+"-agent"), client.ForceOwnership)
+		},
+		"the Node Ready condition": func() error {
+			return agent.Status().Apply(ctx, corev1ac.Node(host).WithStatus(corev1ac.NodeStatus().WithConditions(
+				corev1ac.NodeCondition().WithType(corev1.NodeReady).WithStatus(corev1.ConditionFalse))), owner)
 		},
 		"another role's lease": func() error {
 			return agent.Apply(ctx, lease(host+"-"+loadbalancer), owner, client.ForceOwnership)

@@ -104,6 +104,9 @@ LB agent 与 compute Agent（ADR-0007、ADR-0015）使用同一套节点注册�
   - 地址、`nodeInfo` 等主机级字段。各 agent 写入相同的值，SSA 允许多个 field manager 共同持有。
 
   Node 由先启动的 agent 创建。agent 不删除 Node，主机退出由部署方处理。
+- **没有整机的就绪状态。** Node 的 `Ready` condition 不写入，准入策略也禁止 agent 写它：compute Agent
+  不就绪不能让同机的 LB 被当成不可用。控制面不运行 node lifecycle controller，也不打 taint；
+  各 controller 只看自己角色的 label、condition 和 Lease。
 - **心跳按角色分开。** LB agent 续约 `kube-node-lease` 中的 `<node>-loadbalancer`，不碰与 Node 同名的
   Lease。ADR-0015 的自动冷启动和 fencing 要根据 Lease 判断 compute Agent 是否存活：如果同机的 LB agent
   替它续约，compute Agent 挂掉后 Lease 仍然是新的，VM 就得不到恢复。建议 compute 也改用按角色命名的
