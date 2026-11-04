@@ -1,0 +1,36 @@
+# 安全扫描（ci-actions/security-scan），报告模式：发现只在 PR 上评论，不阻塞合并。
+# 仓库级排除与误报处理写在各工具自己的文件里（.semgrepignore、.gitleaksignore、trivy.yaml、.trivyignore）。
+name: Security Scan
+
+on:
+  pull_request:
+  schedule:
+    # 依赖漏洞随时间出现，与 PR 无关；每周全量扫一次，结果写 job 日志。
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+# 同一 PR 推新提交时取消旧的运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    runs-on: [self-hosted, pod]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      # semgrep 从 PyPI 缓存安装。
+      - name: Use Artifact Keeper caches
+        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
+        with:
+          pypi: 'true'
+
+      # 固定到 v1 的提交，与其他仓库一致。
+      - name: Security scan
+        uses: https://git.ddupan.top/panxiao81/ci-actions/security-scan@4264c6e1232f97125aa98a2244c63ddee6d82a30
+        with:
+          semgrep-config: p/default p/golang

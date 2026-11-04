@@ -2,7 +2,7 @@ name: Verify
 
 on:
   # 合并前完成全量验证，合并到 main 后不重复运行同一套检查。
-  # 只改文档、部署 role/Flux 清单或 Release 工作流时不运行；deploy/** 由 Deploy 工作流检查。
+  # 只改文档、部署 role/Flux 清单、Release 或安全扫描工作流时不运行；deploy/** 由 Deploy 工作流检查。
   pull_request:
     paths-ignore:
       - 'docs/**'
@@ -10,7 +10,13 @@ on:
       - 'deploy/**'
       - '.gitea/workflows/release.yml'
       - '.gitea/workflows/deploy.yml'
+      - '.gitea/workflows/security-scan.yml'
   workflow_dispatch:
+
+# 同一 PR 推新提交时取消旧的运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -21,31 +27,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
-      - name: Use Artifact Keeper caches
-        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
-        with:
-          go: 'true'
-          go-version-file: go.mod
-
-      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
-      - name: Cache Go modules, build cache and tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            bin
-          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+      - name: Set up Go
+        uses: ./.gitea/actions/setup-go
 
       - name: Verify generated files and tests
         run: |
           make test
           git diff --exit-code
 
+      # make test 已完成 manifests/generate/fmt/vet，这里直接编译，不再经 make build 重跑一遍。
       - name: Build controller entrypoint
         run: |
-          make build
+          go build -o bin/manager cmd/main.go
           ./bin/manager --help
 
   lint:
@@ -56,22 +49,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
-      - name: Use Artifact Keeper caches
-        uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
-        with:
-          go: 'true'
-          go-version-file: go.mod
-
-      # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint 自定义构建）直接从 GitHub 下载，一并缓存。
-      - name: Cache Go modules, build cache and tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            bin
-          key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile', '.custom-gcl.yml') }}
+      - name: Set up Go
+        uses: ./.gitea/actions/setup-go
 
       - name: Lint
         run: make lint
