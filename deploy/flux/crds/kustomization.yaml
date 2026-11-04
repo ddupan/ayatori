@@ -1,4 +1,4 @@
-# CRD 单独同步且关闭 prune：误删 CRD 会连带删除其全部对象（Instance/Tenant/Database、LoadBalancer、LoadBalancerHost、Backend）。
+# CRD 单独同步且关闭 prune：误删 CRD 会连带删除其全部对象（Instance/Tenant/Database、LoadBalancer、LoadBalancerHost、Backend、Libvirt*）。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -8,3 +8,6 @@ resources:
 - ../../../config/crd/bases/network.ayatori.ddupan.top_loadbalancers.yaml
 - ../../../config/crd/bases/network.ayatori.ddupan.top_loadbalancerhosts.yaml
 - ../../../config/crd/bases/network.ayatori.ddupan.top_backends.yaml
+- ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtnetworks.yaml
+- ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtstoragepools.yaml
+- ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtdomains.yaml
