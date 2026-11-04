@@ -207,7 +207,13 @@ Attachment，不阻塞其他 Host。外部系统没有 watch，Reconciler 以固
 - 只主动建立会话（不监听 179），路由器侧为 passive。
 - 指标：`ayatori_lb_agent_haproxy_up`、`ayatori_lb_agent_vip_announced{vip}`、
   `ayatori_lb_agent_bgp_session_established{neighbor}`、
-  `ayatori_lb_agent_last_sync_success_timestamp_seconds`。
+  `ayatori_lb_agent_last_sync_success_timestamp_seconds`；加入控制面后另有
+  `ayatori_lb_agent_client_certificate_not_after_timestamp_seconds`（尚未签发时为 0）。
+- 加入控制面（ADR-0022，配置了 `nodeName` 时）：以 `system:ayatori:node:<nodeName>` 申请证书并
+  自行续签，注册为 loadbalancer 角色的 Node，续约 `kube-node-lease/<nodeName>-loadbalancer`。
+  condition `loadbalancer.ayatori.ddupan.top/Ready` 表示 HAProxy 应答且至少一个 BGP 会话已建立
+  （reason `AgentReady`、`HAProxyDown`、`NoBGPSession`）。先按本机现状收敛一轮宣告再连接 API；
+  证书尚未签发、控制面不可用时宣告照常。
 - 只读的 `GET /status`（ADR-0018，与 `/metrics` 同一监听）：HAProxy 是否应答、各邻居会话、最近
   一次成功收敛时间，以及每个有 bind 的 VIP 是否已发给路由器与未发出的原因。原因按三层取第一个
   不满足的：`not-local`（内核不把它当本机地址）、`frontend-not-open`（某个 frontend 或 bind 不是
@@ -226,6 +232,9 @@ vipPool: 10.62.0.0/24
 haproxySocket: /run/haproxy/agent.sock   # 只读（level user），cookbook 单独给 agent 用户开放
 interval: 2s
 metricsAddress: 10.60.0.30:9641
+# 以下加入控制面（ADR-0022）；不写 nodeName 时只在本机宣告。
+nodeName: lb-1
+credentialsDir: /etc/ayatori/lb-agent   # 部署方写入 bootstrap-kubeconfig；kubeconfig 二选一，用于开发
 ```
 
 ## 状态
