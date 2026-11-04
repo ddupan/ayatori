@@ -1,0 +1,47 @@
+# LB agent 只写自己（ADR-0022）：
+#   - LoadBalancerHost 只能是与自己同名的那个；
+#   - 主资源只能以不带 spec 的形式注册，之后不能改 spec 与 finalizer（它们归管理员与 controller）；
+#   - status 只能写自己的。
+# 主机名取自证书用户名 system:ayatori:node:<主机名>（internal/infra/node）。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ayatori-loadbalancer-agent
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [network.ayatori.ddupan.top]
+      apiVersions: ["*"]
+      operations: [CREATE, UPDATE]
+      resources: [loadbalancerhosts, loadbalancerhosts/status]
+  matchConditions:
+  - name: is-loadbalancer-agent
+    expression: "'system:ayatori:role:loadbalancer' in request.userInfo.groups"
+  variables:
+  - name: node
+    expression: "request.userInfo.username.startsWith('system:ayatori:node:') ? request.userInfo.username.substring(20) : ''"
+  - name: main
+    expression: "request.subResource == ''"
+  - name: finalizers
+    expression: "has(object.metadata.finalizers) ? object.metadata.finalizers : []"
+  validations:
+  - expression: "variables.node != '' && object.metadata.name == variables.node"
+    messageExpression: "'node ' + variables.node + ' may only write its own LoadBalancerHost'"
+  - expression: >-
+      !variables.main || request.operation != 'CREATE' ||
+      ((!has(object.spec) || !has(object.spec.dataPlaneURL)) && size(variables.finalizers) == 0)
+    message: "agent registers LoadBalancerHost without spec or finalizers"
+  - expression: >-
+      !variables.main || request.operation != 'UPDATE' ||
+      (has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec) &&
+       variables.finalizers == (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []))
+    message: "agent may not change LoadBalancerHost spec or finalizers"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ayatori-loadbalancer-agent
+spec:
+  policyName: ayatori-loadbalancer-agent
+  validationActions: [Deny]

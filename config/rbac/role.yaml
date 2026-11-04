@@ -27,6 +27,14 @@ rules:
   verbs:
   - approve
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - database.ayatori.ddupan.top
   resources:
   - postgresqldatabases

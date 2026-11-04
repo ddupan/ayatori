@@ -13,12 +13,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
+	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
 	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
 	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
@@ -27,12 +32,14 @@ import (
 
 const lbHost = "lb-1"
 
-// TestAgentJoins：agent 以 bootstrap token 申请证书（ADR-0021），批准后注册为 loadbalancer 角色的 Node
-// 并续约自己的 Lease（ADR-0022）；角色就绪跟随本机 HAProxy 与 BGP 会话。
+// TestAgentJoins：agent 以 bootstrap token 申请证书（ADR-0021），批准后注册为 loadbalancer 角色的 Node、
+// 续约自己的 Lease，并注册同名的 LoadBalancerHost、写它的 status（ADR-0022）；角色就绪跟随本机
+// HAProxy 与 BGP 会话。deploy/flux/loadbalancer 的权限与准入策略只允许它写自己的 status。
 func TestAgentJoins(t *testing.T) {
 	ctrl.SetLogger(logr.Discard())
 	authority := testenv.NewClientCA(t)
-	env := &envtest.Environment{}
+	root := filepath.Join("..", "..", "..")
+	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join(root, "config", "crd", "bases")}, ErrorIfCRDPathMissing: true}
 	env.ControlPlane.GetAPIServer().Authn = authority
 	cfg, err := env.Start()
 	if err != nil {
@@ -40,16 +47,23 @@ func TestAgentJoins(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = env.Stop() })
 	admin := kubernetes.NewForConfigOrDie(cfg)
-	root := filepath.Join("..", "..", "..")
 	for _, path := range []string{
 		filepath.Join(root, "internal", "infra", "clientcert", "testdata", "rbac.yaml"),
 		filepath.Join(root, "deploy", "flux", "nodes", "rbac.yaml"),
 		filepath.Join(root, "deploy", "flux", "nodes", "admission.yaml"),
+		filepath.Join(root, "deploy", "flux", "loadbalancer", "agent-rbac.yaml"),
+		filepath.Join(root, "deploy", "flux", "loadbalancer", "agent-admission.yaml"),
 	} {
 		testenv.ApplyManifest(t, cfg, path)
 	}
 	go authority.SignApproved(t.Context(), admin, time.Hour)
-	k, err := client.New(cfg, client.Options{})
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, networkv1alpha1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	k, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +121,95 @@ func TestAgentJoins(t *testing.T) {
 		t.Fatalf("证书到期时间指标 = %v", got)
 	}
 
+	waitForLong(t, "注册 LoadBalancerHost，HAProxy 不应答时未就绪", hostReports(t, k, metav1.ConditionFalse, 0))
+
+	agentConfig, err := clientcert.RESTConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, err := client.New(agentConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("准入只允许 agent 写自己的 status", func(t *testing.T) { onlyOwnStatus(t, k, self) })
+
+	// 管理员加上 spec、controller 加上 finalizer 之后，agent 的注册照常通过准入。
+	host := &networkv1alpha1.LoadBalancerHost{}
+	if err := k.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
+		t.Fatal(err)
+	}
+	host.Spec.DataPlaneURL = "https://" + lbHost + ".example.test:5555"
+	host.Finalizers = []string{"network.ayatori.ddupan.top/loadbalancerhost"}
+	if err := k.Update(t.Context(), host); err != nil {
+		t.Fatal(err)
+	}
+
 	startHAProxy(t)
 	waitForLong(t, "HAProxy 应答、会话建立后角色就绪", condition(corev1.ConditionTrue, "AgentReady"))
+	waitForLong(t, "LoadBalancerHost 报告就绪与两个 VIP", hostReports(t, k, metav1.ConditionTrue, 2))
+}
+
+// hostReports 在 LoadBalancerHost 的 AgentReady 为 status、vips 有 vips 项时满足。
+func hostReports(t *testing.T, k client.Client, status metav1.ConditionStatus, vips int) func() bool {
+	return func() bool {
+		host := &networkv1alpha1.LoadBalancerHost{}
+		if err := k.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
+			return false
+		}
+		ready := meta.FindStatusCondition(host.Status.Conditions, "AgentReady")
+		return ready != nil && ready.Status == status && len(host.Status.VIPs) == vips
+	}
+}
+
+func onlyOwnStatus(t *testing.T, admin, self client.Client) {
+	other := &networkv1alpha1.LoadBalancerHost{}
+	other.Name = "lb-2"
+	if err := admin.Create(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	own := func() *networkv1alpha1.LoadBalancerHost {
+		host := &networkv1alpha1.LoadBalancerHost{}
+		if err := self.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
+			t.Fatal(err)
+		}
+		return host
+	}
+	for name, write := range map[string]func() error{
+		"注册其他主机": func() error {
+			host := &networkv1alpha1.LoadBalancerHost{}
+			host.Name = "lb-3"
+			return self.Create(t.Context(), host)
+		},
+		"写其他主机的 status": func() error {
+			host := &networkv1alpha1.LoadBalancerHost{}
+			if err := self.Get(t.Context(), client.ObjectKey{Name: "lb-2"}, host); err != nil {
+				return err
+			}
+			host.Status.VIPs = []networkv1alpha1.AgentVIPStatus{{Address: "10.62.0.9", Announced: true}}
+			return self.Status().Update(t.Context(), host)
+		},
+		"改 spec": func() error {
+			host := own()
+			host.Spec.DataPlaneURL = "https://evil.example.test:5555"
+			return self.Update(t.Context(), host)
+		},
+		"改 finalizer": func() error {
+			host := own()
+			host.Finalizers = append(host.Finalizers, "example.test/keep")
+			return self.Update(t.Context(), host)
+		},
+		"删除自己": func() error { return self.Delete(t.Context(), own()) },
+		"写 LoadBalancer": func() error {
+			lb := &networkv1alpha1.LoadBalancer{}
+			lb.Namespace, lb.Name = "default", "x"
+			lb.Spec.Ports = []networkv1alpha1.LoadBalancerPort{{Port: 80, BackendRef: networkv1alpha1.BackendRef{Name: "x"}}}
+			return self.Create(t.Context(), lb)
+		},
+	} {
+		if err := write(); !apierrors.IsForbidden(err) && !apierrors.IsInvalid(err) {
+			t.Errorf("%s：应被拒绝，got %v", name, err)
+		}
+	}
 }
 
 // waitForLong 用于等待 Node 写入：没有变化时 Registrar 每 node.RenewInterval 才检查一次。
