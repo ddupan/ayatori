@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -94,13 +95,13 @@ type domainStats struct {
 }
 
 func newDomainStats(labels []string) *domainStats {
-	device := append(labels[:len(labels):len(labels)], "device")
+	device := append(slices.Clip(labels), "device")
 	desc := func(name, help string, labels []string) *prometheus.Desc {
 		return prometheus.NewDesc("ayatori_compute_agent_domain_"+name, help, labels, nil)
 	}
 	d := &domainStats{
 		cpu:         desc("cpu_seconds_total", "实例累计使用的 CPU 时间。", labels),
-		memory:      desc("memory_bytes", "balloon 报告的内存：current 为客户机当前可用，maximum 为配置量，rss 为宿主机上的驻留内存。", append(labels[:len(labels):len(labels)], "type")),
+		memory:      desc("memory_bytes", "balloon 报告的内存：current 为客户机当前可用，maximum 为配置量，rss 为宿主机上的驻留内存。", append(slices.Clip(labels), "type")),
 		diskRead:    desc("disk_read_bytes_total", "磁盘累计读取的字节数。", device),
 		diskWritten: desc("disk_written_bytes_total", "磁盘累计写入的字节数。", device),
 		netRx:       desc("network_receive_bytes_total", "客户机网卡累计接收的字节数。", device),
