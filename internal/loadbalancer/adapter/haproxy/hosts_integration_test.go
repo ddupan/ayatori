@@ -177,26 +177,7 @@ func TestHostsContract(t *testing.T) {
 		}
 	})
 
-	t.Run("Observe 报告各 server 的检查结论", func(t *testing.T) {
-		pass := loadbalancer.Endpoint{Address: loopback, Port: 5555}
-		closed := loadbalancer.Endpoint{Address: "127.0.0.1", Port: 1}
-		var servers []loadbalancer.ServerHealth
-		waitFor(t, func() bool {
-			facts, err := hosts.Observe(t.Context(), f.host, aggregate(uid, ports))
-			if err != nil {
-				t.Fatal(err)
-			}
-			servers = facts.Servers
-			return slices.Contains(servers, loadbalancer.ServerHealth{Port: passPort, Endpoint: pass, State: "UP", CheckStatus: "L7OK", CheckCode: 401}) &&
-				slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool {
-					return s.Port == closedPort && s.Endpoint == closed && s.State == "DOWN" && s.CheckStatus == "L4CON"
-				})
-		})
-		// 其他 LoadBalancer 的 server 不在结果中。
-		if slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool { return s.Port == 7100 }) {
-			t.Fatalf("got %+v", servers)
-		}
-	})
+	t.Run("Observe 报告各 server 的检查结论", func(t *testing.T) { reportsServerHealth(t, hosts, f, ports) })
 
 	t.Run("配置已写入但进程未加载时重新 reload", func(t *testing.T) {
 		// 运行中的进程换回不含 LB 的配置，文件再恢复后重启 dataplaneapi：文件是期望配置，
@@ -379,4 +360,27 @@ func TestHostsRuntimeEndpoints(t *testing.T) {
 		now = now.Add(2 * time.Minute)
 		applyUntilMatches(t, hosts, f, removed)
 	})
+}
+
+// reportsServerHealth 验证 Observe 从真实 stats 解析出各 server 的检查结论（ADR-0023）。
+func reportsServerHealth(t *testing.T, hosts *haproxy.Hosts, f fixture, ports []loadbalancer.Port) {
+	t.Helper()
+	pass := loadbalancer.Endpoint{Address: loopback, Port: 5555}
+	closed := loadbalancer.Endpoint{Address: "127.0.0.1", Port: 1}
+	var servers []loadbalancer.ServerHealth
+	waitFor(t, func() bool {
+		facts, err := hosts.Observe(t.Context(), f.host, aggregate(uid, ports))
+		if err != nil {
+			t.Fatal(err)
+		}
+		servers = facts.Servers
+		return slices.Contains(servers, loadbalancer.ServerHealth{Port: passPort, Endpoint: pass, State: "UP", CheckStatus: "L7OK", CheckCode: 401}) &&
+			slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool {
+				return s.Port == closedPort && s.Endpoint == closed && s.State == "DOWN" && s.CheckStatus == "L4CON"
+			})
+	})
+	// 其他 LoadBalancer 的 server 不在结果中。
+	if slices.ContainsFunc(servers, func(s loadbalancer.ServerHealth) bool { return s.Port == 7100 }) {
+		t.Fatalf("got %+v", servers)
+	}
 }
