@@ -212,7 +212,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
 # renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION ?= v2.15.0
 # renovate: datasource=go depName=github.com/oapi-codegen/oapi-codegen/v2
-OAPI_CODEGEN_VERSION ?= v2.8.0
+OAPI_CODEGEN_VERSION ?= v2.8.2
 # 与 LB 主机部署的 dataplaneapi 版本一致；升级时同时更新校验和并重新生成。
 DATAPLANEAPI_VERSION ?= v3.4.3
 DATAPLANEAPI_SPEC_SHA256 ?= 035a0dc6f44251fdf5c5b5a32bd62827c027c238a774888b899f1b6bce20a566
