@@ -241,15 +241,15 @@ func (f convergence) purges(t *testing.T, spec networkv1alpha1.LoadBalancerSpec)
 	}
 }
 
-// create 创建以 spec 为规格、VIP 为 address 的 LoadBalancer，等到本机只有它的配置。
-func (f convergence) create(t *testing.T, name, address string, spec networkv1alpha1.LoadBalancerSpec) *networkv1alpha1.LoadBalancer {
+// create 创建以 spec 为规格、VIP 为 vip 的 LoadBalancer，等到本机只有它的配置。
+func (f convergence) create(t *testing.T, name, vip string, spec networkv1alpha1.LoadBalancerSpec) *networkv1alpha1.LoadBalancer {
 	t.Helper()
 	lb := &networkv1alpha1.LoadBalancer{Spec: spec}
 	lb.Namespace, lb.Name = testNamespace, name
 	if err := f.k.Create(t.Context(), lb); err != nil {
 		t.Fatal(err)
 	}
-	lb.Status.Address = address
+	lb.Status.Address = vip
 	if err := f.k.Status().Update(t.Context(), lb); err != nil {
 		t.Fatal(err)
 	}
