@@ -37,6 +37,8 @@ const (
 	lan     = "lan"
 	running = "running"
 	rack    = "rack"
+	// localPool 是测试用的本地 dir pool。
+	localPool = "local"
 )
 
 // test:///default 在进程内由所有连接共享；最后一个连接关闭后状态清空，用来模拟宿主机重启。
@@ -270,10 +272,10 @@ func (s *suite) createObjects(t *testing.T) {
 		XML: `<network><name>ignored</name><forward mode='bridge'/><bridge name='br-lan'/></network>`, NodeSelector: map[string]string{rack: "a"}}})
 	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: "elsewhere", Spec: computev1alpha1.LibvirtNetworkSpec{
 		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{rack: "b"}}})
-	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: "local", Spec: computev1alpha1.LibvirtStoragePoolSpec{
+	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: localPool, Spec: computev1alpha1.LibvirtStoragePoolSpec{
 		XML: `<pool type='dir'><target><path>/images</path></target></pool>`}})
 	eventually(t, 30*time.Second, func() error {
-		pool, err := s.l.LookupStoragePoolByName("local")
+		pool, err := s.l.LookupStoragePoolByName(localPool)
 		if err != nil {
 			return err
 		}
@@ -321,7 +323,7 @@ func (s *suite) definesSelected(t *testing.T) {
 	s.expectMetric(t, lastSuccessMetric,
 		objectLabels("LibvirtNetwork", "", lan),
 		func(v float64, found bool) bool { return found && time.Since(time.Unix(int64(v), 0)) < time.Minute })
-	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": "local", "type": "capacity"},
+	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": localPool, "type": "capacity"},
 		func(v float64, found bool) bool { return found && v > 0 })
 	// 资源用量来自 GetAllDomainStats。
 	s.expectMetric(t, "ayatori_compute_agent_domain_cpu_seconds_total", domainLabels("vm1"),
@@ -372,11 +374,11 @@ func (s *suite) managesVolumes(t *testing.T) {
 	ctx := t.Context()
 	volume := func(name, node string, policy computev1alpha1.ReclaimPolicy) *computev1alpha1.LibvirtStorageVolume {
 		return &computev1alpha1.LibvirtStorageVolume{Name: name, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
-			Pool: "local", NodeName: node, ReclaimPolicy: policy,
+			Pool: localPool, NodeName: node, ReclaimPolicy: policy,
 			XML: `<volume><name>ignored</name><capacity unit='MiB'>1</capacity></volume>`}}
 	}
 	exists := func(name string) bool {
-		pool, err := s.l.LookupStoragePoolByName("local")
+		pool, err := s.l.LookupStoragePoolByName(localPool)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -481,7 +483,7 @@ func (s *suite) convergesOffline(t *testing.T) {
 		if active, _ := n.IsActive(); !active {
 			return fmt.Errorf("network lan not active")
 		}
-		p, err := s.l.LookupStoragePoolByName("local")
+		p, err := s.l.LookupStoragePoolByName(localPool)
 		if err != nil {
 			return err
 		}
