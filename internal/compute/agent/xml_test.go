@@ -57,14 +57,17 @@ func TestPrepareDomain(t *testing.T) {
 	}
 }
 
-func TestPoolHashIgnoresUsage(t *testing.T) {
+func TestPoolHashIgnoresObservedValues(t *testing.T) {
 	a := `<pool type='dir'><name>p</name><capacity unit='bytes'>100</capacity><allocation unit='bytes'>1</allocation><available unit='bytes'>99</available><target><path>/srv/p</path></target></pool>`
 	b := strings.NewReplacer("'100'", "'100'", ">1<", ">50<", ">99<", ">50<").Replace(a)
 	c := strings.Replace(a, "/srv/p", "/srv/q", 1)
+	// pool 启动后 libvirt 按目录实际情况填入的权限（compute-dev1 上实测）。
+	d := strings.Replace(a, "</path>", "</path><permissions><mode>0711</mode><owner>0</owner><group>0</group></permissions>", 1)
 	ha, _ := poolHash(a)
 	hb, _ := poolHash(b)
 	hc, _ := poolHash(c)
-	if ha != hb || ha == hc {
-		t.Fatalf("usage must not count, config must: %s %s %s", ha, hb, hc)
+	hd, _ := poolHash(d)
+	if ha != hb || ha != hd || ha == hc {
+		t.Fatalf("usage and permissions must not count, config must: %s %s %s %s", ha, hb, hc, hd)
 	}
 }
