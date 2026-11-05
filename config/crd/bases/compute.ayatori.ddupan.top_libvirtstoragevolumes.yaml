@@ -1,0 +1,109 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: libvirtstoragevolumes.compute.ayatori.ddupan.top
+spec:
+  group: compute.ayatori.ddupan.top
+  names:
+    kind: LibvirtStorageVolume
+    listKind: LibvirtStorageVolumeList
+    plural: libvirtstoragevolumes
+    singular: libvirtstoragevolume
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.pool
+      name: Pool
+      type: string
+    - jsonPath: .spec.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.path
+      name: Path
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              LibvirtStorageVolumeSpec 在一个本地 pool 中创建卷（ADR-0015）。创建后不可修改：卷的内容是数据，
+              Ayatori 不会为了让配置一致而重建它。扩容（ADR-0019 §7）与从 URL 导入（§9）在后续版本加入。
+            properties:
+              nodeName:
+                description: NodeName 是卷所在的节点。本版本只支持本地 pool，必须指定节点。
+                maxLength: 253
+                minLength: 1
+                type: string
+              pool:
+                description: Pool 是 LibvirtStoragePool 的名字。
+                minLength: 1
+                type: string
+              reclaimPolicy:
+                default: Retain
+                description: ReclaimPolicy 决定删除对象时如何处理 libvirt 中的卷。
+                enum:
+                - Retain
+                - Delete
+                type: string
+              xml:
+                description: |-
+                  XML 是原生 volume XML，例如 <volume><capacity unit='G'>20</capacity><target><format type='qcow2'/></target></volume>。
+                  name 由 Ayatori 填写为对象名，domain 因此可以用 <source pool='…' volume='对象名'/> 引用。
+                  卷已存在时直接接管，不按 XML 修改或覆盖。
+                minLength: 1
+                type: string
+            required:
+            - nodeName
+            - pool
+            - xml
+            type: object
+            x-kubernetes-validations:
+            - message: pool, nodeName and xml are immutable
+              rule: self.pool == oldSelf.pool && self.nodeName == oldSelf.nodeName
+                && self.xml == oldSelf.xml
+          status:
+            properties:
+              capacity:
+                description: Capacity 是卷的容量（字节）。
+                format: int64
+                type: integer
+              message:
+                description: Message 是最近一次创建失败的原因；成功时为空。
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              path:
+                description: Path 是卷在节点上的路径；为空表示尚未创建。
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    selectableFields:
+    - jsonPath: .spec.nodeName
+    served: true
+    storage: true
+    subresources:
+      status: {}

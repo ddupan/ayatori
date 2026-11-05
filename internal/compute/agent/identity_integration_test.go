@@ -102,7 +102,17 @@ func TestAgentIdentity(t *testing.T) {
 		mine := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: identMine, Spec: computev1alpha1.LibvirtDomainSpec{
 			NodeName: node, DomainXML: domainXML("")}}
 		create(t, k, mine)
+		vol := &computev1alpha1.LibvirtStorageVolume{Name: identMine, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
+			Pool: "missing", NodeName: node, XML: "<volume><capacity>1</capacity></volume>"}}
+		create(t, k, vol)
 		eventually(t, time.Minute, func() error {
+			// pool 不存在，创建失败也要回写原因。
+			if err := k.Get(ctx, client.ObjectKeyFromObject(vol), vol); err != nil {
+				return err
+			}
+			if vol.Status.Message == "" {
+				return fmt.Errorf("volume status = %+v", vol.Status)
+			}
 			var n computev1alpha1.LibvirtNetwork
 			if err := k.Get(ctx, client.ObjectKey{Name: identNet}, &n); err != nil {
 				return err
@@ -130,6 +140,9 @@ func TestAgentIdentity(t *testing.T) {
 	theirs := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "ident-theirs", Spec: computev1alpha1.LibvirtDomainSpec{
 		NodeName: other, DomainXML: domainXML("")}}
 	create(t, k, theirs)
+	theirVolume := &computev1alpha1.LibvirtStorageVolume{Name: "ident-theirs", Spec: computev1alpha1.LibvirtStorageVolumeSpec{
+		Pool: "missing", NodeName: other, XML: "<volume><capacity>1</capacity></volume>"}}
+	create(t, k, theirVolume)
 
 	denied := map[string]func() error{
 		"another Node": func() error {
@@ -152,6 +165,11 @@ func TestAgentIdentity(t *testing.T) {
 			d := theirs.DeepCopy()
 			d.Status.NodeName = node
 			return as.Status().Update(ctx, d)
+		},
+		"the status of a volume assigned to another node": func() error {
+			v := theirVolume.DeepCopy()
+			v.Status.Path = "/x"
+			return as.Status().Update(ctx, v)
 		},
 		"another node as the running node of its own domain": func() error {
 			var d computev1alpha1.LibvirtDomain

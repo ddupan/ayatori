@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -16,13 +17,13 @@ import (
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
 )
 
-// observation 是一轮 reconcile 后要回写的 status：network/pool 只写本节点那一项，domain 写整个 status。
+// observation 是一轮 reconcile 后要回写的 status：network/pool 只写本节点那一项，volume/domain 写整个 status。
 type observation struct {
 	kind, namespace, name string
 	status                any
 }
 
-// reconcile 按本地状态收敛本机 libvirt。network 与 pool 先于 domain：domain 引用它们。
+// reconcile 按本地状态收敛本机 libvirt。network、pool、volume 依次先于 domain：后者引用前者。
 func (a *Agent) reconcile() {
 	connected := a.connect()
 	a.metrics.libvirtUp.Set(boolGauge(connected))
@@ -32,7 +33,7 @@ func (a *Agent) reconcile() {
 	}
 	observed := map[string]observation{}
 	seen := map[objectID]bool{}
-	for _, kind := range []string{kindNetwork, kindPool, kindDomain} {
+	for _, kind := range kinds {
 		for _, r := range a.store.List(kind) {
 			if r.Deleted {
 				if err := a.remove(r); err != nil {
@@ -111,6 +112,11 @@ func (a *Agent) remove(r state.Record) error {
 		err = a.hv.RemoveNetwork(r.Key)
 	case kindPool:
 		err = a.hv.RemovePool(r.Key)
+	case kindVolume:
+		var removed bool
+		if removed, err = a.removeVolume(r); err == nil && !removed {
+			return nil
+		}
 	case kindDomain:
 		ns, name, _ := strings.Cut(r.Key, "/")
 		err = a.hv.RemoveDomain(domainName(ns, name))
@@ -138,6 +144,13 @@ func (a *Agent) apply(r state.Record) (*observation, error) {
 		}
 		err := a.applyPool(r, &p)
 		return a.nodeObservation(kindPool, p.Name, p.Generation, err), err
+	case kindVolume:
+		var v computev1alpha1.LibvirtStorageVolume
+		if err := json.Unmarshal(r.Object, &v); err != nil {
+			return nil, err
+		}
+		status, err := a.applyVolume(&v)
+		return &observation{kind: kindVolume, name: v.Name, status: status}, err
 	case kindDomain:
 		var d computev1alpha1.LibvirtDomain
 		if err := json.Unmarshal(r.Object, &d); err != nil {
@@ -182,6 +195,62 @@ func (a *Agent) applyPool(r state.Record, p *computev1alpha1.LibvirtStoragePool)
 	a.metrics.poolBytes.WithLabelValues(p.Name, "capacity").Set(float64(capacity))
 	a.metrics.poolBytes.WithLabelValues(p.Name, "available").Set(float64(available))
 	return nil
+}
+
+// applyVolume 在卷不存在时按 XML 创建；已存在就接管，不修改也不覆盖：卷的内容是数据。
+func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1alpha1.LibvirtStorageVolumeStatus, error) {
+	status := computev1alpha1.LibvirtStorageVolumeStatus{ObservedGeneration: v.Generation}
+	fail := func(err error) (computev1alpha1.LibvirtStorageVolumeStatus, error) {
+		status.Message = err.Error()
+		return status, err
+	}
+	cur, err := a.hv.Volume(v.Spec.Pool, v.Name)
+	if err != nil {
+		return fail(err)
+	}
+	if !cur.Found {
+		want, err := prepareVolume(v)
+		if err != nil {
+			return fail(err)
+		}
+		if err := a.hv.CreateVolume(v.Spec.Pool, want); err != nil {
+			return fail(err)
+		}
+		a.logger.Info("created", "kind", kindVolume, "key", v.Name, "pool", v.Spec.Pool)
+		if cur, err = a.hv.Volume(v.Spec.Pool, v.Name); err != nil {
+			return fail(err)
+		}
+	}
+	status.Path, status.Capacity = cur.Path, int64(cur.Capacity)
+	return status, nil
+}
+
+// removeVolume 按 reclaimPolicy 处理已删除的卷对象。Delete 时，本节点上仍有实例（包括待清理的）引用它
+// 就先不删，等实例清理后的下一轮：与 PVC 保护相同，避免删掉正在使用的磁盘。
+func (a *Agent) removeVolume(r state.Record) (bool, error) {
+	var v computev1alpha1.LibvirtStorageVolume
+	if err := json.Unmarshal(r.Object, &v); err != nil {
+		return false, err
+	}
+	if v.Spec.ReclaimPolicy != computev1alpha1.ReclaimDelete {
+		return true, nil
+	}
+	ref := v.Spec.Pool + "/" + v.Name
+	for _, d := range a.store.List(kindDomain) {
+		var dom computev1alpha1.LibvirtDomain
+		if err := json.Unmarshal(d.Object, &dom); err != nil {
+			return false, err
+		}
+		refs, err := volumeRefs(dom.Spec.DomainXML)
+		if err != nil {
+			return false, err
+		}
+		if refs[ref] {
+			a.logger.Info("volume still referenced, deleting later", "key", r.Key, "domain", d.Key)
+			return false, nil
+		}
+	}
+	return true, a.hv.DeleteVolume(v.Spec.Pool, v.Name)
 }
 
 // define 在需要时下发 want，并记录输入与读回配置的 hash。read 返回对象的现状（持久配置）。
@@ -233,8 +302,11 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 		return status, err
 	}
 	want, err := prepareDomain(d, func(pool, volume string) (Volume, error) {
-		path, block, err := a.hv.Volume(pool, volume)
-		return Volume{Path: path, Block: block}, err
+		v, err := a.hv.Volume(pool, volume)
+		if err == nil && !v.Found {
+			err = errors.New("volume not found")
+		}
+		return Volume{Path: v.Path, Block: v.Block}, err
 	})
 	if err != nil {
 		return fail(err)
@@ -321,10 +393,10 @@ func (a *Agent) writeStatus(ctx context.Context, kube client.Client, obs observa
 	if err := json.Unmarshal(data, &status); err != nil {
 		return err
 	}
-	if obs.kind == kindDomain {
-		u.Object["status"] = status
-	} else {
+	if obs.kind == kindNetwork || obs.kind == kindPool {
 		u.Object["status"] = map[string]any{"nodes": []any{status}}
+	} else {
+		u.Object["status"] = status
 	}
 	err = kube.Status().Apply(ctx, client.ApplyConfigurationFromUnstructured(u),
 		client.FieldOwner("ayatori-compute-agent/"+a.config.NodeName), client.ForceOwnership)

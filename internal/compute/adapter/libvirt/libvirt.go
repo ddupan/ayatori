@@ -180,24 +180,74 @@ func (c *Client) RemovePool(name string) error {
 	return p.Undefine()
 }
 
-// Volume 返回 pool 中卷在本机的路径，以及它是否为块设备。
-func (c *Client) Volume(pool, volume string) (path string, block bool, err error) {
+// Volume 是卷在本机的现状。
+type Volume struct {
+	Found    bool
+	Path     string
+	Block    bool
+	Capacity uint64
+}
+
+// Volume 返回 pool 中名为 name 的卷。libvirt 只在 refresh 时发现 pool 目录里新出现的文件，因此
+// 找不到时先 refresh 一次再查：带外放进去的文件（例如迁入的磁盘）也能被引用和接管。
+func (c *Client) Volume(pool, name string) (Volume, error) {
 	p, err := c.conn.LookupStoragePoolByName(pool)
 	if err != nil {
-		return "", false, err
+		return Volume{}, err
 	}
 	defer free(p.Free)
-	v, err := p.LookupStorageVolByName(volume)
-	if err != nil {
-		return "", false, err
+	v, err := p.LookupStorageVolByName(name)
+	if IsNotFound(err) {
+		if err := p.Refresh(0); err != nil {
+			return Volume{}, err
+		}
+		v, err = p.LookupStorageVolByName(name)
+	}
+	if IsNotFound(err) {
+		return Volume{}, nil
+	} else if err != nil {
+		return Volume{}, err
 	}
 	defer free(v.Free)
 	info, err := v.GetInfo()
 	if err != nil {
-		return "", false, err
+		return Volume{}, err
 	}
-	path, err = v.GetPath()
-	return path, info.Type == golibvirt.STORAGE_VOL_BLOCK, err
+	path, err := v.GetPath()
+	return Volume{Found: true, Path: path, Block: info.Type == golibvirt.STORAGE_VOL_BLOCK, Capacity: info.Capacity}, err
+}
+
+// CreateVolume 按原生 volume XML 在 pool 中创建卷。
+func (c *Client) CreateVolume(pool, xml string) error {
+	p, err := c.conn.LookupStoragePoolByName(pool)
+	if err != nil {
+		return err
+	}
+	defer free(p.Free)
+	v, err := p.StorageVolCreateXML(xml, 0)
+	if err != nil {
+		return err
+	}
+	return v.Free()
+}
+
+// DeleteVolume 删除卷及其数据；pool 或卷不存在时什么也不做。
+func (c *Client) DeleteVolume(pool, name string) error {
+	p, err := c.conn.LookupStoragePoolByName(pool)
+	if IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer free(p.Free)
+	v, err := p.LookupStorageVolByName(name)
+	if IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer free(v.Free)
+	return v.Delete(0)
 }
 
 // Domain 是实例的现状；State 与 Reason 与 `virsh domstate --reason` 的写法一致。

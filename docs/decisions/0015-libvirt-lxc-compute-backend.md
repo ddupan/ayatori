@@ -99,6 +99,11 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
   - domain 的 `name`、`uuid`；
   - lxc 的 `lxc.uts.name`、`lxc.rootfs.path` 和网络 link。
 - **被引用的 volume 不能删除**（与 PVC 保护相同，用 finalizer 实现）；删除 domain 默认不删除卷。
+- **volume 的内容是数据，不按 spec 收敛**：卷不存在时按 XML 创建，已存在（包括带外放入的文件）就
+  接管，不修改也不重建；spec 除 `reclaimPolicy` 外不可修改，扩容另走 `size`（ADR-0019 §7）。
+  `reclaimPolicy` 缺省为 `Retain`，删除对象只是不再管理，同名对象再次创建时接管原卷。
+  - 第一版只支持本地 pool，卷由 `spec.nodeName` 指定节点；finalizer 待 compute controller 实现，
+    在此之前由 Agent 在本地保护：`Delete` 的卷在本节点仍有 domain（包括待清理的）引用时延后删除。
 - XML 中直接写死 `/dev/...` 或 bridge 名同样允许，但 Ayatori 不管理这些资源，也无法据此计算
   候选节点，相应的实例不进入自动冷启动。
 

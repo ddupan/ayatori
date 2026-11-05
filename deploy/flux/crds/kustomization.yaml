@@ -10,4 +10,5 @@ resources:
 - ../../../config/crd/bases/network.ayatori.ddupan.top_backends.yaml
 - ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtnetworks.yaml
 - ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtstoragepools.yaml
+- ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtstoragevolumes.yaml
 - ../../../config/crd/bases/compute.ayatori.ddupan.top_libvirtdomains.yaml
