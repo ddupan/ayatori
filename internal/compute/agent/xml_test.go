@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -9,51 +10,77 @@ import (
 )
 
 func TestPrepareDomain(t *testing.T) {
-	d := &computev1alpha1.LibvirtDomain{
-		Namespace: "infra", Name: "dns1", UID: "1b2c3d4e-0000-4000-8000-000000000001",
-		Spec: computev1alpha1.LibvirtDomainSpec{DomainXML: `<domain type='kvm'>
-  <name>whatever</name><uuid>00000000-0000-0000-0000-000000000000</uuid><memory>524288</memory>
+	const uid = "1b2c3d4e-0000-4000-8000-000000000001"
+	native := `<domain type='kvm'><memory>524288</memory>
   <os><type arch='x86_64' machine='q35'>hvm</type></os>
-  <devices>
-    <disk type='volume' device='disk'><source pool='local' volume='dns1-root' startupPolicy='mandatory'/><target dev='vda' bus='virtio'/></disk>
-    <disk type='volume' device='cdrom'><source pool='iso' volume='seed.iso'/><target dev='sda' bus='sata'/><readonly/></disk>
-    <disk type='file' device='disk'><source file='/srv/raw.img'/><target dev='vdb' bus='virtio'/></disk>
-    <interface type='network'><source network='lan'/><target dev='vnet7'/><model type='virtio'/></interface>
-    <interface type='network'><source network='mgmt'/><model type='virtio'/></interface>
-  </devices>
+  <devices><serial type='pty'/></devices>
   <qemu:commandline xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'><qemu:arg value='-no-hpet'/></qemu:commandline>
-</domain>`},
+</domain>`
+	d := &computev1alpha1.LibvirtDomain{Namespace: "infra", Name: "dns1", UID: uid, Spec: computev1alpha1.LibvirtDomainSpec{
+		DomainXML: native,
+		Disks: []computev1alpha1.DomainDisk{
+			{Volume: "dns1-root", BootOrder: 1},
+			{Volume: "seed", Bus: computev1alpha1.DiskBusSATA, ReadOnly: true},
+			{Volume: "data", Bus: computev1alpha1.DiskBusSCSI},
+			{Volume: "dos", Bus: computev1alpha1.DiskBusFDC},
+		},
+		Interfaces: []computev1alpha1.DomainInterface{
+			{Network: "lan", MAC: "52:54:00:AA:BB:CC"},
+			{Network: "mgmt", Model: "e1000e"},
+		},
+	}}
+	vols := map[string]Volume{
+		"dns1-root": {Path: "/dev/data/dns1-root", Block: true},
+		"seed":      {Path: "/var/lib/libvirt/iso/seed.iso", Format: "iso"},
+		"data":      {Path: "/images/data.qcow2", Format: "qcow2"},
+		"dos":       {Path: "/images/dos.img", Format: "raw"},
 	}
-	vols := map[string]Volume{"local/dns1-root": {Path: "/dev/data/dns1-root", Block: true}, "iso/seed.iso": {Path: "/var/lib/libvirt/iso/seed.iso"}}
-	out, err := prepareDomain(d, func(pool, volume string) (Volume, error) {
-		v, ok := vols[pool+"/"+volume]
+	resolve := func(name string) (Volume, error) {
+		v, ok := vols[name]
 		if !ok {
 			return Volume{}, errors.New("no such volume")
 		}
 		return v, nil
-	})
+	}
+	out, err := prepareDomain(d, resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
+	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
 	for _, want := range []string{
-		"<name>infra_dns1</name>", "<uuid>1b2c3d4e-0000-4000-8000-000000000001</uuid>",
-		`<disk type="block" device="disk">`, `<source dev="/dev/data/dns1-root" startupPolicy="mandatory">`,
-		`<disk type="file" device="cdrom">`, `<source file="/var/lib/libvirt/iso/seed.iso">`,
-		`<source file="/srv/raw.img">`,
-		`<target dev="ay1b2c3d4en0">`, `<target dev="ay1b2c3d4en1">`,
-		"-no-hpet",
+		"<name>infra_dns1</name>", "<uuid>" + uid + "</uuid>",
+		`<disk type="block" device="disk"><driver name="qemu" type="raw"></driver><source dev="/dev/data/dns1-root"></source><target dev="vda" bus="virtio"></target><boot order="1"></boot>`,
+		`<source file="/var/lib/libvirt/iso/seed.iso"></source><target dev="sda" bus="sata"></target><readonly></readonly>`,
+		`<driver name="qemu" type="qcow2"></driver><source file="/images/data.qcow2"></source><target dev="sdb" bus="scsi">`,
+		`<disk type="file" device="floppy">`, `<target dev="fda" bus="fdc">`,
+		`<mac address="52:54:00:aa:bb:cc"></mac><source network="lan"></source><target dev="ay1b2c3d4en0"></target><model type="virtio">`,
+		`<mac address="` + macAddress(uid, 1) + `"></mac><source network="mgmt"></source><target dev="ay1b2c3d4en1"></target><model type="e1000e">`,
+		`<serial type="pty">`, "-no-hpet",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prepared XML lacks %s:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "vnet7") || strings.Contains(out, "pool=") {
-		t.Errorf("user port name or volume reference survived:\n%s", out)
+	if macAddress(uid, 1) != macAddress(uid, 1) || macAddress(uid, 0) == macAddress(uid, 1) {
+		t.Error("generated MAC must be stable per interface and differ between interfaces")
 	}
 
-	if _, err := prepareDomain(&computev1alpha1.LibvirtDomain{Spec: computev1alpha1.LibvirtDomainSpec{DomainXML: d.Spec.DomainXML}},
-		func(string, string) (Volume, error) { return Volume{}, errors.New("gone") }); err == nil || !strings.Contains(err.Error(), "local/dns1-root") {
+	d.Spec.Disks = append(d.Spec.Disks, computev1alpha1.DomainDisk{Volume: "gone"})
+	if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Fatalf("unresolvable volume: err = %v", err)
+	}
+
+	for _, owned := range []string{"<name>x</name>", "<uuid>" + uid + "</uuid>"} {
+		d.Spec.DomainXML = strings.Replace(native, "<memory>", owned+"<memory>", 1)
+		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
+			t.Errorf("%s in domainXML: err = %v", owned, err)
+		}
+	}
+	for _, owned := range []string{`<disk type='file'><source file='/srv/raw.img'/><target dev='vdb'/></disk>`, `<interface type='bridge'><source bridge='br0'/></interface>`} {
+		d.Spec.DomainXML = strings.Replace(native, "<serial", owned+"<serial", 1)
+		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
+			t.Errorf("%s in domainXML: err = %v", owned, err)
+		}
 	}
 }
 

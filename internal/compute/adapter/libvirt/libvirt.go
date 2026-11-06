@@ -186,6 +186,8 @@ type Volume struct {
 	Path     string
 	Block    bool
 	Capacity uint64
+	// Format 是卷 XML 中的格式，例如 qcow2、raw；pool 不报告格式（例如 logical）时为空。
+	Format string
 }
 
 // Volume 返回 pool 中名为 name 的卷。libvirt 只在 refresh 时发现 pool 目录里新出现的文件，因此
@@ -214,7 +216,22 @@ func (c *Client) Volume(pool, name string) (Volume, error) {
 		return Volume{}, err
 	}
 	path, err := v.GetPath()
-	return Volume{Found: true, Path: path, Block: info.Type == golibvirt.STORAGE_VOL_BLOCK, Capacity: info.Capacity}, err
+	if err != nil {
+		return Volume{}, err
+	}
+	desc, err := v.GetXMLDesc(0)
+	if err != nil {
+		return Volume{}, err
+	}
+	var x libvirtxml.StorageVolume
+	if err := x.Unmarshal(desc); err != nil {
+		return Volume{}, err
+	}
+	vol := Volume{Found: true, Path: path, Block: info.Type == golibvirt.STORAGE_VOL_BLOCK, Capacity: info.Capacity}
+	if x.Target != nil && x.Target.Format != nil {
+		vol.Format = x.Target.Format.Type
+	}
+	return vol, nil
 }
 
 // CreateVolume 按原生 volume XML 在 pool 中创建卷。
