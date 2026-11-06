@@ -5,10 +5,10 @@ metadata:
   name: ayatori:compute-agent
 rules:
 - apiGroups: [compute.ayatori.ddupan.top]
-  resources: [libvirtnetworks, libvirtstoragepools, libvirtdomains]
+  resources: [libvirtnetworks, libvirtstoragepools, libvirtstoragevolumes, libvirtdomains]
   verbs: [get, list, watch]
 - apiGroups: [compute.ayatori.ddupan.top]
-  resources: [libvirtnetworks/status, libvirtstoragepools/status, libvirtdomains/status]
+  resources: [libvirtnetworks/status, libvirtstoragepools/status, libvirtstoragevolumes/status, libvirtdomains/status]
   verbs: [patch, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

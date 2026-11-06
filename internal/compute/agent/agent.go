@@ -40,8 +40,12 @@ import (
 const (
 	kindNetwork = "LibvirtNetwork"
 	kindPool    = "LibvirtStoragePool"
+	kindVolume  = "LibvirtStorageVolume"
 	kindDomain  = "LibvirtDomain"
 )
+
+// kinds 是收敛顺序：被引用的在前。
+var kinds = []string{kindNetwork, kindPool, kindVolume, kindDomain}
 
 // Config 是节点部署写入的本地配置。
 type Config struct {
@@ -209,8 +213,9 @@ func (a *Agent) connectAPI(ctx context.Context) {
 func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 	self := a.config.NodeName
 	c, err := cache.New(config, cache.Options{Scheme: a.scheme, ByObject: map[client.Object]cache.ByObject{
-		&computev1alpha1.LibvirtDomain{}: {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
-		&corev1.Node{}:                   {Field: fields.OneTermEqualSelector("metadata.name", self)},
+		&computev1alpha1.LibvirtStorageVolume{}: {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
+		&computev1alpha1.LibvirtDomain{}:        {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
+		&corev1.Node{}:                          {Field: fields.OneTermEqualSelector("metadata.name", self)},
 	}})
 	if err != nil {
 		a.logger.Error("build API cache", "error", err)
@@ -222,7 +227,8 @@ func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 		UpdateFunc: func(any, any) { signal(changed) },
 		DeleteFunc: func(any) { signal(changed) },
 	}
-	for _, obj := range []client.Object{&computev1alpha1.LibvirtNetwork{}, &computev1alpha1.LibvirtStoragePool{}, &computev1alpha1.LibvirtDomain{}, &corev1.Node{}} {
+	for _, obj := range []client.Object{&computev1alpha1.LibvirtNetwork{}, &computev1alpha1.LibvirtStoragePool{},
+		&computev1alpha1.LibvirtStorageVolume{}, &computev1alpha1.LibvirtDomain{}, &corev1.Node{}} {
 		informer, err := c.GetInformer(ctx, obj)
 		if err != nil {
 			a.logger.Error("get informer", "error", err)
@@ -263,15 +269,12 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 	}
 	var nets computev1alpha1.LibvirtNetworkList
 	var pools computev1alpha1.LibvirtStoragePoolList
+	var volumes computev1alpha1.LibvirtStorageVolumeList
 	var domains computev1alpha1.LibvirtDomainList
-	if err := c.List(ctx, &nets); err != nil {
-		return err
-	}
-	if err := c.List(ctx, &pools); err != nil {
-		return err
-	}
-	if err := c.List(ctx, &domains); err != nil {
-		return err
+	for _, list := range []client.ObjectList{&nets, &pools, &volumes, &domains} {
+		if err := c.List(ctx, list); err != nil {
+			return err
+		}
 	}
 	var errs []error
 	selected := map[string]bool{}
@@ -301,10 +304,13 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 			keep(kindPool, &pools.Items[i])
 		}
 	}
+	for i := range volumes.Items {
+		keep(kindVolume, &volumes.Items[i])
+	}
 	for i := range domains.Items {
 		keep(kindDomain, &domains.Items[i])
 	}
-	for _, kind := range []string{kindNetwork, kindPool, kindDomain} {
+	for _, kind := range kinds {
 		for _, r := range a.store.List(kind) {
 			if !selected[kind+"/"+r.Key] {
 				errs = append(errs, a.store.MarkDeleted(kind, r.Key))

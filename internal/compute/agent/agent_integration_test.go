@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	golibvirt "libvirt.org/go/libvirt"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +37,8 @@ const (
 	lan     = "lan"
 	running = "running"
 	rack    = "rack"
+	// localPool 是测试用的本地 dir pool。
+	localPool = "local"
 )
 
 // test:///default 在进程内由所有连接共享；最后一个连接关闭后状态清空，用来模拟宿主机重启。
@@ -188,6 +191,7 @@ func TestAgent(t *testing.T) {
 	t.Run("defines objects selected for this node and starts the domain", s.definesSelected)
 	t.Run("restores configuration changed outside Ayatori", s.restoresDrift)
 	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
+	t.Run("creates volumes and reclaims them by policy", s.managesVolumes)
 	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
 		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
 	create(t, s.k, s.vm2)
@@ -268,10 +272,10 @@ func (s *suite) createObjects(t *testing.T) {
 		XML: `<network><name>ignored</name><forward mode='bridge'/><bridge name='br-lan'/></network>`, NodeSelector: map[string]string{rack: "a"}}})
 	create(t, s.k, &computev1alpha1.LibvirtNetwork{Name: "elsewhere", Spec: computev1alpha1.LibvirtNetworkSpec{
 		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{rack: "b"}}})
-	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: "local", Spec: computev1alpha1.LibvirtStoragePoolSpec{
+	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: localPool, Spec: computev1alpha1.LibvirtStoragePoolSpec{
 		XML: `<pool type='dir'><target><path>/images</path></target></pool>`}})
 	eventually(t, 30*time.Second, func() error {
-		pool, err := s.l.LookupStoragePoolByName("local")
+		pool, err := s.l.LookupStoragePoolByName(localPool)
 		if err != nil {
 			return err
 		}
@@ -319,7 +323,7 @@ func (s *suite) definesSelected(t *testing.T) {
 	s.expectMetric(t, lastSuccessMetric,
 		objectLabels("LibvirtNetwork", "", lan),
 		func(v float64, found bool) bool { return found && time.Since(time.Unix(int64(v), 0)) < time.Minute })
-	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": "local", "type": "capacity"},
+	s.expectMetric(t, "ayatori_compute_agent_pool_bytes", map[string]string{"name": localPool, "type": "capacity"},
 		func(v float64, found bool) bool { return found && v > 0 })
 	// 资源用量来自 GetAllDomainStats。
 	s.expectMetric(t, "ayatori_compute_agent_domain_cpu_seconds_total", domainLabels("vm1"),
@@ -366,6 +370,101 @@ func (s *suite) keepsIntentionalShutdown(t *testing.T) {
 	s.waitState(t, s.vm1, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 }
 
+func (s *suite) managesVolumes(t *testing.T) {
+	ctx := t.Context()
+	volume := func(name, node string, policy computev1alpha1.ReclaimPolicy) *computev1alpha1.LibvirtStorageVolume {
+		return &computev1alpha1.LibvirtStorageVolume{Name: name, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
+			NodeName: node, ReclaimPolicy: policy, Libvirt: &computev1alpha1.LibvirtVolumeSource{
+				Pool: localPool, XML: `<volume><name>ignored</name><capacity unit='MiB'>1</capacity></volume>`}}}
+	}
+	exists := func(name string) bool {
+		pool, err := s.l.LookupStoragePoolByName(localPool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer free(pool.Free)
+		_ = pool.Refresh(0)
+		vol, err := pool.LookupStorageVolByName(name)
+		if err == nil {
+			free(vol.Free)
+		}
+		return err == nil
+	}
+	waitPath := func(v *computev1alpha1.LibvirtStorageVolume) {
+		t.Helper()
+		eventually(t, 15*time.Second, func() error {
+			if err := s.k.Get(ctx, client.ObjectKeyFromObject(v), v); err != nil {
+				return err
+			}
+			if v.Status.Path != "/images/"+v.Name || v.Status.Capacity != 1<<20 {
+				return fmt.Errorf("volume status = %+v", v.Status)
+			}
+			return nil
+		})
+	}
+
+	disk := volume("disk2", node, computev1alpha1.ReclaimDelete)
+	create(t, s.k, disk)
+	create(t, s.k, volume("theirs", "node-b", computev1alpha1.ReclaimDelete))
+	waitPath(disk)
+	if exists("theirs") {
+		t.Error("volume for another node was created here")
+	}
+	for _, patch := range []string{`{"spec":{"libvirt":{"pool":"elsewhere"}}}`, `{"spec":{"libvirt":null}}`, `{"spec":{"nodeName":"elsewhere"}}`} {
+		if err := s.k.Patch(ctx, disk, client.RawPatch(types.MergePatchType, []byte(patch))); err == nil {
+			t.Errorf("%s must be rejected: storage backend and node are immutable", patch)
+		}
+	}
+
+	// 被实例引用的卷：删除对象后，等实例清理了才删卷。
+	vm := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm3", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<disk type='volume' device='disk'><source pool='local' volume='disk2'/><target dev='vda'/></disk>`)}}
+	create(t, s.k, vm)
+	s.waitState(t, vm, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
+	if err := s.k.Delete(ctx, disk); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second) // 几轮 reconcile
+	if !exists("disk2") {
+		t.Fatal("volume deleted while a domain still references it")
+	}
+	if err := s.k.Delete(ctx, vm); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 15*time.Second, func() error {
+		if exists("disk2") {
+			return fmt.Errorf("disk2 not deleted after its domain was removed")
+		}
+		return nil
+	})
+
+	// Retain：删除对象保留卷，同名对象再次创建时接管而不是重建。
+	kept := volume("kept", node, computev1alpha1.ReclaimRetain)
+	create(t, s.k, kept)
+	waitPath(kept)
+	if err := s.k.Delete(ctx, kept); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	if !exists("kept") {
+		t.Fatal("retained volume was deleted")
+	}
+	kept = volume("kept", node, computev1alpha1.ReclaimDelete)
+	kept.Spec.Libvirt.XML = `<volume><capacity unit='MiB'>2</capacity></volume>` // 已存在就接管，不按新 XML 重建
+	create(t, s.k, kept)
+	waitPath(kept)
+	// 清理，免得后面模拟宿主机重启时重新创建。
+	if err := s.k.Delete(ctx, kept); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 15*time.Second, func() error {
+		if exists("kept") {
+			return fmt.Errorf("kept not deleted")
+		}
+		return nil
+	})
+}
+
 func (s *suite) convergesOffline(t *testing.T) {
 	// 宿主机重启：关闭所有连接，test 驱动的状态随之清空。
 	s.agent.stop()
@@ -386,7 +485,7 @@ func (s *suite) convergesOffline(t *testing.T) {
 		if active, _ := n.IsActive(); !active {
 			return fmt.Errorf("network lan not active")
 		}
-		p, err := s.l.LookupStoragePoolByName("local")
+		p, err := s.l.LookupStoragePoolByName(localPool)
 		if err != nil {
 			return err
 		}

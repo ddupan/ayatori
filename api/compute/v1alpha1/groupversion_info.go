@@ -16,6 +16,7 @@ var (
 		scheme.AddKnownTypes(SchemeGroupVersion,
 			&LibvirtNetwork{}, &LibvirtNetworkList{},
 			&LibvirtStoragePool{}, &LibvirtStoragePoolList{},
+			&LibvirtStorageVolume{}, &LibvirtStorageVolumeList{},
 			&LibvirtDomain{}, &LibvirtDomainList{},
 		)
 		metav1.AddToGroupVersion(scheme, SchemeGroupVersion)

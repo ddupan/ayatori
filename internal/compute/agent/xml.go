@@ -104,3 +104,30 @@ func poolHash(xml string) (string, error) {
 	out, err := x.Marshal()
 	return hash(out), err
 }
+
+// prepareVolume 把 name 填为对象名：domain 按 <source pool='…' volume='对象名'/> 引用。
+func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
+	var x libvirtxml.StorageVolume
+	if err := x.Unmarshal(v.Spec.Libvirt.XML); err != nil {
+		return "", fmt.Errorf("parse volume xml: %w", err)
+	}
+	x.Name = v.Name
+	return x.Marshal()
+}
+
+// volumeRefs 返回 domain XML 中按 pool 引用的卷，键为 "pool/volume"。
+func volumeRefs(domainXML string) (map[string]bool, error) {
+	var dom libvirtxml.Domain
+	if err := dom.Unmarshal(domainXML); err != nil {
+		return nil, err
+	}
+	refs := map[string]bool{}
+	if dom.Devices != nil {
+		for _, disk := range dom.Devices.Disks {
+			if disk.Source != nil && disk.Source.Volume != nil {
+				refs[disk.Source.Volume.Pool+"/"+disk.Source.Volume.Volume] = true
+			}
+		}
+	}
+	return refs, nil
+}
