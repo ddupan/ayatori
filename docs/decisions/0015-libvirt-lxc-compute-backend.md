@@ -7,6 +7,8 @@
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
 - 修订：2026-11-03 LINSTOR/DRBD 的部分（卷、自动冷启动的机制、DRBD 可观测性）拆到
   [ADR-0020](0020-linstor-drbd-storage-integration.md)，本 ADR 只保留计算核心与存储能力的契约。
+- 修订：2026-11-06 domain 改为类型化设备（`disks`、`interfaces`、`firmware`）加原生 XML，Ayatori 拥有的
+  元素出现在原生配置中即拒绝；新增 `Image` 资源与卷的 `source.image`（ADR-0019 §9）。
 
 ## 问题
 
@@ -37,6 +39,12 @@
   约定，节点上 `virsh` 看到的也和声明不一致。改为由中央下发 libvirt 原生 pool/network 对象。
 - **强类型字段 + 设备 profile 生成 domain XML**：能降低手写 XML 的门槛，但 pool/network 统一后
   门槛已大幅下降，暂不做，等手写 XML 被证明是反复的负担时再评估。
+  （2026-11-06：引用 Ayatori 对象的设备已改为类型化字段，原因是避免方言与抽象泄漏，不是降低门槛；
+  其余设备的 profile 仍不做。）
+- **完全原生、Ayatori 不改写的 domain XML**：用户必须写出 DRBD 设备、NVRAM/vTPM 所在的底层路径，
+  换存储后端要改 domain，抽象泄漏。
+- **从 libvirt schema 生成完整的 YAML API**：CRD 过于庞大且要追随 libvirt 版本，XML↔YAML 的映射
+  又是一种需要学习的方言。
 - **单独的 REST API 服务**：动态资源对 CRD 不构成阻碍，Pod 本身就是高频创建和销毁的对象。自建
   REST 服务要重新实现 watch、RBAC、审计、乐观并发和版本化，Agent 也就没法再用 informer watch。
 
@@ -69,24 +77,77 @@
 
 ### 资源
 
-北向**透传原生配置**，不另做抽象。本后端是**把 libvirt 对象下发到各节点的中央控制器**：
-domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要懂 libvirt 本身的概念，
-各节点上 `virsh pool-list`/`net-list` 看到的结果与声明一致。
+北向尽量**透传原生配置**：pool、network、volume 使用 libvirt 原生 XML，各节点上
+`virsh pool-list`/`net-list` 看到的结果与声明一致。domain 与 LXC 则按归属拆开：**引用 Ayatori 对象的
+设备与随实例走的状态由 Ayatori 的类型化字段表达，其余仍是原生配置**（2026-11-06 修订，见下文
+"domain：类型化设备 + 原生 XML"）。
 
 | 资源 | 内容 | 下发到哪 |
 |---|---|---|
 | `LibvirtStoragePool` | 原生 pool XML + `nodeSelector` | 匹配的节点 |
 | `LibvirtNetwork` | 原生 network XML + `nodeSelector` | 匹配的节点 |
-| `LibvirtStorageVolume` | 一种存储后端（互斥）：`libvirt` 为 pool 引用 + 原生 volume XML 或 `size`，LINSTOR 为 `linstor`（ADR-0020）；本地存储的 `nodeName`；可选 `source.url` 导入镜像；`reclaimPolicy`（`Retain`/`Delete`） | 共享 pool 在任一就绪节点创建一次；本地 pool 在指定节点创建 |
-| `LibvirtDomain` | `spec.domainXML` 原生 domain XML，`virsh dumpxml` 的输出可以直接使用 | 候选节点 |
+| `LibvirtStorageVolume` | 一种存储后端（互斥）：`libvirt` 为 pool 引用 + 原生 volume XML 或 `size`，LINSTOR 为 `linstor`（ADR-0020）；本地存储的 `nodeName`；可选 `source.image` 从镜像创建；`reclaimPolicy`（`Retain`/`Delete`） | 共享 pool 在任一就绪节点创建一次；本地 pool 在指定节点创建 |
+| `Image` | `type`（`Disk`/`ISO`/`Rootfs`）、存放的 pool、`source`（`http` 或 `oci`），见 ADR-0019 §9 | 匹配的节点，每个节点一份 |
+| `LibvirtDomain` | 类型化的 `disks`、`interfaces`、`firmware`，加上不含这些元素的原生 `domainXML` | 候选节点 |
 | `LXCContainer` | `spec.config` 原生 lxc config 文本，`rootfs` 引用 volume，`networks` 引用 network | 候选节点 |
 
-- domain 中直接写原生引用：`<source pool='ceph-ssd' volume='win98'/>`、
-  `<source network='vlan20'/>`。network 引用由 libvirt 自己解析；**卷引用由 Agent 在 `DefineXML`
-  之前用 `virsh vol-path` 解析成 `file`/`block` 路径**，因为 AppArmor（`virt-aa-helper`）不会把
-  `type='volume'` 的源加入每个 VM 的 profile，QEMU 会被拒绝访问（PoC 02）。
+#### domain：类型化设备 + 原生 XML
+
+最初的做法是在 domain XML 中直接写原生引用（`<source pool='…' volume='…'/>`），由 Agent 补填和改写
+少数字段。随着需求增加，要改写的字段越来越多：卷引用解析成路径（AppArmor，PoC 02）、网卡端口名
+（ADR-0016）、DRBD 上的 NVRAM/vTPM 块设备（ADR-0020）。用户写的 XML 在 `virsh define` 与 Ayatori 下
+含义不同，实际上成了一种基于 domain XML 的 Ayatori 方言，却仍以"原生 XML"的面目出现，容易误导。
+反过来要求用户只写不经改写的原生 XML 也不行：LINSTOR 卷没有 libvirt pool，NVRAM/vTPM 放在 DRBD
+设备上，用户就必须写 `/dev/drbd/by-res/…` 这样的底层路径，换存储后端就得改 domain，抽象随之泄漏。
+
+因此按归属拆开，与 `LXCContainer` 已有的做法（原生 `config` + 类型化的 `rootfs`/`networks`）一致，
+也与 Incus 的 devices 加 `raw.qemu` 相同：
+
+```yaml
+spec:
+  firmware: {type: UEFI, secureBoot: true, tpm: true}
+  disks:
+  - volume: dns1-root          # LibvirtStorageVolume；本地或 LINSTOR，写法相同
+    bus: virtio
+  - image: debian-13-netinst   # ISO 类型的 Image，作为光驱挂载
+  interfaces:
+  - network: vlan20            # LibvirtNetwork
+    mac: "52:54:00:12:34:56"
+  domainXML: |
+    <domain type='kvm'>
+      <memory unit='GiB'>2</memory><vcpu>2</vcpu>
+      <os><type arch='x86_64' machine='q35'>hvm</type></os>
+      <devices><graphics type='spice'/><serial type='pty'/></devices>
+    </domain>
+```
+
+- **Ayatori 拥有的元素**：`name`、`uuid`、`<devices>` 中的 `<disk>`、`<interface>`、`<tpm>`，以及 `<os>`
+  中的 `<loader>`、`<nvram>`。它们由类型化字段渲染，`domainXML` 中出现就**拒绝**，原因写入 status，
+  不再静默覆盖。其余内容是纯 libvirt 语义，原样透传：设备模型、`<hostdev>` 直通、图形与串口控制台、
+  `<qemu:commandline>` 等。
+- **渲染细节不进入 API**：卷解析成 `file`/`block` 路径（PoC 02 的 AppArmor 问题）、网卡端口名、
+  DRBD 设备路径、NVRAM/vTPM 放在哪里，都是 Agent 的实现，用户不需要知道卷在节点上的位置。
+- **类型化字段按需增加**，第一版：
+  - `disks[]`：`volume` 与 `image` 二选一；`bus`（`virtio`/`scsi`/`sata`/`ide`/`fdc`）；`bootOrder`；`readOnly`。
+    `image` 只接受 `ISO` 类型，挂载为只读光驱。
+  - `interfaces[]`：`network`、`mac`、`model`（缺省 `virtio`）。domain 中固定 MAC，冷启动换节点后
+    IP 不变；不写时由 Ayatori 从对象 UID 稳定生成。
+  - `firmware`：`type`（`BIOS`/`UEFI`）、`secureBoot`、`tpm`。状态放在哪里由 Ayatori 按实例的存储决定：
+    本地存储在节点默认位置，DRBD 上是实例 resource 中的 volume（ADR-0020）。
+  - 缓存模式、discard、多队列等 Ayatori 不需要理解的磁盘与网卡参数，等有真实需求时再加字段，不提供
+    向渲染结果注入任意 XML 片段的入口。
+- **不从上游 schema 生成完整的 YAML API**：类型化部分很小，语义是 Ayatori 的（引用 Ayatori 对象），
+  按需手写；完整生成会把整个 libvirt 结构（`libvirtxml` 的 domain 定义约 7,700 行）搬进 CRD，并引入
+  一套无人文档化的 XML↔YAML 映射。
+- 以前允许在 XML 中直接写死 `/dev/...` 磁盘或 bridge 名；现在 `<disk>`、`<interface>` 都归 Ayatori，
+  不再允许。确有需要时再加类型化字段（例如宿主机块设备），这类实例固定在该节点，不进入自动冷启动。
+- `LXCContainer` 同理：`lxc.uts.name`、`lxc.rootfs.path`、`lxc.net.*` 归 Ayatori，由 `rootfs`、
+  `networks` 渲染，出现在 `config` 中同样拒绝。
+
+#### 放置与生命周期
+
 - **候选节点由 controller 计算**：domain 引用的 pool 和 network 都已下发到的节点；若引用本地
-  pool 上的卷，则只有该卷所在节点。
+  存储上的卷，则只有该卷所在节点。
 - **domain/LXC 共有的 Ayatori 自有字段：** 放置（`nodeName`、`nodeSelector`、`affinity`，复用
   Kubernetes 的表达，见 ADR-0019）、`ha`（`Restart`/`None`）、
   `runState`。
@@ -95,9 +156,6 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
     客户机主动关机（`shutdown`）、运维人员在控制台关机或 `destroy`，都是有意的停止，不重启，与
     vSphere HA 和 KubeVirt `RerunOnFailure` 的语义一致（PoC 01）。
   - 开关机、重置、换盘等运行时操作不改 spec，见 [ADR-0016](0016-instance-node-services.md)。
-- **由 Ayatori 填写的字段，用户写了也会被覆盖：**
-  - domain 的 `name`、`uuid`；
-  - lxc 的 `lxc.uts.name`、`lxc.rootfs.path` 和网络 link。
 - **被引用的 volume 不能删除**（与 PVC 保护相同，用 finalizer 实现）；删除 domain 默认不删除卷。
 - **volume 的内容是数据，不按 spec 收敛**：卷不存在时按 XML 创建，已存在（包括带外放入的文件）就
   接管，不修改也不重建；spec 除 `reclaimPolicy` 外不可修改，扩容另走 `size`（ADR-0019 §7）。
@@ -106,12 +164,11 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
     与 `reclaimPolicy` 与后端无关，放在顶层。后端与 `nodeName` 创建后不可修改。
   - 第一版只有 `libvirt` 后端、只支持本地 pool，卷由 `spec.nodeName` 指定节点；finalizer 待 compute controller 实现，
     在此之前由 Agent 在本地保护：`Delete` 的卷在本节点仍有 domain（包括待清理的）引用时延后删除。
-- XML 中直接写死 `/dev/...` 或 bridge 名同样允许，但 Ayatori 不管理这些资源，也无法据此计算
-  候选节点，相应的实例不进入自动冷启动。
+  - `source.image` 从 `Disk` 或 `Rootfs` 类型的镜像创建卷，是完整复制，之后与镜像无关（ADR-0019 §9）。
 
 **本后端是内部控制器，不对外提供服务，因此不限制原生配置的内容。** `<qemu:commandline>`、
 `<hostdev>`、`lxc.hook.*`、privileged 容器等都可以直接使用。controller 只检查配置能否解析，
-以及 Ayatori 负责填写的字段，不维护黑名单或白名单。
+以及其中没有 Ayatori 拥有的元素，不维护其他黑名单或白名单。
 
 这样做的代价是：能创建对象就等于拥有宿主机 root 权限。因此：
 

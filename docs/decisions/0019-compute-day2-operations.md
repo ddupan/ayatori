@@ -6,6 +6,7 @@
   [ADR-0015](0015-libvirt-lxc-compute-backend.md)、[ADR-0016](0016-instance-node-services.md) 之上；
   DRBD 相关的部分见 [ADR-0020](0020-linstor-drbd-storage-integration.md)；§10 修订
   [ADR-0007](0007-compute-node-and-vm-boundary.md) 中"不以透明 live migration 为目标"。
+- 修订：2026-11-06 §9 镜像改为独立的 `Image` 资源。
 
 ## 问题
 
@@ -168,18 +169,71 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 
 - **配置转换是一次性工具，不是 controller**：读取 `/etc/pve/qemu-server/<vmid>.conf` 和
   `/etc/pve/lxc/<vmid>.conf`，生成 `LibvirtDomain`/`LXCContainer` 的 YAML 提交到 git，由人检查。
-  保留 MAC，DHCP 预留依赖它。retro VM 的设备模型逐台核对。
+  磁盘与网卡生成为类型化的 `disks`/`interfaces`（ADR-0015），保留 MAC，DHCP 预留依赖它。retro VM 的设备模型逐台核对。
 - **逐台切换**：PVE 上关机，接管磁盘，启动。写成 runbook，先用一台不重要的客户机演练。
 
 ### 9. 镜像与安装介质
 
-- ISO、云镜像和 LXC rootfs 归档都作为 `LibvirtStorageVolume` 下发到各节点名为 `iso`/`images` 的本地
-  `dir` pool（`nodeSelector` 选择全部节点）。每个节点各存一份，冷启动和换盘都不依赖网络。
-- `source.url` 指向内网 SeaweedFS 中的镜像 bucket，不直连外网，因为家宽上联不稳定。要求同时写
-  `source.sha256`，Agent 校验后才标记就绪。
+2026-11-06 修订：镜像不再作为 `LibvirtStorageVolume` 下发。卷是某一处的一份数据，镜像是每个节点都要
+一份的只读内容；用卷表达时，同一个 ISO 要给每个节点各建一个对象，URL 与校验和重复写多遍。对应
+vSphere Content Library、CloudStack template、Harvester VirtualMachineImage。
+
+```yaml
+apiVersion: compute.ayatori.ddupan.top/v1alpha1
+kind: Image                    # 集群级
+metadata:
+  name: debian-13              # 名字是一个频道，新机器总是用 spec 当前的版本
+spec:
+  type: Disk                   # Disk | ISO | Rootfs，创建后不可修改
+  pool: images                 # 各节点上的 LibvirtStoragePool（dir），创建后不可修改
+  nodeSelector: {}             # 缺省为全部计算节点
+  source:                      # 二选一，可以修改，修改即更新镜像
+    http:
+      url: https://…/debian-13-genericcloud-20261201.qcow2
+      sha256: …
+    # oci:
+    #   reference: registry…/debian-13-systemd@sha256:…
+status:
+  nodes:
+  - nodeName: compute-dev1
+    sha256: …                  # 本节点上现有副本的版本
+    ready: true                # 与 spec 的版本一致时才为 true
+    message: ""
+```
+
+- **type 表示内容，决定谁能用它：**
+
+  | type | 内容 | 使用方 |
+  |---|---|---|
+  | `Disk` | qcow2 / raw | 卷的 `source.image`，Agent 用 `qemu-img convert` 写入新卷 |
+  | `ISO` | ISO 9660 | domain 的 `disks[].image`，作为只读光驱挂载 |
+  | `Rootfs` | tar 归档 | 卷的 `source.image`，解包为 LXC rootfs |
+
+  VM 与 LXC 不能共用镜像，同一个发行版的两种形态是两个 Image。用错类型时，引用方被拒绝。格式不写在
+  spec 中，Agent 下载后用 `qemu-img info` 或归档头核对是否与 `type` 一致，不一致时本节点报错、不就绪。
+- **每个节点一份副本**：pool 中与 Image 同名的卷。Agent 下载到临时文件，校验 sha256 与格式后
+  `rename` 覆盖原副本，每个节点各存一份，冷启动和换盘都不依赖网络。
+- **source：**
+  - `http` 指向内网 SeaweedFS 中的镜像 bucket，不直连外网，因为家宽上联不稳定；必须同时写 `sha256`。
+  - `oci` 只用于 `Rootfs`，引用必须带 digest（与必须写 sha256 同理），只经内网 registry 或 Artifact
+    Keeper 的 pull-through 缓存拉取。Agent 用现成的库（go-containerregistry 或 skopeo+umoci）拉取并
+    展平各层，结果与 `http` 来的 rootfs 归档相同。Ayatori 的 LXC 是系统容器，只支持自带 init 的镜像；
+    镜像配置中的 entrypoint、env 不转换为 `lxc.execute.cmd`，不做"运行任意应用镜像"。第一版只实现
+    `http`，`oci` 等出现具体需求再实现。
+- **允许更新，已有的机器不受影响：**
+  - 修改 `source` 即更新。Agent 用 `rename` 原子替换副本，已经打开它的进程继续读旧的 inode。
+  - `ISO`：所有 VM 共享同一个只读副本，原地更新。运行中的 VM 继续使用打开时的版本，下次启动或换盘时
+    读到新版本。
+  - `Disk`/`Rootfs`：卷是创建时的完整复制，与镜像不再有关系。Agent 在同一个 reconcile 循环中依次执行
+    替换副本和从副本创建卷，不会读到替换到一半的副本；卷的 status 记录实际复制的 `image` 与 `sha256`。
+  - 更新在各节点上有先后。节点上的副本与 spec 一致前，本节点上需要该镜像的新卷等待，原因写入卷的
+    status，不会悄悄用旧版本。新版本下载或校验失败时，本节点报错，已有机器不受影响。
+  - 需要固定版本时，另建一个不再更新的 Image（例如 `debian-13-20261101`），不另设更新策略字段。
+- **删除**：删除 Image 后各节点删除副本；本节点仍有 domain 挂载该 ISO 时延后删除，与卷的本地保护
+  相同。从镜像创建的卷不受影响。
 - 写入块设备用 `qemu-img convert`，不经 `qm importdisk` 式的二次处理，因为后者曾写坏过分区表。
-- LXC 不再使用 `download` 模板，改为从同一个 bucket 中预先同步的 rootfs 归档创建，取代 ADR-0015
-  中"第一版使用 `download` 模板"的做法。
+- LXC 不再使用 `download` 模板，改为从 `Rootfs` 镜像创建，取代 ADR-0015 中"第一版使用 `download`
+  模板"的做法。
 
 ### 10. 迁移
 
@@ -254,13 +308,15 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
 4. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
 5. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
+6. ISO 镜像原地更新：运行中挂着它的 VM 不受影响，换盘或重启后读到新版本；AppArmor 允许 QEMU 读取
+   `rename` 换上的新文件。
 
 DRBD 上的冷切换、在线迁移、换池、接管与反亲和的验证见 ADR-0020。
 
 ## 结果
 
 - 新增的 API：`nodeSelector`、`affinity`（复用 Kubernetes 类型）、`evacuate`、维护 taint 和 `SafeToRemove`、
-  `InstanceMigration`、`LibvirtStorageVolume` 的 `size` 扩容与 `source.volume`。
+  `InstanceMigration`、`LibvirtStorageVolume` 的 `size` 扩容、`source.volume` 与 `source.image`、`Image`。
 - VM 支持在线迁移，修订 ADR-0007；LXC 只做冷迁移。
 - 备份交给专门的备份系统，Ayatori 只提供一致点、读取和增量的集成点，不保存备份数据。
 - 反亲和在冷启动时由节点本地检查，冷启动不会破坏应用自带的冗余。
