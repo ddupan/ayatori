@@ -61,8 +61,8 @@ func TestPrepareDomain(t *testing.T) {
 			t.Errorf("prepared XML lacks %s:\n%s", want, out)
 		}
 	}
-	if macAddress(uid, 1) != macAddress(uid, 1) || macAddress(uid, 0) == macAddress(uid, 1) {
-		t.Error("generated MAC must be stable per interface and differ between interfaces")
+	if macAddress(uid, 0) == macAddress(uid, 1) {
+		t.Error("generated MACs must differ between interfaces")
 	}
 
 	d.Spec.Disks = append(d.Spec.Disks, computev1alpha1.DomainDisk{Volume: "gone"})

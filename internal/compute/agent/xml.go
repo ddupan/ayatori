@@ -167,4 +167,3 @@ func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	x.Name = v.Name
 	return x.Marshal()
 }
-
