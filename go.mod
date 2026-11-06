@@ -9,7 +9,7 @@ require (
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/openbao/openbao/api/auth/kubernetes/v2 v2.7.0
 	github.com/openbao/openbao/api/v2 v2.7.1
-	github.com/osrg/gobgp/v4 v4.10.0
+	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/prometheus/client_golang v1.24.0
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sys v0.47.0
