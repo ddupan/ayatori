@@ -108,7 +108,7 @@ func poolHash(xml string) (string, error) {
 // prepareVolume 把 name 填为对象名：domain 按 <source pool='…' volume='对象名'/> 引用。
 func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	var x libvirtxml.StorageVolume
-	if err := x.Unmarshal(v.Spec.XML); err != nil {
+	if err := x.Unmarshal(v.Spec.Libvirt.XML); err != nil {
 		return "", fmt.Errorf("parse volume xml: %w", err)
 	}
 	x.Name = v.Name

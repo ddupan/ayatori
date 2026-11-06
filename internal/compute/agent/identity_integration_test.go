@@ -103,7 +103,7 @@ func TestAgentIdentity(t *testing.T) {
 			NodeName: node, DomainXML: domainXML("")}}
 		create(t, k, mine)
 		vol := &computev1alpha1.LibvirtStorageVolume{Name: identMine, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
-			Pool: "missing", NodeName: node, XML: "<volume><capacity>1</capacity></volume>"}}
+			NodeName: node, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: "missing", XML: "<volume><capacity>1</capacity></volume>"}}}
 		create(t, k, vol)
 		eventually(t, time.Minute, func() error {
 			// pool 不存在，创建失败也要回写原因。
@@ -141,7 +141,7 @@ func TestAgentIdentity(t *testing.T) {
 		NodeName: other, DomainXML: domainXML("")}}
 	create(t, k, theirs)
 	theirVolume := &computev1alpha1.LibvirtStorageVolume{Name: "ident-theirs", Spec: computev1alpha1.LibvirtStorageVolumeSpec{
-		Pool: "missing", NodeName: other, XML: "<volume><capacity>1</capacity></volume>"}}
+		NodeName: other, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: "missing", XML: "<volume><capacity>1</capacity></volume>"}}}
 	create(t, k, theirVolume)
 
 	denied := map[string]func() error{

@@ -204,7 +204,7 @@ func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1a
 		status.Message = err.Error()
 		return status, err
 	}
-	cur, err := a.hv.Volume(v.Spec.Pool, v.Name)
+	cur, err := a.hv.Volume(v.Spec.Libvirt.Pool, v.Name)
 	if err != nil {
 		return fail(err)
 	}
@@ -213,11 +213,11 @@ func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1a
 		if err != nil {
 			return fail(err)
 		}
-		if err := a.hv.CreateVolume(v.Spec.Pool, want); err != nil {
+		if err := a.hv.CreateVolume(v.Spec.Libvirt.Pool, want); err != nil {
 			return fail(err)
 		}
-		a.logger.Info("created", "kind", kindVolume, "key", v.Name, "pool", v.Spec.Pool)
-		if cur, err = a.hv.Volume(v.Spec.Pool, v.Name); err != nil {
+		a.logger.Info("created", "kind", kindVolume, "key", v.Name, "pool", v.Spec.Libvirt.Pool)
+		if cur, err = a.hv.Volume(v.Spec.Libvirt.Pool, v.Name); err != nil {
 			return fail(err)
 		}
 	}
@@ -235,7 +235,7 @@ func (a *Agent) removeVolume(r state.Record) (bool, error) {
 	if v.Spec.ReclaimPolicy != computev1alpha1.ReclaimDelete {
 		return true, nil
 	}
-	ref := v.Spec.Pool + "/" + v.Name
+	ref := v.Spec.Libvirt.Pool + "/" + v.Name
 	for _, d := range a.store.List(kindDomain) {
 		var dom computev1alpha1.LibvirtDomain
 		if err := json.Unmarshal(d.Object, &dom); err != nil {
@@ -250,7 +250,7 @@ func (a *Agent) removeVolume(r state.Record) (bool, error) {
 			return false, nil
 		}
 	}
-	return true, a.hv.DeleteVolume(v.Spec.Pool, v.Name)
+	return true, a.hv.DeleteVolume(v.Spec.Libvirt.Pool, v.Name)
 }
 
 // define 在需要时下发 want，并记录输入与读回配置的 hash。read 返回对象的现状（持久配置）。

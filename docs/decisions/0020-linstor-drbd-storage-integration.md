@@ -89,7 +89,7 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 
 ### 卷
 
-- `LibvirtStorageVolume` 的 `backend: linstor` 分支由 controller 调用 LINSTOR API 创建，在候选节点上
+- `LibvirtStorageVolume` 的 `spec.linstor` 后端（与 `spec.libvirt` 互斥）由 controller 调用 LINSTOR API 创建，在候选节点上
   放置副本；不放副本的候选节点按需以 diskless 方式接入。
 - domain 中写 `<disk type='block'>` 和 `/dev/drbd/by-res/<res>/<vol>`，该路径本身就是稳定引用。
 - **扩容**：controller 扩大 volume definition，之后的处理与 ADR-0019 相同。

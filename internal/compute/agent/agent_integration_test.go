@@ -374,8 +374,8 @@ func (s *suite) managesVolumes(t *testing.T) {
 	ctx := t.Context()
 	volume := func(name, node string, policy computev1alpha1.ReclaimPolicy) *computev1alpha1.LibvirtStorageVolume {
 		return &computev1alpha1.LibvirtStorageVolume{Name: name, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
-			Pool: localPool, NodeName: node, ReclaimPolicy: policy,
-			XML: `<volume><name>ignored</name><capacity unit='MiB'>1</capacity></volume>`}}
+			NodeName: node, ReclaimPolicy: policy, Libvirt: &computev1alpha1.LibvirtVolumeSource{
+				Pool: localPool, XML: `<volume><name>ignored</name><capacity unit='MiB'>1</capacity></volume>`}}}
 	}
 	exists := func(name string) bool {
 		pool, err := s.l.LookupStoragePoolByName(localPool)
@@ -410,8 +410,10 @@ func (s *suite) managesVolumes(t *testing.T) {
 	if exists("theirs") {
 		t.Error("volume for another node was created here")
 	}
-	if err := s.k.Patch(ctx, disk, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"pool":"elsewhere"}}`))); err == nil {
-		t.Error("pool must be immutable")
+	for _, patch := range []string{`{"spec":{"libvirt":{"pool":"elsewhere"}}}`, `{"spec":{"libvirt":null}}`, `{"spec":{"nodeName":"elsewhere"}}`} {
+		if err := s.k.Patch(ctx, disk, client.RawPatch(types.MergePatchType, []byte(patch))); err == nil {
+			t.Errorf("%s must be rejected: storage backend and node are immutable", patch)
+		}
 	}
 
 	// 被实例引用的卷：删除对象后，等实例清理了才删卷。
@@ -448,7 +450,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 		t.Fatal("retained volume was deleted")
 	}
 	kept = volume("kept", node, computev1alpha1.ReclaimDelete)
-	kept.Spec.XML = `<volume><capacity unit='MiB'>2</capacity></volume>` // 已存在就接管，不按新 XML 重建
+	kept.Spec.Libvirt.XML = `<volume><capacity unit='MiB'>2</capacity></volume>` // 已存在就接管，不按新 XML 重建
 	create(t, s.k, kept)
 	waitPath(kept)
 	// 清理，免得后面模拟宿主机重启时重新创建。

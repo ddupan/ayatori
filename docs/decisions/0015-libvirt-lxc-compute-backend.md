@@ -77,7 +77,7 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 |---|---|---|
 | `LibvirtStoragePool` | 原生 pool XML + `nodeSelector` | 匹配的节点 |
 | `LibvirtNetwork` | 原生 network XML + `nodeSelector` | 匹配的节点 |
-| `LibvirtStorageVolume` | pool 引用 + 原生 volume XML 或 `size`；可选 `source.url` 导入镜像；`reclaimPolicy`（`Retain`/`Delete`） | 共享 pool 在任一就绪节点创建一次；本地 pool 在指定节点创建 |
+| `LibvirtStorageVolume` | 一种存储后端（互斥）：`libvirt` 为 pool 引用 + 原生 volume XML 或 `size`，LINSTOR 为 `linstor`（ADR-0020）；本地存储的 `nodeName`；可选 `source.url` 导入镜像；`reclaimPolicy`（`Retain`/`Delete`） | 共享 pool 在任一就绪节点创建一次；本地 pool 在指定节点创建 |
 | `LibvirtDomain` | `spec.domainXML` 原生 domain XML，`virsh dumpxml` 的输出可以直接使用 | 候选节点 |
 | `LXCContainer` | `spec.config` 原生 lxc config 文本，`rootfs` 引用 volume，`networks` 引用 network | 候选节点 |
 
@@ -102,7 +102,9 @@ domain、pool、network、volume 都使用 libvirt 原生 XML，用户只需要�
 - **volume 的内容是数据，不按 spec 收敛**：卷不存在时按 XML 创建，已存在（包括带外放入的文件）就
   接管，不修改也不重建；spec 除 `reclaimPolicy` 外不可修改，扩容另走 `size`（ADR-0019 §7）。
   `reclaimPolicy` 缺省为 `Retain`，删除对象只是不再管理，同名对象再次创建时接管原卷。
-  - 第一版只支持本地 pool，卷由 `spec.nodeName` 指定节点；finalizer 待 compute controller 实现，
+  - 存储后端是 spec 下互斥的一块（与 PV 的 volume source 相同），不随存储种类新建资源；`nodeName`
+    与 `reclaimPolicy` 与后端无关，放在顶层。后端与 `nodeName` 创建后不可修改。
+  - 第一版只有 `libvirt` 后端、只支持本地 pool，卷由 `spec.nodeName` 指定节点；finalizer 待 compute controller 实现，
     在此之前由 Agent 在本地保护：`Delete` 的卷在本节点仍有 domain（包括待清理的）引用时延后删除。
 - XML 中直接写死 `/dev/...` 或 bridge 名同样允许，但 Ayatori 不管理这些资源，也无法据此计算
   候选节点，相应的实例不进入自动冷启动。

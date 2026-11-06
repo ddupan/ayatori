@@ -15,7 +15,7 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.pool
+    - jsonPath: .spec.libvirt.pool
       name: Pool
       type: string
     - jsonPath: .spec.nodeName
@@ -47,18 +47,42 @@ spec:
             type: object
           spec:
             description: |-
-              LibvirtStorageVolumeSpec 在一个本地 pool 中创建卷（ADR-0015）。创建后不可修改：卷的内容是数据，
-              Ayatori 不会为了让配置一致而重建它。扩容（ADR-0019 §7）与从 URL 导入（§9）在后续版本加入。
+              LibvirtStorageVolumeSpec 声明一个卷（ADR-0015）。卷由一种存储后端提供，各后端是 spec 下互斥的
+              一块：本版本只有 libvirt（经 libvirt pool 管理）；ADR-0020 的 LINSTOR 以后作为并列的 linstor 加入。
+              后端与 nodeName 创建后不可修改：卷的内容是数据，Ayatori 不会为了让配置一致而重建它。
+              扩容（ADR-0019 §7）与从 URL 导入（§9）在后续版本加入。
             properties:
+              libvirt:
+                description: Libvirt 表示卷在 libvirt pool 中，由节点上的 Agent 经 libvirt 创建与删除。
+                properties:
+                  pool:
+                    description: Pool 是 LibvirtStoragePool 的名字。
+                    minLength: 1
+                    type: string
+                  xml:
+                    description: |-
+                      XML 是原生 volume XML，例如 <volume><capacity unit='G'>20</capacity><target><format type='qcow2'/></target></volume>。
+                      name 由 Ayatori 填写为对象名，domain 因此可以用 <source pool='…' volume='对象名'/> 引用。
+                      卷已存在时直接接管，不按 XML 修改或覆盖。
+                    minLength: 1
+                    type: string
+                required:
+                - pool
+                - xml
+                type: object
+                x-kubernetes-validations:
+                - message: libvirt volume is immutable
+                  rule: self == oldSelf
               nodeName:
-                description: NodeName 是卷所在的节点。本版本只支持本地 pool，必须指定节点。
+                description: |-
+                  NodeName 表示卷只存在于该节点上（本地存储），引用它的实例只能在该节点运行。共享存储（rbd、
+                  LINSTOR）以后不填。本版本只支持本地存储，必须指定。
                 maxLength: 253
                 minLength: 1
                 type: string
-              pool:
-                description: Pool 是 LibvirtStoragePool 的名字。
-                minLength: 1
-                type: string
+                x-kubernetes-validations:
+                - message: nodeName is immutable
+                  rule: self == oldSelf
               reclaimPolicy:
                 default: Retain
                 description: ReclaimPolicy 决定删除对象时如何处理 libvirt 中的卷。
@@ -66,22 +90,14 @@ spec:
                 - Retain
                 - Delete
                 type: string
-              xml:
-                description: |-
-                  XML 是原生 volume XML，例如 <volume><capacity unit='G'>20</capacity><target><format type='qcow2'/></target></volume>。
-                  name 由 Ayatori 填写为对象名，domain 因此可以用 <source pool='…' volume='对象名'/> 引用。
-                  卷已存在时直接接管，不按 XML 修改或覆盖。
-                minLength: 1
-                type: string
             required:
             - nodeName
-            - pool
-            - xml
             type: object
             x-kubernetes-validations:
-            - message: pool, nodeName and xml are immutable
-              rule: self.pool == oldSelf.pool && self.nodeName == oldSelf.nodeName
-                && self.xml == oldSelf.xml
+            - message: 'a storage backend must be set: libvirt'
+              rule: has(self.libvirt)
+            - message: storage backend is immutable
+              rule: has(self.libvirt) == has(oldSelf.libvirt)
           status:
             properties:
               capacity:
