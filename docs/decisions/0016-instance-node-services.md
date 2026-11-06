@@ -64,7 +64,7 @@
   OpenStack 的 metadata proxy 需要额外签名的 header 才能防伪，宿主机上则直接掌握这个事实。
   PoC 04 的做法：bridge 层按入口端口打 mark，三层按 mark DNAT 到该实例专属的端口；不需要
   `br_netfilter`。
-- **实例端口名由 Agent 固定**：domain 中写 `<target dev='ay-<实例>'/>`，LXC 写
+- **实例端口名由 Agent 固定**：渲染 `interfaces` 时在 domain 中写 `<target dev='ay-<实例>'/>`，LXC 写
   `lxc.net.N.veth.pair`。默认的 `vnetN` 在冷启动后会变，按端口写的规则随之失效（PoC 04）。
 - **防 SSRF，照搬 AWS IMDSv2**：先 PUT 换取会话 token；响应包的 IP TTL 设为 1，嵌套容器或被转发的
   请求拿不到；请求必须带指定 header（GCE 用 `Metadata-Flavor`）。TTL 要设在监听 socket 上，否则

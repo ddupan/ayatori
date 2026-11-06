@@ -91,7 +91,8 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 
 - `LibvirtStorageVolume` 的 `spec.linstor` 后端（与 `spec.libvirt` 互斥）由 controller 调用 LINSTOR API 创建，在候选节点上
   放置副本；不放副本的候选节点按需以 diskless 方式接入。
-- domain 中写 `<disk type='block'>` 和 `/dev/drbd/by-res/<res>/<vol>`，该路径本身就是稳定引用。
+- domain 的 `disks` 引用卷对象，Agent 渲染为 `<disk type='block'>` 和 `/dev/drbd/by-res/<res>/<vol>`；
+  该路径在所有节点上一致，但不出现在 API 中，本地卷换成 LINSTOR 卷时 domain 不需要改。
 - **扩容**：controller 扩大 volume definition，之后的处理与 ADR-0019 相同。
 - **换存储池（SSD↔HDD）或换副本所在节点**：修改卷的 spec，controller 经 LINSTOR 逐个副本重放（加新
   副本、同步完成后再删旧副本，`toggle-disk`），全程保持 quorum。设备路径不变，domain 不需要改，
@@ -110,8 +111,8 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 
 | volume | 内容 | 写入方 |
 |---|---|---|
-| 磁盘 | 客户机磁盘，多块盘各占一个 volume | 用户在 domain XML 中引用 |
-| NVRAM | raw 块设备，`<nvram type='block'>` | Agent 填写，用户写了也会被覆盖 |
+| 磁盘 | 客户机磁盘，多块盘各占一个 volume | 用户在 `disks` 中引用卷对象，Agent 渲染 |
+| NVRAM | raw 块设备，`<nvram type='block'>` | Agent 按 `firmware` 渲染；`domainXML` 中出现即拒绝（ADR-0015） |
 | vTPM 状态 | raw 块设备，`<backend type='emulator'><source type='file' path='/dev/drbd/by-res/...'/>` | 同上 |
 | 状态卷 | ext4，几十 MiB，只放电源意图标记 | 监管进程 |
 
