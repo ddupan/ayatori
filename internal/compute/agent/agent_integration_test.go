@@ -636,9 +636,10 @@ func (s *suite) waitState(t *testing.T, d *computev1alpha1.LibvirtDomain, ok fun
 func (s *suite) managesImages(t, parent *testing.T) {
 	ctx := t.Context()
 	iso := func(tag string) []byte {
-		b := make([]byte, 32769+64)
+		b := make([]byte, 32769+64+len(tag))
 		copy(b[32769:], "CD001")
-		return append(b, tag...)
+		copy(b[32769+64:], tag)
+		return b
 	}
 	sum := func(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 	const cd, root, imgPool, badImage, fromRoot, fromCD, pathV1 = "cd", "root", "imgs", "bad", "from-root", "from-cd", "/v1"
@@ -656,32 +657,6 @@ func (s *suite) managesImages(t, parent *testing.T) {
 		return &computev1alpha1.Image{Name: name, Spec: computev1alpha1.ImageSpec{Type: kind, Pool: imgPool,
 			Source: computev1alpha1.ImageSource{HTTP: &computev1alpha1.ImageHTTPSource{URL: srv.URL + path, SHA256: sha}}}}
 	}
-	waitImage := func(name string, ok func(computev1alpha1.ImageNodeStatus) bool) {
-		t.Helper()
-		eventually(t, 30*time.Second, func() error {
-			var img computev1alpha1.Image
-			if err := s.k.Get(ctx, client.ObjectKey{Name: name}, &img); err != nil {
-				return err
-			}
-			if len(img.Status.Nodes) != 1 || !ok(img.Status.Nodes[0]) {
-				return fmt.Errorf("image %s status = %+v", name, img.Status)
-			}
-			return nil
-		})
-	}
-	waitVolume := func(name string, ok func(computev1alpha1.LibvirtStorageVolumeStatus) bool) {
-		t.Helper()
-		eventually(t, 30*time.Second, func() error {
-			var v computev1alpha1.LibvirtStorageVolume
-			if err := s.k.Get(ctx, client.ObjectKey{Name: name}, &v); err != nil {
-				return err
-			}
-			if !ok(v.Status) {
-				return fmt.Errorf("volume %s status = %+v", name, v.Status)
-			}
-			return nil
-		})
-	}
 	fileIs := func(want []byte) {
 		t.Helper()
 		if got, err := os.ReadFile(filepath.Join(dir, cd)); err != nil || string(got) != string(want) {
@@ -690,7 +665,7 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	}
 
 	create(t, s.k, image(cd, computev1alpha1.ImageISO, pathV1, sum(v1)))
-	waitImage(cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v1) })
+	s.waitImage(t, cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v1) })
 	fileIs(v1)
 
 	vm := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm-cd", Spec: computev1alpha1.LibvirtDomainSpec{
@@ -718,13 +693,13 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	if err := s.k.Update(ctx, &img); err != nil {
 		t.Fatal(err)
 	}
-	waitImage(cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v2) })
+	s.waitImage(t, cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v2) })
 	fileIs(v2)
 	s.waitState(t, vm, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 
 	// 校验失败：报错、不就绪，不留下副本。
 	create(t, s.k, image(badImage, computev1alpha1.ImageISO, pathV1, sum(v2)))
-	waitImage(badImage, func(st computev1alpha1.ImageNodeStatus) bool {
+	s.waitImage(t, badImage, func(st computev1alpha1.ImageNodeStatus) bool {
 		return !st.Ready && strings.Contains(st.Message, "checksum mismatch")
 	})
 	if _, err := os.Stat(filepath.Join(dir, badImage)); !errors.Is(err, os.ErrNotExist) {
@@ -739,11 +714,11 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	}
 	// 依赖稍后出现：镜像还不存在时卷等待；类型不对时被拒绝。
 	create(t, s.k, volume(fromRoot, root))
-	waitVolume(fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
+	s.waitVolume(t, fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
 		return st.Path == "" && strings.Contains(st.Message, "no such image")
 	})
 	create(t, s.k, volume(fromCD, cd))
-	waitVolume(fromCD, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
+	s.waitVolume(t, fromCD, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
 		return st.Path == "" && strings.Contains(st.Message, "has type ISO")
 	})
 	// test 驱动的 refresh 不扫描目录，这里替它登记副本。
@@ -758,12 +733,12 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	}
 	free(vol.Free)
 	create(t, s.k, image(root, computev1alpha1.ImageDisk, "/disk", sum(disk)))
-	waitVolume(fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
+	s.waitVolume(t, fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool {
 		return st.Path != "" && st.Image == root && st.SHA256 == sum(disk) && st.Message == ""
 	})
 
 	// 重启后按本地状态判断，不重新下载。"bad" 一直在重试，先删掉，计数才有意义。
-	waitImage(root, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready })
+	s.waitImage(t, root, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready })
 	if err := s.k.Delete(ctx, &computev1alpha1.Image{Name: badImage}); err != nil {
 		t.Fatal(err)
 	}
@@ -772,8 +747,8 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	before := requests.Load()
 	s.agent = runAgent(parent, s.config) // 子测试结束后 Agent 还要继续运行
 	time.Sleep(3 * time.Second)
-	waitImage(cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v2) })
-	waitVolume(fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool { return st.SHA256 == sum(disk) })
+	s.waitImage(t, cd, func(st computev1alpha1.ImageNodeStatus) bool { return st.Ready && st.SHA256 == sum(v2) })
+	s.waitVolume(t, fromRoot, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool { return st.SHA256 == sum(disk) })
 	if got := requests.Load(); got != before {
 		t.Fatalf("restart downloaded again: %d requests, had %d", got, before)
 	}
@@ -801,7 +776,39 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	if err := s.k.Delete(ctx, &computev1alpha1.Image{Name: root}); err != nil {
 		t.Fatal(err)
 	}
+	s.rejectsInvalidDisks(t, cd)
+}
 
+func (s *suite) waitImage(t *testing.T, name string, ok func(computev1alpha1.ImageNodeStatus) bool) {
+	t.Helper()
+	eventually(t, 30*time.Second, func() error {
+		var img computev1alpha1.Image
+		if err := s.k.Get(t.Context(), client.ObjectKey{Name: name}, &img); err != nil {
+			return err
+		}
+		if len(img.Status.Nodes) != 1 || !ok(img.Status.Nodes[0]) {
+			return fmt.Errorf("image %s status = %+v", name, img.Status)
+		}
+		return nil
+	})
+}
+
+func (s *suite) waitVolume(t *testing.T, name string, ok func(computev1alpha1.LibvirtStorageVolumeStatus) bool) {
+	t.Helper()
+	eventually(t, 30*time.Second, func() error {
+		var v computev1alpha1.LibvirtStorageVolume
+		if err := s.k.Get(t.Context(), client.ObjectKey{Name: name}, &v); err != nil {
+			return err
+		}
+		if !ok(v.Status) {
+			return fmt.Errorf("volume %s status = %+v", name, v.Status)
+		}
+		return nil
+	})
+}
+
+func (s *suite) rejectsInvalidDisks(t *testing.T, cd string) {
+	ctx := t.Context()
 	// 一块盘必须且只能引用卷或镜像；镜像是光驱，不能接 virtio。
 	for _, disk := range []computev1alpha1.DomainDisk{
 		{},
