@@ -42,10 +42,14 @@ const (
 	kindPool    = "LibvirtStoragePool"
 	kindVolume  = "LibvirtStorageVolume"
 	kindDomain  = "LibvirtDomain"
+	kindImage   = "Image"
+
+	// downloadTimeout 是一次镜像下载的总时长上限。
+	downloadTimeout = 2 * time.Hour
 )
 
 // kinds 是收敛顺序：被引用的在前。
-var kinds = []string{kindNetwork, kindPool, kindVolume, kindDomain}
+var kinds = []string{kindNetwork, kindPool, kindImage, kindVolume, kindDomain}
 
 // Config 是节点部署写入的本地配置。
 type Config struct {
@@ -128,6 +132,8 @@ type Agent struct {
 	// succeeded 是各对象最近一次成功收敛的时间，seen 是上一轮出现过的对象；只由主循环访问。
 	succeeded map[objectID]time.Time
 	seen      map[objectID]bool
+	// downloads 是进行中的镜像下载，按 Image 名字；只由主循环访问。
+	downloads map[string]*download
 }
 
 // New 只加载本地状态，不访问 API：控制面不可用、证书尚未签发时 Agent 也必须能启动。证书在后台
@@ -156,7 +162,8 @@ func New(config Config, registry prometheus.Registerer, logger *slog.Logger) (*A
 	a := &Agent{config: config, store: store, scheme: scheme, logger: logger, restConfig: restConfig,
 		stopCredentials: stopCredentials,
 		observed:        map[string]observation{}, reported: map[string]observation{},
-		metrics: newMetrics(registry), succeeded: map[objectID]time.Time{}, seen: map[objectID]bool{}}
+		metrics: newMetrics(registry), succeeded: map[objectID]time.Time{}, seen: map[objectID]bool{},
+		downloads: map[string]*download{}}
 	a.facts.Store(&nodeFacts{})
 	return a, nil
 }
@@ -170,6 +177,9 @@ func (a *Agent) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			for name := range a.downloads {
+				a.stopDownload(name)
+			}
 			if a.hv != nil {
 				_ = a.hv.Close()
 			}
@@ -204,7 +214,16 @@ func (a *Agent) connectAPI(ctx context.Context) {
 		return
 	}
 	a.kube.Store(&kube)
-	go a.watch(ctx, config)
+	go func() {
+		// watch 只在建立失败时返回，例如升级时 Agent 先于 CRD 到达。
+		for ctx.Err() == nil {
+			a.watch(ctx, config)
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}()
 	a.heartbeat(ctx, kube)
 }
 
@@ -228,7 +247,7 @@ func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 		DeleteFunc: func(any) { signal(changed) },
 	}
 	for _, obj := range []client.Object{&computev1alpha1.LibvirtNetwork{}, &computev1alpha1.LibvirtStoragePool{},
-		&computev1alpha1.LibvirtStorageVolume{}, &computev1alpha1.LibvirtDomain{}, &corev1.Node{}} {
+		&computev1alpha1.LibvirtStorageVolume{}, &computev1alpha1.LibvirtDomain{}, &computev1alpha1.Image{}, &corev1.Node{}} {
 		informer, err := c.GetInformer(ctx, obj)
 		if err != nil {
 			a.logger.Error("get informer", "error", err)
@@ -271,7 +290,8 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 	var pools computev1alpha1.LibvirtStoragePoolList
 	var volumes computev1alpha1.LibvirtStorageVolumeList
 	var domains computev1alpha1.LibvirtDomainList
-	for _, list := range []client.ObjectList{&nets, &pools, &volumes, &domains} {
+	var images computev1alpha1.ImageList
+	for _, list := range []client.ObjectList{&nets, &pools, &volumes, &domains, &images} {
 		if err := c.List(ctx, list); err != nil {
 			return err
 		}
@@ -302,6 +322,11 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 	for i := range pools.Items {
 		if matches(pools.Items[i].Spec.NodeSelector) {
 			keep(kindPool, &pools.Items[i])
+		}
+	}
+	for i := range images.Items {
+		if matches(images.Items[i].Spec.NodeSelector) {
+			keep(kindImage, &images.Items[i])
 		}
 	}
 	for i := range volumes.Items {

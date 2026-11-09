@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,7 +46,7 @@ var diskTargets = map[computev1alpha1.DiskBus]string{
 // prepareDomain 把类型化的 firmware、disks、interfaces 渲染进原生 domainXML，并填写 name 与 uuid（ADR-0015）。
 // 这些元素归 Ayatori，domainXML 中出现就拒绝，不静默覆盖。卷解析成具体路径：AppArmor 不会把
 // type='volume' 的源加入实例的 profile（PoC 02）。
-func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string) (Volume, error)) (string, error) {
+func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha1.DomainDisk) (Volume, error)) (string, error) {
 	var dom libvirtxml.Domain
 	if err := dom.Unmarshal(d.Spec.DomainXML); err != nil {
 		return "", fmt.Errorf("parse domainXML: %w", err)
@@ -86,9 +87,9 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string)
 	renderFirmware(&dom, d.Spec.Firmware)
 	used := map[string]int{}
 	for _, disk := range d.Spec.Disks {
-		vol, err := resolve(disk.Volume)
+		vol, err := resolve(disk)
 		if err != nil {
-			return "", fmt.Errorf("resolve volume %s: %w", disk.Volume, err)
+			return "", fmt.Errorf("resolve disk %s: %w", disk.Volume+disk.Image, err)
 		}
 		bus := cmp.Or(disk.Bus, computev1alpha1.DiskBusVirtio)
 		prefix := diskTargets[bus]
@@ -109,7 +110,10 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string)
 		} else {
 			x.Source = &libvirtxml.DomainDiskSource{File: &libvirtxml.DomainDiskSourceFile{File: vol.Path}}
 		}
-		if disk.ReadOnly {
+		if disk.Image != "" {
+			x.Device = "cdrom"
+		}
+		if disk.ReadOnly || disk.Image != "" {
 			x.ReadOnly = &libvirtxml.DomainDiskReadOnly{}
 		}
 		if disk.BootOrder > 0 {
@@ -209,4 +213,32 @@ func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	}
 	x.Name = v.Name
 	return x.Marshal()
+}
+
+// volumeCapacity 按 libvirt 的单位规则换算 volume XML 中的 capacity：KB 是 1000，K 与 KiB 是 1024。
+func volumeCapacity(xml string) (uint64, error) {
+	var x libvirtxml.StorageVolume
+	if err := x.Unmarshal(xml); err != nil {
+		return 0, fmt.Errorf("parse volume xml: %w", err)
+	}
+	if x.Capacity == nil {
+		return 0, errors.New("volume xml has no capacity")
+	}
+	unit := strings.ToLower(x.Capacity.Unit)
+	if unit == "" || unit == "b" || unit == "byte" || unit == "bytes" {
+		return x.Capacity.Value, nil
+	}
+	power := strings.IndexByte("kmgtpe", unit[0]) + 1
+	base := uint64(1024)
+	if strings.HasSuffix(unit, "b") && !strings.HasSuffix(unit, "ib") {
+		base = 1000
+	}
+	if power == 0 || len(unit) > 3 {
+		return 0, fmt.Errorf("unknown capacity unit %q", x.Capacity.Unit)
+	}
+	value := x.Capacity.Value
+	for range power {
+		value *= base
+	}
+	return value, nil
 }

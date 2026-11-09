@@ -25,10 +25,17 @@ const (
 )
 
 // DomainDisk 是实例的一块磁盘，由 Ayatori 渲染为 <disk>（ADR-0015）。
+// +kubebuilder:validation:XValidation:rule="has(self.volume) != has(self.image)",message="exactly one of volume and image must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.image) || self.bus in ['sata', 'scsi', 'ide']",message="an image is a cdrom: bus must be sata, scsi or ide"
 type DomainDisk struct {
 	// Volume 是本节点上 LibvirtStorageVolume 的名字。
 	// +kubebuilder:validation:MinLength=1
-	Volume string `json:"volume"`
+	// +optional
+	Volume string `json:"volume,omitempty"`
+	// Image 是 ISO 类型的 Image 的名字，作为只读光驱挂载。副本更新后，下次启动读到新版本（ADR-0019 §9）。
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Image string `json:"image,omitempty"`
 	// +kubebuilder:default=virtio
 	// +optional
 	Bus DiskBus `json:"bus,omitempty"`

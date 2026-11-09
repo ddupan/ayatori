@@ -1,5 +1,5 @@
 # compute Agent 只写自己：domain 与 volume 的 status 只在 spec.nodeName 是自己时可写，domain 只能把自己
-# 报告为运行节点；network、pool 的 status.nodes 中只能改自己那一项（PoC 09）。
+# 报告为运行节点；network、pool、image 的 status.nodes 中只能改自己那一项（PoC 09）。
 # ponytail: domain 按 spec.nodeName 判断；compute controller 计算候选节点后改为按候选 label（PoC 09）。
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -12,7 +12,7 @@ spec:
     - apiGroups: [compute.ayatori.ddupan.top]
       apiVersions: ["*"]
       operations: [UPDATE]
-      resources: [libvirtdomains/status, libvirtstoragevolumes/status, libvirtnetworks/status, libvirtstoragepools/status]
+      resources: [libvirtdomains/status, libvirtstoragevolumes/status, libvirtnetworks/status, libvirtstoragepools/status, images/status]
   matchConditions:
   - name: is-compute-agent
     expression: "'system:ayatori:role:compute' in request.userInfo.groups"

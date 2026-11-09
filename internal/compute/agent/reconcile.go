@@ -119,8 +119,18 @@ func (a *Agent) remove(r state.Record) error {
 	case kindNetwork:
 		err = a.hv.RemoveNetwork(r.Key)
 	case kindPool:
-		// pool 上还有本节点的卷对象（包括等实例清理后才删的）时先不 undefine：否则之后无法删除卷，
-		// 卷文件会残留。
+		// pool 上还有本节点的卷或镜像对象（包括等实例清理后才删的）时先不 undefine：否则之后无法删除，
+		// 文件会残留。
+		for _, i := range a.store.List(kindImage) {
+			var img computev1alpha1.Image
+			if err := json.Unmarshal(i.Object, &img); err != nil {
+				return err
+			}
+			if img.Spec.Pool == r.Key {
+				a.logger.Info("pool still has images, removing later", "key", r.Key, "image", i.Key)
+				return nil
+			}
+		}
 		for _, v := range a.store.List(kindVolume) {
 			var vol computev1alpha1.LibvirtStorageVolume
 			if err := json.Unmarshal(v.Object, &vol); err != nil {
@@ -135,6 +145,11 @@ func (a *Agent) remove(r state.Record) error {
 	case kindVolume:
 		var removed bool
 		if removed, err = a.removeVolume(r); err == nil && !removed {
+			return nil
+		}
+	case kindImage:
+		var removed bool
+		if removed, err = a.removeImage(r); err == nil && !removed {
 			return nil
 		}
 	case kindDomain:
@@ -169,8 +184,15 @@ func (a *Agent) apply(r state.Record) (*observation, error) {
 		if err := json.Unmarshal(r.Object, &v); err != nil {
 			return nil, err
 		}
-		status, err := a.applyVolume(&v)
+		status, err := a.applyVolume(r, &v)
 		return &observation{kind: kindVolume, name: v.Name, status: status}, err
+	case kindImage:
+		var img computev1alpha1.Image
+		if err := json.Unmarshal(r.Object, &img); err != nil {
+			return nil, err
+		}
+		status, err := a.applyImage(r, &img)
+		return &observation{kind: kindImage, name: img.Name, status: status}, err
 	case kindDomain:
 		var d computev1alpha1.LibvirtDomain
 		if err := json.Unmarshal(r.Object, &d); err != nil {
@@ -217,8 +239,9 @@ func (a *Agent) applyPool(r state.Record, p *computev1alpha1.LibvirtStoragePool)
 	return nil
 }
 
-// applyVolume 在卷不存在时按 XML 创建；已存在就接管，不修改也不覆盖：卷的内容是数据。
-func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1alpha1.LibvirtStorageVolumeStatus, error) {
+// applyVolume 在卷不存在时按 XML 创建，声明了 source.image 时从镜像复制；已存在就接管，不修改也不
+// 覆盖：卷的内容是数据。
+func (a *Agent) applyVolume(r state.Record, v *computev1alpha1.LibvirtStorageVolume) (computev1alpha1.LibvirtStorageVolumeStatus, error) {
 	status := computev1alpha1.LibvirtStorageVolumeStatus{ObservedGeneration: v.Generation}
 	fail := func(err error) (computev1alpha1.LibvirtStorageVolumeStatus, error) {
 		status.Message = err.Error()
@@ -228,12 +251,18 @@ func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1a
 	if err != nil {
 		return fail(err)
 	}
+	sha := r.AppliedInputHash
 	if !cur.Found {
 		want, err := prepareVolume(v)
 		if err != nil {
 			return fail(err)
 		}
-		if err := a.hv.CreateVolume(v.Spec.Libvirt.Pool, want); err != nil {
+		if v.Spec.Source != nil {
+			sha, err = a.createVolumeFromImage(r, v, want)
+		} else {
+			err = a.hv.CreateVolume(v.Spec.Libvirt.Pool, want)
+		}
+		if err != nil {
 			return fail(err)
 		}
 		a.logger.Info("created", "kind", kindVolume, "key", v.Name, "pool", v.Spec.Libvirt.Pool)
@@ -242,6 +271,9 @@ func (a *Agent) applyVolume(v *computev1alpha1.LibvirtStorageVolume) (computev1a
 		}
 	}
 	status.Path, status.Capacity = cur.Path, int64(cur.Capacity)
+	if v.Spec.Source != nil {
+		status.Image, status.SHA256 = v.Spec.Source.Image, sha
+	}
 	return status, nil
 }
 
@@ -338,7 +370,7 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 		status.Message = err.Error()
 		return status, err
 	}
-	want, err := prepareDomain(d, a.resolveVolume)
+	want, err := prepareDomain(d, a.resolveDisk)
 	if err != nil {
 		return fail(err)
 	}
@@ -424,7 +456,7 @@ func (a *Agent) writeStatus(ctx context.Context, kube client.Client, obs observa
 	if err := json.Unmarshal(data, &status); err != nil {
 		return err
 	}
-	if obs.kind == kindNetwork || obs.kind == kindPool {
+	if obs.kind == kindNetwork || obs.kind == kindPool || obs.kind == kindImage {
 		u.Object["status"] = map[string]any{"nodes": []any{status}}
 	} else {
 		u.Object["status"] = status
