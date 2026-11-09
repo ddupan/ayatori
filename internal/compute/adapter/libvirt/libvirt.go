@@ -314,6 +314,21 @@ func (c *Client) CreateVolumeFrom(pool, xml, sourcePool, sourceName string, capa
 	return nil
 }
 
+// ResizeVolume 把卷扩大到 capacity（字节）。
+func (c *Client) ResizeVolume(pool, name string, capacity uint64) error {
+	p, err := c.conn.LookupStoragePoolByName(pool)
+	if err != nil {
+		return err
+	}
+	defer free(p.Free)
+	v, err := p.LookupStorageVolByName(name)
+	if err != nil {
+		return err
+	}
+	defer free(v.Free)
+	return v.Resize(capacity, 0)
+}
+
 // DeleteVolume 删除卷及其数据；卷不存在时什么也不做，pool 不存在时报错。
 func (c *Client) DeleteVolume(pool, name string) error {
 	p, err := c.conn.LookupStoragePoolByName(pool)
@@ -370,6 +385,30 @@ func (c *Client) DefineDomain(xml string) error {
 	}
 	defer free(d.Free)
 	return d.SetAutostart(false)
+}
+
+// BlockCapacity 返回运行中的实例看到的磁盘容量（字节），path 是磁盘的源路径。
+func (c *Client) BlockCapacity(domain, path string) (uint64, error) {
+	d, err := c.conn.LookupDomainByName(domain)
+	if err != nil {
+		return 0, err
+	}
+	defer free(d.Free)
+	info, err := d.GetBlockInfo(path, 0)
+	if err != nil {
+		return 0, err
+	}
+	return info.Capacity, nil
+}
+
+// BlockResize 在线把实例的磁盘扩大到 capacity（字节）。
+func (c *Client) BlockResize(domain, path string, capacity uint64) error {
+	d, err := c.conn.LookupDomainByName(domain)
+	if err != nil {
+		return err
+	}
+	defer free(d.Free)
+	return d.BlockResize(path, capacity, golibvirt.DOMAIN_BLOCK_RESIZE_BYTES)
 }
 
 func (c *Client) StartDomain(name string) error {

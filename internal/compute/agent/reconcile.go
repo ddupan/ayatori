@@ -274,7 +274,64 @@ func (a *Agent) applyVolume(r state.Record, v *computev1alpha1.LibvirtStorageVol
 	if v.Spec.Source != nil {
 		status.Image, status.SHA256 = v.Spec.Source.Image, sha
 	}
+	if v.Spec.Size != nil {
+		if err := a.growVolume(v, cur, uint64(v.Spec.Size.Value())); err != nil {
+			return fail(err)
+		}
+		if cur, err = a.hv.Volume(v.Spec.Libvirt.Pool, v.Name); err != nil {
+			return fail(err)
+		}
+		status.Capacity = int64(cur.Capacity)
+	}
 	return status, nil
+}
+
+// growVolume 把卷扩大到 want。实例运行中时由 QEMU 在线扩容：它持有文件锁，libvirt 改不了正在用的 qcow2；
+// 块设备要先扩大设备本身，QEMU 才能看到。以实例看到的容量判断，中途失败时下一轮能继续。
+func (a *Agent) growVolume(v *computev1alpha1.LibvirtStorageVolume, cur libvirt.Volume, want uint64) error {
+	domain, err := a.runningDomainOf(v.Name)
+	if err != nil {
+		return err
+	}
+	if domain == "" {
+		if cur.Capacity >= want {
+			return nil
+		}
+		return a.hv.ResizeVolume(v.Spec.Libvirt.Pool, v.Name, want)
+	}
+	seen, err := a.hv.BlockCapacity(domain, cur.Path)
+	if err != nil || seen >= want {
+		return err
+	}
+	if cur.Block && cur.Capacity < want {
+		if err := a.hv.ResizeVolume(v.Spec.Libvirt.Pool, v.Name, want); err != nil {
+			return err
+		}
+	}
+	a.logger.Info("resizing disk online", "domain", domain, "volume", v.Name, "bytes", want)
+	return a.hv.BlockResize(domain, cur.Path, want)
+}
+
+// runningDomainOf 返回本节点上正在使用该卷的实例在 libvirt 中的名字；没有时为空。
+func (a *Agent) runningDomainOf(volume string) (string, error) {
+	for _, r := range a.store.List(kindDomain) {
+		var d computev1alpha1.LibvirtDomain
+		if err := json.Unmarshal(r.Object, &d); err != nil {
+			return "", err
+		}
+		if !slices.ContainsFunc(d.Spec.Disks, func(disk computev1alpha1.DomainDisk) bool { return disk.Volume == volume }) {
+			continue
+		}
+		name := domainName(d.Namespace, d.Name)
+		cur, err := a.hv.Domain(name)
+		if err != nil {
+			return "", err
+		}
+		if cur.Running() {
+			return name, nil
+		}
+	}
+	return "", nil
 }
 
 // removeVolume 按 reclaimPolicy 处理已删除的卷对象。Delete 时，本节点上仍有实例（包括待清理的）引用它

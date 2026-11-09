@@ -578,6 +578,11 @@ func (in *LibvirtStorageVolumeSpec) DeepCopyInto(out *LibvirtStorageVolumeSpec) 
 		*out = new(LibvirtVolumeSource)
 		**out = **in
 	}
+	if in.Size != nil {
+		in, out := &in.Size, &out.Size
+		x := (*in).DeepCopy()
+		*out = &x
+	}
 	if in.Source != nil {
 		in, out := &in.Source, &out.Source
 		*out = new(VolumeContentSource)

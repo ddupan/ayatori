@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -198,6 +199,7 @@ func TestAgent(t *testing.T) {
 	t.Run("restores configuration changed outside Ayatori", s.restoresDrift)
 	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
 	t.Run("creates volumes and reclaims them by policy", s.managesVolumes)
+	t.Run("creates volumes by size and only lets size grow", s.managesVolumeSize)
 	t.Run("keeps a replica of each image and creates volumes from it", func(sub *testing.T) { s.managesImages(sub, t) })
 	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
 		NodeName: node, DomainXML: domainXML(""), Interfaces: []computev1alpha1.DomainInterface{{Network: lan}}}}
@@ -630,6 +632,42 @@ func (s *suite) waitState(t *testing.T, d *computev1alpha1.LibvirtDomain, ok fun
 		}
 		return nil
 	})
+}
+
+// managesVolumeSize 用 test 驱动验证 API 约束与按 size 创建；真实的离线、在线扩容在 Dev 环境验证。
+func (s *suite) managesVolumeSize(t *testing.T) {
+	ctx := t.Context()
+	const name = "sized"
+	size := resource.MustParse("1Mi")
+	v := &computev1alpha1.LibvirtStorageVolume{Name: name, Spec: computev1alpha1.LibvirtStorageVolumeSpec{NodeName: node,
+		Size: &size, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool}}}
+	create(t, s.k, v)
+	s.waitVolume(t, name, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool { return st.Capacity == 1<<20 })
+
+	invalid := []func(*computev1alpha1.LibvirtStorageVolume){
+		func(v *computev1alpha1.LibvirtStorageVolume) { q := resource.MustParse("512Ki"); v.Spec.Size = &q },
+		func(v *computev1alpha1.LibvirtStorageVolume) { v.Spec.Size = nil },
+	}
+	for i, change := range invalid {
+		bad := v.DeepCopy()
+		change(bad)
+		if err := s.k.Update(ctx, bad); err == nil {
+			t.Fatalf("invalid update %d accepted", i)
+		}
+	}
+	zero := resource.MustParse("0")
+	for i, spec := range []computev1alpha1.LibvirtStorageVolumeSpec{
+		{NodeName: node, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool}},
+		{NodeName: node, Size: &zero, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool}},
+	} {
+		bad := &computev1alpha1.LibvirtStorageVolume{Name: "invalid-size", Spec: spec}
+		if err := s.k.Create(ctx, bad); err == nil {
+			t.Fatalf("invalid volume %d accepted", i)
+		}
+	}
+	if err := s.k.Delete(ctx, v); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // managesImages 用 test 驱动验证 API、状态与文件；真实 QEMU 上的换盘与 qcow2 复制在 Dev 环境验证。
