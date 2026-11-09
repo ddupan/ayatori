@@ -37,6 +37,8 @@ jobs:
 
       - name: Set up Go
         uses: ./.gitea/actions/setup-go
+        with:
+          lint: 'true'
 
       - name: Lint integration build
         run: make lint-database-integration

@@ -4,6 +4,9 @@ inputs:
   docker:
     description: Docker Hub 镜像也走 Artifact Keeper（集成测试的后端容器）
     default: 'false'
+  lint:
+    description: 恢复并保存 golangci-lint 的分析缓存（lint job 用）
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -25,3 +28,13 @@ runs:
           bin
         key: go-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.sum', 'Makefile') }}
         restore-keys: go-${{ github.workflow }}-${{ github.job }}-
+
+    # lint 大部分时间花在分析上，这份缓存不在 go-build 里。按 commit 写新条目，下一次提交才能
+    # 从上一次恢复、只重新分析改动的包。hash 部分不能省：golangci-lint 用版本、配置和 go.mod
+    # 给缓存加盐，三者任一变化，旧条目都不会命中，恢复也没用。
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.lint == 'true'
+      with:
+        path: ~/.cache/golangci-lint
+        key: golangci-lint-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.mod', '.golangci.yml', 'Makefile') }}-${{ github.sha }}
+        restore-keys: golangci-lint-${{ github.workflow }}-${{ github.job }}-${{ hashFiles('go.mod', '.golangci.yml', 'Makefile') }}-
