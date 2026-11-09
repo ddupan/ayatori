@@ -1,0 +1,126 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: lxccontainers.compute.ayatori.ddupan.top
+spec:
+  group: compute.ayatori.ddupan.top
+  names:
+    kind: LXCContainer
+    listKind: LXCContainerList
+    plural: lxccontainers
+    singular: lxccontainer
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: LXCContainerSpec 按归属拆开：引用 Ayatori 对象的部分是类型化字段，其余是原生 lxc 配置（ADR-0015）。
+            properties:
+              config:
+                description: |-
+                  Config 是原生 lxc 配置文本，不含 Ayatori 拥有的 lxc.uts.name、lxc.rootfs.path 与 lxc.net.*：
+                  出现时 Agent 拒绝下发并在 status 中说明。其余内容原样透传，例如
+                  lxc.include = /usr/share/lxc/config/common.conf。
+                minLength: 1
+                type: string
+              networks:
+                description: Networks 按顺序渲染为 lxc.net.N。
+                items:
+                  description: ContainerNetwork 是容器的一块网卡，由 Ayatori 渲染为 lxc.net.N（ADR-0015）。
+                  properties:
+                    mac:
+                      description: MAC 地址。不写时由 Ayatori 从对象 UID 稳定生成。
+                      pattern: ^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$
+                      type: string
+                    network:
+                      description: Network 是 LibvirtNetwork 的名字，必须是有 bridge 的网络：容器的
+                        veth 接在这个 bridge 上。
+                      minLength: 1
+                      type: string
+                  required:
+                  - network
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: atomic
+              nodeName:
+                description: NodeName 是运行容器的节点。本版本只支持显式指定。
+                maxLength: 253
+                minLength: 1
+                type: string
+              rootfs:
+                description: |-
+                  Rootfs 是本节点上 LibvirtStorageVolume 的名字，内容是 ext4 文件系统，通常由 Rootfs 类型的
+                  Image 创建（ADR-0019 §9）。
+                minLength: 1
+                type: string
+              runState:
+                default: Running
+                description: |-
+                  RunState 为 Running 时，容器停止后由 Agent 拉起。容器拿不到停止原因，容器内 poweroff 与崩溃
+                  无法区分，都会被拉起（PoC 08）。
+                enum:
+                - Running
+                - Stopped
+                type: string
+            required:
+            - config
+            - nodeName
+            - rootfs
+            type: object
+          status:
+            properties:
+              message:
+                description: Message 是最近一次下发或启动失败的原因；成功时为空。
+                type: string
+              nodeName:
+                description: NodeName 是实际定义了该容器的节点。
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              state:
+                description: State 是 liblxc 报告的状态，例如 running、stopped。
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: 'name is the container hostname: at most 63 characters'
+          rule: size(self.metadata.name) <= 63
+    selectableFields:
+    - jsonPath: .spec.nodeName
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -183,8 +183,12 @@ spec:
     （PCI 地址、MAC、controller）不算漂移。
   - 订阅 libvirt 的 `DEFINED` 事件；hash 不一致说明有人在带外修改过，重新下发。
   - inactive 配置与运行中配置不一致时，设置 `RestartRequired`。
-- **LXC：** Agent 使用 `go-lxc` 绑定 liblxc，不 fork `lxc-*` 命令。配置文件以文件 hash 判断是否
-  漂移。
+- **LXC：** Agent 使用 `go-lxc` 绑定 liblxc，不 fork `lxc-*` 命令。配置文件内容与渲染结果不同即为漂移，
+  重新写入，运行中的容器下次启动生效。
+  - 容器由 Agent 进程 fork 出来，会继承其 `no_new_privs`，容器内的 setuid 程序（`sudo`、`su`、`ping`）因此失效，
+    且无法在容器内清除。Agent 的 systemd 单元不能设置 `NoNewPrivileges`。容器的 monitor 与 payload 在各自的
+    cgroup 中，Agent 重启不影响容器（compute-dev1 验证）。
+  - 不调用 liblxc 的 `Destroy`：它会连 rootfs 一起删，而 rootfs 是独立的卷，由卷的 `reclaimPolicy` 决定。
 - **libvirt autostart 必须关闭。** 实例启动只由 Agent（依据本地状态）或 drbd-reactor 决定。
 
 ### Agent 与控制面的通信
@@ -243,8 +247,8 @@ Ayatori 不抽象磁盘格式。存储能力尽量通过 libvirt 原生 pool 表
 `rootfs` 引用的 volume 从 libvirt 取得路径；`networks` 引用的 network 从其定义中查出 bridge，
 填入 `lxc.net.N.link`。VM 与 LXC 因此共用同一份 pool/network 声明。
 
-LXC 的 rootfs 第一版使用 `download` 模板拉取 images.linuxcontainers.org 的镜像。镜像与介质的
-分发见 [ADR-0019](0019-compute-day2-operations.md)，卷克隆以后再做。
+LXC 的 rootfs 是从 `Rootfs` 镜像生成的卷，镜像与介质的分发见
+[ADR-0019](0019-compute-day2-operations.md) §9。
 
 ### 网络
 

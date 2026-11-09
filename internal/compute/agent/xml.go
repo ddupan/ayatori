@@ -13,6 +13,9 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
+// formatRaw 是 libvirt 的 raw 卷格式。
+const formatRaw = "raw"
+
 // Volume 是卷在本节点上的事实。
 type Volume struct {
 	Found    bool
@@ -97,7 +100,7 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha
 		prefix := diskTargets[bus]
 		x := libvirtxml.DomainDisk{
 			Device: "disk",
-			Driver: &libvirtxml.DomainDiskDriver{Name: "qemu", Type: "raw"},
+			Driver: &libvirtxml.DomainDiskDriver{Name: "qemu", Type: formatRaw},
 			Target: &libvirtxml.DomainDiskTarget{Dev: prefix + string(rune('a'+used[prefix])), Bus: string(bus)},
 		}
 		used[prefix]++
@@ -220,6 +223,15 @@ func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 		x.Capacity = &libvirtxml.StorageVolumeSize{Unit: "bytes", Value: uint64(v.Spec.Size.Value())}
 	}
 	return x.Marshal()
+}
+
+// volumeFormat 返回 volume XML 声明的格式；没写或解析不了时为空，解析错误由 prepareVolume 报告。
+func volumeFormat(xml string) string {
+	var x libvirtxml.StorageVolume
+	if xml == "" || x.Unmarshal(xml) != nil || x.Target == nil || x.Target.Format == nil {
+		return ""
+	}
+	return x.Target.Format.Type
 }
 
 // volumeCapacity 按 libvirt 的单位规则换算 volume XML 中的 capacity：KB 是 1000，K 与 KiB 是 1024。

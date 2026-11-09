@@ -1,6 +1,10 @@
 package agent
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 )
@@ -41,6 +45,9 @@ func (b libvirtVolumes) Create(v *computev1alpha1.LibvirtStorageVolume, image *c
 	if err != nil {
 		return err
 	}
+	if image.Spec.Type == computev1alpha1.ImageRootfs {
+		return b.createRootfs(v, image, capacity)
+	}
 	return b.hv.CreateVolumeFrom(v.Spec.Libvirt.Pool, xml, image.Spec.Pool, image.Name, capacity)
 }
 
@@ -56,6 +63,31 @@ func (b libvirtVolumes) Grow(v *computev1alpha1.LibvirtStorageVolume, cur Volume
 		}
 	}
 	return b.hv.BlockResize(domain, cur.Path, capacity)
+}
+
+// createRootfs 在临时文件上生成 ext4，完成后才 rename 成卷：中途崩溃不会留下内容不全、却被当作已有数据
+// 接管的卷（ADR-0019 §9）。
+func (b libvirtVolumes) createRootfs(v *computev1alpha1.LibvirtStorageVolume, image *computev1alpha1.Image, capacity uint64) error {
+	if format := volumeFormat(v.Spec.Libvirt.XML); format != "" && format != formatRaw {
+		return fmt.Errorf("a volume from a Rootfs image must be raw, got %q", format)
+	}
+	dir, err := b.hv.PoolDir(v.Spec.Libvirt.Pool)
+	if err != nil {
+		return err
+	}
+	imageDir, err := b.hv.PoolDir(image.Spec.Pool)
+	if err != nil {
+		return err
+	}
+	tmp := tempImagePath(dir, v.Name)
+	defer func() { _ = os.Remove(tmp) }()
+	if err := buildRootfs(tmp, filepath.Join(imageDir, image.Name), capacity); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, v.Name)); err != nil {
+		return err
+	}
+	return b.hv.RefreshPool(v.Spec.Libvirt.Pool)
 }
 
 func (b libvirtVolumes) Delete(v *computev1alpha1.LibvirtStorageVolume) error {

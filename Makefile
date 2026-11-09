@@ -98,7 +98,7 @@ lint-loadbalancer-integration: golangci-lint ## 检查集成测试构建标签�
 	"$(GOLANGCI_LINT)" run --build-tags=integration ./internal/loadbalancer/... ./internal/testenv/...
 
 .PHONY: test-compute-integration
-test-compute-integration: setup-envtest ## 使用临时 API server 与 libvirt 进程内 test 驱动验证 Compute Agent（需要 libvirt-dev）；不需要外部后端。
+test-compute-integration: setup-envtest ## 使用临时 API server 与 libvirt 进程内 test 驱动验证 Compute Agent（需要 libvirt-dev 与 lxc-dev）；不需要外部后端。
 	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" \
 		GOFLAGS=-race hack/integration-test.sh ./internal/compute/...
 

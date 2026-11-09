@@ -84,6 +84,7 @@ spec:
                 enum:
                 - Disk
                 - ISO
+                - Rootfs
                 type: string
                 x-kubernetes-validations:
                 - message: type is immutable

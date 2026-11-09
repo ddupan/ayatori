@@ -235,7 +235,7 @@ status:
   |---|---|---|
   | `Disk` | qcow2 / raw | 卷的 `source.image`，由 libvirt 的 `virStorageVolCreateXMLFrom` 复制到新卷，再扩容到卷的 capacity |
   | `ISO` | ISO 9660 | domain 的 `disks[].image`，作为只读光驱挂载 |
-  | `Rootfs` | tar 归档 | 卷的 `source.image`，解包为 LXC rootfs |
+  | `Rootfs` | tar 归档（可压缩） | 卷的 `source.image`，生成 LXC 的 ext4 rootfs |
 
   VM 与 LXC 不能共用镜像，同一个发行版的两种形态是两个 Image。用错类型时，引用方被拒绝。格式不写在
   spec 中，Agent 下载后用 `qemu-img info` 或归档头核对是否与 `type` 一致，不一致时本节点报错、不就绪。
@@ -260,7 +260,12 @@ status:
 - **删除**：删除 Image 后各节点删除副本；本节点仍有 domain 挂载该 ISO 时延后删除，与卷的本地保护
   相同。从镜像创建的卷不受影响。
 - 写入块设备用 `qemu-img convert`，不经 `qm importdisk` 式的二次处理，因为后者曾写坏过分区表。
-- 第一版只实现 `Disk` 与 `ISO`：`Rootfs` 随 LXC 从镜像创建一起加入。副本所在的 pool 必须是 `dir` 类型，
+- `Rootfs` 生成 dir pool 中的 raw 文件，内容是 ext4，容器以 `lxc.rootfs.path = loop:<文件>` 使用，由 liblxc
+  挂载，Agent 不管理挂载点。Agent 用 `mkfs.ext4 -d <归档>` 直接从 tar 生成文件系统（e2fsprogs 1.47.1 起，需要
+  libarchive）：在 compute-dev1 上与挂载后 `tar -x` 比对，属主、权限、硬链接、setuid、文件 capability 一致，且不用
+  挂载。先生成到临时文件，完成后才 `rename` 成卷，中途崩溃不会留下内容不全、却被当作已有数据接管的卷。卷必须写
+  `size`，归档的解压后大小事先不知道，放不下时 `mkfs` 报错并写入卷的 status。
+- 副本所在的 pool 必须是 `dir` 类型，
   `rename` 由 Agent 直接操作文件，因此 Agent 的 systemd 单元不能用 `ProtectSystem=strict`（pool 目录由
   API 声明，无法预先列入 `ReadWritePaths`），改为 `ProtectSystem=full`。
 - LXC 不再使用 `download` 模板，改为从 `Rootfs` 镜像创建，取代 ADR-0015 中"第一版使用 `download`

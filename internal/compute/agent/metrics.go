@@ -65,7 +65,7 @@ func (m *metrics) observe(succeeded map[objectID]time.Time, seen, previous map[o
 		delete(succeeded, id)
 		m.lastSuccess.DeleteLabelValues(id.kind, id.namespace, id.name)
 		switch id.kind {
-		case kindDomain:
+		case kindDomain, kindContainer:
 			m.shouldRun.DeleteLabelValues(id.namespace, id.name)
 			m.running.DeleteLabelValues(id.namespace, id.name)
 		case kindPool:

@@ -99,6 +99,7 @@ func runAgent(t *testing.T, config agent.Config) runningAgent {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
+	a.Containers = containers
 	go func() { a.Run(ctx); close(done) }()
 	return runningAgent{cancel, done, registry}
 }
@@ -201,6 +202,7 @@ func TestAgent(t *testing.T) {
 	t.Run("creates volumes and reclaims them by policy", s.managesVolumes)
 	t.Run("creates volumes by size and only lets size grow", s.managesVolumeSize)
 	t.Run("keeps a replica of each image and creates volumes from it", func(sub *testing.T) { s.managesImages(sub, t) })
+	t.Run("runs containers and restarts them when they stop", s.managesContainers)
 	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
 		NodeName: node, DomainXML: domainXML(""), Interfaces: []computev1alpha1.DomainInterface{{Network: lan}}}}
 	create(t, s.k, s.vm2)
@@ -540,6 +542,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 func (s *suite) convergesOffline(t *testing.T) {
 	// 宿主机重启：关闭所有连接，test 驱动的状态随之清空。
 	s.agent.stop()
+	containers.reboot()
 	_, _ = s.l.Close()
 	s.l = connect(t)
 	if _, err := s.l.LookupNetworkByName(lan); !libvirt.IsNotFound(err) {
@@ -573,6 +576,10 @@ func (s *suite) convergesOffline(t *testing.T) {
 			if state != golibvirt.DOMAIN_RUNNING {
 				return fmt.Errorf("%s not running: state %d", name, state)
 			}
+		}
+		// 容器同样按本地状态拉起；rootfs 卷由本地状态中的卷对象重建后才能下发。
+		if c, _ := containers.Container("default_" + ctKeep); c.State != stateRunning {
+			return fmt.Errorf("container not running: %+v", c)
 		}
 		return nil
 	})

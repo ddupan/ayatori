@@ -18,6 +18,7 @@ var (
 			&LibvirtStoragePool{}, &LibvirtStoragePoolList{},
 			&LibvirtStorageVolume{}, &LibvirtStorageVolumeList{},
 			&LibvirtDomain{}, &LibvirtDomainList{},
+			&LXCContainer{}, &LXCContainerList{},
 			&Image{}, &ImageList{},
 		)
 		metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
