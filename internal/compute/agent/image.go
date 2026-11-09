@@ -134,7 +134,7 @@ func fetchImage(ctx context.Context, source computev1alpha1.ImageHTTPSource, kin
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s: %s", source.URL, resp.Status)
 	}
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644) //nolint:gosec // 镜像不是机密，QEMU 以 libvirt-qemu 用户读取
 	if err != nil {
 		return err
 	}

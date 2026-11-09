@@ -52,7 +52,7 @@ func Open(dir string) (*Store, error) {
 	}
 	s := &Store{dir: dir, records: map[string]Record{}, changed: make(chan struct{}, 1)}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) //nolint:gosec // 路径由 Agent 自己的状态目录枚举得到
 		if err != nil {
 			return nil, err
 		}
