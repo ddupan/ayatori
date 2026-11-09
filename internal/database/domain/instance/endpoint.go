@@ -37,7 +37,8 @@ const (
 // EndpointValues carries explicit, effective values across the Reconciler boundary.
 // Defaults are supplied by the API/Reconciler mapping, never silently by the domain.
 type EndpointValues struct {
-	Host               string
+	Host string
+	// HostAddr 为空时连接按 Host 解析。
 	HostAddr           string
 	Port               int
 	ManagementDatabase string
@@ -70,9 +71,11 @@ func (e Endpoint) Validate() error {
 	if e.values.Host == "" {
 		return errors.New("endpoint host is required")
 	}
-	address, err := netip.ParseAddr(e.values.HostAddr)
-	if err != nil || address.Zone() != "" {
-		return errors.New("endpoint host address must be an IPv4 or IPv6 address")
+	if e.values.HostAddr != "" {
+		address, err := netip.ParseAddr(e.values.HostAddr)
+		if err != nil || address.Zone() != "" {
+			return errors.New("endpoint host address must be an IPv4 or IPv6 address")
+		}
 	}
 	if e.values.Port < 1 || e.values.Port > 65535 {
 		return errors.New("endpoint port must be between 1 and 65535")

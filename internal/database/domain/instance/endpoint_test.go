@@ -37,7 +37,6 @@ func TestEndpointRejectsInvalidValues(t *testing.T) {
 		change func(*instance.EndpointValues)
 	}{
 		{"empty host", func(v *instance.EndpointValues) { v.Host = "" }},
-		{"missing address", func(v *instance.EndpointValues) { v.HostAddr = "" }},
 		{"DNS instead of IP", func(v *instance.EndpointValues) { v.HostAddr = "postgres.home.arpa" }},
 		{"invalid IP", func(v *instance.EndpointValues) { v.HostAddr = "192.0.2.999" }},
 		{"address with port", func(v *instance.EndpointValues) { v.HostAddr = "192.0.2.10:5432" }},
@@ -114,5 +113,14 @@ func TestEndpointIsAnImmutableComparableValue(t *testing.T) {
 	}
 	if err := (instance.Endpoint{}).Validate(); err == nil {
 		t.Fatal("zero endpoint must not be valid")
+	}
+}
+
+func TestEndpointAddressIsOptional(t *testing.T) {
+	endpoint, err := instance.NewEndpoint(instance.EndpointValues{
+		Host: "db.home.arpa", Port: 5432, ManagementDatabase: "postgres", TLSMode: instance.TLSVerifyFull,
+	})
+	if err != nil || endpoint.Values().HostAddr != "" {
+		t.Fatalf("未声明地址的连接目标应有效：%v", err)
 	}
 }

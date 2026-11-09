@@ -67,7 +67,7 @@ Database 自身必须声明 `instanceRef`，手工登记时同时指定实际数
 
 ## 4. Instance 合同
 
-Instance 声明 host、hostaddr、port（默认 5432）、管理 database（默认 postgres）、
+Instance 声明 host、可选的 hostaddr、port（默认 5432）、管理 database（默认 postgres）、
 TLS mode（默认 verify-full）及 controller namespace 的管理 Secret 名称和字段映射。
 禁止隐式 TLS 降级。凭据引用不接受自选 namespace 或 OpenBao path。
 
@@ -185,7 +185,7 @@ CREATEDB、CREATEROLE 或 replication 权限。撤销 PUBLIC CONNECT，再授予
 新建时先安全保存并回读凭据，再创建角色；凭据写入本身结果不确定也适用人工冲突规则。
 Ayatori 不创建 ExternalSecret 或含凭据的 Secret；消费方按 Tenant status 公布的位置与版本自行投射（[ADR-0010](../decisions/0010-credential-delivery-ends-at-openbao.md)）。
 
-凭据仍输出 username/password/database/host/hostaddr/port/sslmode 七键，不生成带密码 URI。
+凭据输出 username/password/database/host/port/sslmode，Instance 声明了 hostaddr 时另含 hostaddr；不生成带密码 URI。
 Tenant status 提供 `credentialRef`、`credentialVersion` 与无认证信息的 `credentialURL`。
 mount/base path 属部署配置，Tenant 不得自选任意路径；原按 Tenant namespace/name 固定
 推导路径的规则撤除。动态供应的凭据路径按 Database UID 确定；导入时显式关联已有凭据

@@ -16,8 +16,8 @@ OpenBao 认证、凭据准备与资源供应需显式启用；Ayatori 不投射�
 ## 依赖与顺序
 
 1. 准备 PostgreSQL VM、持久盘、备份和网络入口。
-2. 用 OpenBao PKI 签发 PostgreSQL server 证书，包含 Instance `host` 的 DNS SAN 与
-   `hostaddr` 的 IP SAN；配置 PostgreSQL 强制 TLS。
+2. 用 OpenBao PKI 签发 PostgreSQL server 证书，包含 Instance `host` 的 DNS SAN；配置
+   PostgreSQL 强制 TLS。消费者若直接以 `hostaddr` 作为连接主机，证书还需包含该 IP SAN。
 3. 创建 PostgreSQL controller 管理 role 和管理 database 连接权限。
 4. 在 OpenBao KV v2 写入管理 role 凭据。
 5. 配置 OpenBao Kubernetes auth 与 controller policy；消费方集群读取应用凭据的 policy 由其接入时单独授予。
@@ -139,7 +139,7 @@ path "secret/metadata/applications/*" {
 只用 Retain 时不需要该权限。
 
 管理凭据由管理员维护并放入 controller namespace 的 Secret；controller 只读，不创建或修改。
-应用凭据固定七键：`username`、`password`、`database`、`host`、`hostaddr`、`port`、`sslmode`。
+应用凭据的键：`username`、`password`、`database`、`host`、`port`、`sslmode`；Instance 声明了 `hostaddr` 时还有 `hostaddr`。
 Ayatori 不投射应用凭据：消费方集群按 Tenant status 的 `credentialRef` 自行读取最新版本
 （例如其 GitOps 中的 ExternalSecret 不写 `version`）。该路径只由 Ayatori 写入，每个版本都可用；
 Instance endpoint 变化时以相同密码改写为新版本，固定版本会让消费方停在旧 endpoint，且 KV v2
@@ -172,7 +172,7 @@ PostgreSQL TLS 与备份验证
   -> controller Ready/leader elected
   -> Instance Ready
   -> 测试 Tenant Ready
-  -> DNS host 与 IP hostaddr 分别登录
+  -> 用 DNS host 登录（声明了 hostaddr 时也用它登录）
   -> 删除测试 Tenant 并验证所选策略
 ```
 

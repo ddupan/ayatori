@@ -37,7 +37,7 @@ deploy/
 ## 部署方接口
 
 policy 属性（`homelab_ayatori`）：`environment`（dev/prod）、`release`、`image`（按 digest）、
-`postgresql_instance`（`{name, host, hostaddr, port}`），可选的 `gitops`（`{url, path, branch}`）
+`postgresql_instance`（`{name, host, port}`，可选 `hostaddr`），可选的 `gitops`（`{url, path, branch}`）
 与 `loadbalancer`（`address_pool`，可选 `dns: {url, zone}`）。OpenBao mount/role、凭据前缀与管理
 凭据路径由 `environment` 推导。
 

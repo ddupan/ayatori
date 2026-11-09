@@ -59,6 +59,13 @@ func TestDatabaseAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("作用域和默认值", func(t *testing.T) { testDefaults(t, client) })
+	t.Run("hostaddr 可选", func(t *testing.T) {
+		object := validInstance("no-hostaddr")
+		object.Spec.Endpoint.HostAddr = ""
+		if err := client.Create(t.Context(), object); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("拒绝非法声明", func(t *testing.T) { testInvalidDeclarations(t, client) })
 	t.Run("status隔离和绑定并发", func(t *testing.T) { testBindingWrites(t, client) })
 	t.Run("凭据位置与确认版本", func(t *testing.T) { testCredentialStatus(t, client) })

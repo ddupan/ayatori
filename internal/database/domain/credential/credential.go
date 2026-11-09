@@ -72,15 +72,18 @@ func (c ApplicationCredential) MarshalJSON() ([]byte, error) {
 // 每次返回独立 map，调用方不能修改已经构造的凭据。
 func (c ApplicationCredential) SecretData() map[string]any {
 	endpoint := c.endpoint.Values()
-	return map[string]any{
+	data := map[string]any{
 		"username": c.username,
 		"password": c.password,
 		"database": c.database,
 		"host":     endpoint.Host,
-		"hostaddr": endpoint.HostAddr,
 		"port":     strconv.Itoa(endpoint.Port),
 		"sslmode":  string(endpoint.TLSMode),
 	}
+	if endpoint.HostAddr != "" {
+		data["hostaddr"] = endpoint.HostAddr
+	}
+	return data
 }
 
 // Password 只供创建登录角色的数据库边界使用，禁止记录日志。
@@ -112,7 +115,11 @@ func (c ApplicationCredential) WithEndpoint(endpoint instance.Endpoint) (Applica
 func ParseApplicationCredential(data map[string]any) (ApplicationCredential, error) {
 	values := make(map[string]string, 7)
 	for _, key := range []string{"username", "password", "database", "host", "hostaddr", "port", "sslmode"} {
-		value, ok := data[key].(string)
+		raw, present := data[key]
+		if key == "hostaddr" && !present {
+			continue
+		}
+		value, ok := raw.(string)
 		if !ok || value == "" {
 			return ApplicationCredential{}, ErrApplicationCredentialInvalid
 		}

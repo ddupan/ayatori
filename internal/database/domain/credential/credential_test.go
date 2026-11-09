@@ -68,7 +68,7 @@ func TestApplicationCredential(t *testing.T) {
 	for key := range data {
 		invalid := maps.Clone(data)
 		delete(invalid, key)
-		if _, err := credentialdomain.ParseApplicationCredential(invalid); err == nil {
+		if _, err := credentialdomain.ParseApplicationCredential(invalid); key != "hostaddr" && err == nil {
 			t.Fatalf("accepted missing %s", key)
 		}
 		invalid[key] = 42
@@ -78,5 +78,30 @@ func TestApplicationCredential(t *testing.T) {
 	}
 	if (credentialdomain.ApplicationCredential{}).Validate() == nil {
 		t.Fatal("accepted zero credential")
+	}
+}
+
+func TestApplicationCredentialWithoutHostAddr(t *testing.T) {
+	endpoint, err := instance.NewEndpoint(instance.EndpointValues{
+		Host: "postgres.example", Port: 5432, ManagementDatabase: "postgres", TLSMode: instance.TLSVerifyFull,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := credentialdomain.GenerateApplicationCredential("owner", "app", endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := generated.SecretData()
+	if _, present := data["hostaddr"]; present || len(data) != 6 {
+		t.Fatalf("未声明地址时不应写 hostaddr，得到 %d 个键", len(data))
+	}
+	parsed, err := credentialdomain.ParseApplicationCredential(data)
+	if err != nil || !maps.Equal(parsed.SecretData(), data) {
+		t.Fatal("没有 hostaddr 的凭据应能往返")
+	}
+	data["hostaddr"] = ""
+	if _, err := credentialdomain.ParseApplicationCredential(data); err == nil {
+		t.Fatal("hostaddr 存在但为空时应拒绝")
 	}
 }

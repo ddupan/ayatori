@@ -40,7 +40,7 @@ Kubernetes 管理员、OpenBao 管理员和 PostgreSQL 管理员是平台信任�
 ## TLS
 
 - homelab 默认 `verify-full`，`disable` 只允许显式开发配置。
-- server 证书同时覆盖 DNS `host` 和 IP `hostaddr`；消费者自行选择连接目标。
+- server 证书覆盖 DNS `host`。消费者若直接以 IP `hostaddr` 作为连接主机，证书还需覆盖该 IP。
 - OpenBao PKI 保管 CA 私钥并负责签发/续期。manager 的 quadlet 容器只挂载公开 CA
   bundle，挂载只读且使用最小文件权限。
 - 证书轮换必须先发布同时信任新旧 CA 的 bundle，再轮换服务端证书，最后移除旧 CA。
