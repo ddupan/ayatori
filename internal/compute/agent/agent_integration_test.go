@@ -193,7 +193,7 @@ func TestAgent(t *testing.T) {
 	t.Run("does not restart an instance shut down on purpose", s.keepsIntentionalShutdown)
 	t.Run("creates volumes and reclaims them by policy", s.managesVolumes)
 	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
+		NodeName: node, DomainXML: domainXML(""), Interfaces: []computev1alpha1.DomainInterface{{Network: lan}}}}
 	create(t, s.k, s.vm2)
 	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
@@ -274,20 +274,12 @@ func (s *suite) createObjects(t *testing.T) {
 		XML: `<network><forward mode='bridge'/><bridge name='br-b'/></network>`, NodeSelector: map[string]string{rack: "b"}}})
 	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: localPool, Spec: computev1alpha1.LibvirtStoragePoolSpec{
 		XML: `<pool type='dir'><target><path>/images</path></target></pool>`}})
-	eventually(t, 30*time.Second, func() error {
-		pool, err := s.l.LookupStoragePoolByName(localPool)
-		if err != nil {
-			return err
-		}
-		defer free(pool.Free)
-		vol, err := pool.StorageVolCreateXML(`<volume><name>disk1</name><capacity>1048576</capacity></volume>`, 0)
-		if err == nil {
-			free(vol.Free)
-		}
-		return err
-	})
+	create(t, s.k, &computev1alpha1.LibvirtStorageVolume{Name: "disk1", Spec: computev1alpha1.LibvirtStorageVolumeSpec{
+		NodeName: node, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool, XML: `<volume><capacity>1048576</capacity></volume>`}}})
 	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(`<disk type='volume' device='disk'><source pool='local' volume='disk1'/><target dev='vda'/></disk><interface type='network'><source network='lan'/><target dev='vnet7'/></interface>`)}}
+		NodeName: node, DomainXML: domainXML(""),
+		Disks:      []computev1alpha1.DomainDisk{{Volume: "disk1"}},
+		Interfaces: []computev1alpha1.DomainInterface{{Network: lan, MAC: "52:54:00:00:00:01"}}}}
 	create(t, s.k, s.vm1)
 }
 
@@ -296,13 +288,33 @@ func (s *suite) definesSelected(t *testing.T) {
 	dom := s.domain(t, "default_vm1")
 	defer free(dom.Free)
 	xml, _ := dom.GetXMLDesc(golibvirt.DOMAIN_XML_INACTIVE)
-	for _, want := range []string{"<uuid>" + string(s.vm1.UID) + "</uuid>", "<source file='/images/disk1'", "<target dev='ay" + strings.ReplaceAll(string(s.vm1.UID), "-", "")[:8] + "n0'"} {
+	for _, want := range []string{"<uuid>" + string(s.vm1.UID) + "</uuid>", "<source file='/images/disk1'", "<mac address='52:54:00:00:00:01'/>", "<target dev='ay" + strings.ReplaceAll(string(s.vm1.UID), "-", "")[:8] + "n0'"} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("domain XML lacks %s:\n%s", want, xml)
 		}
 	}
 	if autostart, _ := dom.GetAutostart(); autostart {
 		t.Error("domain autostart must be off")
+	}
+
+	// Ayatori 拥有的元素写在 domainXML 中：拒绝下发并说明原因，不静默覆盖。
+	owned := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "owned", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
+	create(t, s.k, owned)
+	eventually(t, 30*time.Second, func() error {
+		if err := s.k.Get(t.Context(), client.ObjectKeyFromObject(owned), owned); err != nil {
+			return err
+		}
+		if !strings.Contains(owned.Status.Message, "must not contain <interface>") {
+			return fmt.Errorf("status = %+v", owned.Status)
+		}
+		return nil
+	})
+	if _, err := s.l.LookupDomainByName("default_owned"); !libvirt.IsNotFound(err) {
+		t.Errorf("domain with Ayatori-owned elements in domainXML was defined: %v", err)
+	}
+	if err := s.k.Delete(t.Context(), owned); err != nil {
+		t.Fatal(err)
 	}
 	var n computev1alpha1.LibvirtNetwork
 	eventually(t, 10*time.Second, func() error {
@@ -418,7 +430,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 
 	// 被实例引用的卷：删除对象后，等实例清理了才删卷。
 	vm := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm3", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(`<disk type='volume' device='disk'><source pool='local' volume='disk2'/><target dev='vda'/></disk>`)}}
+		NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{{Volume: "disk2"}}}}
 	create(t, s.k, vm)
 	s.waitState(t, vm, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	if err := s.k.Delete(ctx, disk); err != nil {
@@ -490,20 +502,20 @@ func (s *suite) convergesOffline(t *testing.T) {
 			return err
 		}
 		free(p.Free)
-		dom, err := s.l.LookupDomainByName("default_vm2")
-		if err != nil {
-			return err
-		}
-		defer free(dom.Free)
-		if state, _, _ := dom.GetState(); state != golibvirt.DOMAIN_RUNNING {
-			return fmt.Errorf("vm2 not running: state %d", state)
+		// vm1 的卷由本地状态中的卷对象重新创建（test 驱动重启后卷是空的），随后 vm1 也能下发。
+		for _, name := range []string{"default_vm1", "default_vm2"} {
+			dom, err := s.l.LookupDomainByName(name)
+			if err != nil {
+				return err
+			}
+			state, _, _ := dom.GetState()
+			free(dom.Free)
+			if state != golibvirt.DOMAIN_RUNNING {
+				return fmt.Errorf("%s not running: state %d", name, state)
+			}
 		}
 		return nil
 	})
-	// vm1 的卷随宿主机"丢失"了：无法下发，但不会因此被删除。
-	if _, err := s.l.LookupDomainByName("default_vm1"); !libvirt.IsNotFound(err) {
-		t.Fatalf("vm1 should not be defined without its volume: %v", err)
-	}
 }
 
 func (s *suite) removesAfterConfirmation(t *testing.T) {
@@ -573,7 +585,7 @@ func ready(n corev1.Node) bool {
 }
 
 func domainXML(devices string) string {
-	return fmt.Sprintf(`<domain type='test'><name>x</name><memory unit='KiB'>65536</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, devices)
+	return fmt.Sprintf(`<domain type='test'><memory unit='KiB'>65536</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, devices)
 }
 
 func create(t *testing.T, k client.Client, obj client.Object) {

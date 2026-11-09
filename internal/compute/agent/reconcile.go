@@ -235,19 +235,16 @@ func (a *Agent) removeVolume(r state.Record) (bool, error) {
 	if v.Spec.ReclaimPolicy != computev1alpha1.ReclaimDelete {
 		return true, nil
 	}
-	ref := v.Spec.Libvirt.Pool + "/" + v.Name
 	for _, d := range a.store.List(kindDomain) {
 		var dom computev1alpha1.LibvirtDomain
 		if err := json.Unmarshal(d.Object, &dom); err != nil {
 			return false, err
 		}
-		refs, err := volumeRefs(dom.Spec.DomainXML)
-		if err != nil {
-			return false, err
-		}
-		if refs[ref] {
-			a.logger.Info("volume still referenced, deleting later", "key", r.Key, "domain", d.Key)
-			return false, nil
+		for _, disk := range dom.Spec.Disks {
+			if disk.Volume == v.Name {
+				a.logger.Info("volume still referenced, deleting later", "key", r.Key, "domain", d.Key)
+				return false, nil
+			}
 		}
 	}
 	return true, a.hv.DeleteVolume(v.Spec.Libvirt.Pool, v.Name)
@@ -293,6 +290,26 @@ func (a *Agent) nodeObservation(kind, name string, generation int64, err error) 
 	return &observation{kind: kind, name: name, status: s}
 }
 
+// resolveVolume 按本地状态中的卷对象找到它的 pool，再从 libvirt 取路径与格式。卷对象按 nodeName 分配，
+// 只有本节点的卷会出现在本地状态中；待删除的卷仍可解析，引用它的实例清理后才会删除。
+func (a *Agent) resolveVolume(name string) (Volume, error) {
+	for _, r := range a.store.List(kindVolume) {
+		if r.Key != name {
+			continue
+		}
+		var v computev1alpha1.LibvirtStorageVolume
+		if err := json.Unmarshal(r.Object, &v); err != nil {
+			return Volume{}, err
+		}
+		cur, err := a.hv.Volume(v.Spec.Libvirt.Pool, name)
+		if err == nil && !cur.Found {
+			err = errors.New("volume not created yet")
+		}
+		return Volume{Path: cur.Path, Block: cur.Block, Format: cur.Format}, err
+	}
+	return Volume{}, errors.New("no such volume on this node")
+}
+
 // applyDomain 下发实例并按 runState 与观察到的电源意图决定是否启动：
 // 客户机内关机或 destroy 是有意的停止，之后（包括宿主机重启后）不再自动拉起；崩溃与首次定义后拉起。
 func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (computev1alpha1.LibvirtDomainStatus, error) {
@@ -301,13 +318,7 @@ func (a *Agent) applyDomain(r state.Record, d *computev1alpha1.LibvirtDomain) (c
 		status.Message = err.Error()
 		return status, err
 	}
-	want, err := prepareDomain(d, func(pool, volume string) (Volume, error) {
-		v, err := a.hv.Volume(pool, volume)
-		if err == nil && !v.Found {
-			err = errors.New("volume not found")
-		}
-		return Volume{Path: v.Path, Block: v.Block}, err
-	})
+	want, err := prepareDomain(d, a.resolveVolume)
 	if err != nil {
 		return fail(err)
 	}
