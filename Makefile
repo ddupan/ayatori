@@ -61,7 +61,7 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test ./... -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" go test ./... -coverprofile cover.out
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -69,7 +69,7 @@ lint: golangci-lint ## Run golangci-lint linter
 
 .PHONY: test-database-integration
 test-database-integration: setup-envtest ## 使用临时 API server、PostgreSQL 与 OpenBao 容器验证 Database 后端；API server、PostgreSQL 与 OpenBao 在 go test 外启动一次。
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" \
 		INTEGRATION_SERVICES="apiserver postgres openbao" hack/integration-test.sh ./internal/database/... ./internal/infra/... ./internal/bootstrap/...
 
 .PHONY: lint-database-integration
@@ -79,7 +79,7 @@ lint-database-integration: golangci-lint ## 检查集成测试构建标签下的
 
 .PHONY: test-loadbalancer-integration
 test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API、PowerDNS 容器验证 LoadBalancer；后两者在 go test 外启动一次。
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" \
 		INTEGRATION_SERVICES="haproxy pdns" hack/integration-test.sh ./internal/loadbalancer/...
 	$(MAKE) test-lb-agent-netlink
 
@@ -187,7 +187,6 @@ $(LOCALBIN):
 KUBECTL ?= kubectl
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 
@@ -197,17 +196,18 @@ KUSTOMIZE_VERSION ?= v5.8.3
 # renovate: datasource=go depName=sigs.k8s.io/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.23.0
 
-#ENVTEST_VERSION is the controller-runtime release branch to use for setup-envtest, derived from go.mod.
-# 不用 vX.Y.Z：上面的 go list -m 已把 controller-runtime@vX.Y.Z 写进模块缓存，go install 随后直接用缓存里
-# 的父模块，不再查询 tools/setup-envtest 子模块，于是报 "does not contain package"（空缓存的 CI 必现）。
-ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
-  [ -n "$$v" ] || { echo "Set ENVTEST_VERSION manually (controller-runtime replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v" | sed -E 's/^v?([0-9]+)\.([0-9]+).*/release-\1.\2/')
+# GITHUB_RELEASES 是 GitHub release 的下载前缀；CI 指向 Artifact Keeper 的 github-releases 缓存，不直连外网。
+GITHUB_RELEASES ?= https://github.com
 
-#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
+define gomodver
+$(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
+endef
+
+#ENVTEST_K8S_VERSION 是 envtest 二进制的完整版本（例如 1.37.0），由 go.mod 的 k8s.io/api 推导。
 ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
+  printf '%s\n' "$$v" | sed -E 's/^v?0\.([0-9]+\.[0-9]+).*/1.\1/')
+ENVTEST_ASSETS = $(LOCALBIN)/k8s/$(ENVTEST_K8S_VERSION)-$(shell go env GOOS)-$(shell go env GOARCH)
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION ?= v2.15.0
@@ -227,17 +227,14 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
 
 .PHONY: setup-envtest
-setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
-	@echo "Setting up envtest binaries for Kubernetes version $(ENVTEST_K8S_VERSION)..."
-	@"$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path || { \
-		echo "Error: Failed to set up envtest binaries for version $(ENVTEST_K8S_VERSION)."; \
-		exit 1; \
-	}
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+setup-envtest: $(ENVTEST_ASSETS)/kube-apiserver ## Download the binaries required for ENVTEST in the local bin directory.
+$(ENVTEST_ASSETS)/kube-apiserver: | $(LOCALBIN)
+	@set -e; asset=envtest-v$(ENVTEST_K8S_VERSION)-$$(go env GOOS)-$$(go env GOARCH).tar.gz; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	echo "Downloading $$asset"; \
+	curl -fsSL --retry 3 -o "$$tmp/$$asset" "$(GITHUB_RELEASES)/kubernetes-sigs/controller-tools/releases/download/envtest-v$(ENVTEST_K8S_VERSION)/$$asset"; \
+	mkdir -p "$(ENVTEST_ASSETS)"; \
+	tar -xzf "$$tmp/$$asset" -C "$(ENVTEST_ASSETS)" --strip-components=2
 
 .PHONY: oapi-codegen
 oapi-codegen: $(OAPI_CODEGEN) ## Download oapi-codegen locally if necessary.
@@ -258,11 +255,11 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): | $(LOCALBIN)
 	@set -e; v=$(GOLANGCI_LINT_VERSION); v=$${v#v}; \
 	asset=golangci-lint-$$v-$$(go env GOOS)-$$(go env GOARCH).tar.gz; \
-	base=https://github.com/golangci/golangci-lint/releases/download/v$$v; \
+	base=$(GITHUB_RELEASES)/golangci/golangci-lint/releases/download/v$$v; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	echo "Downloading golangci-lint v$$v"; \
-	curl -fsSL -o "$$tmp/$$asset" "$$base/$$asset"; \
-	curl -fsSL "$$base/golangci-lint-$$v-checksums.txt" | grep " $$asset$$" | (cd "$$tmp" && sha256sum -c -) >/dev/null; \
+	curl -fsSL --retry 3 -o "$$tmp/$$asset" "$$base/$$asset"; \
+	curl -fsSL --retry 3 "$$base/golangci-lint-$$v-checksums.txt" | grep " $$asset$$" | (cd "$$tmp" && sha256sum -c -) >/dev/null; \
 	tar -xzf "$$tmp/$$asset" -C "$$tmp" --strip-components=1; \
 	mv "$$tmp/golangci-lint" "$(GOLANGCI_LINT)"
 
@@ -280,8 +277,4 @@ GOBIN="$(LOCALBIN)" go install $${package} ;\
 mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)" ;\
 } ;\
 ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
-endef
-
-define gomodver
-$(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
