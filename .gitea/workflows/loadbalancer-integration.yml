@@ -18,6 +18,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # envtest 与 golangci-lint 走 Artifact Keeper 的缓存，不直连 GitHub。
+  GITHUB_RELEASES: https://artifacts.lab.ddupan.top/api/v1/repositories/github-releases/download
+
 jobs:
   lint:
     runs-on: [self-hosted, pod]
