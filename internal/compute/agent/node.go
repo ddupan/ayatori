@@ -5,6 +5,7 @@ import (
 	"maps"
 	"runtime"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -43,7 +44,54 @@ func (a *Agent) nodeFacts() nodeFacts {
 	if err != nil {
 		return f
 	}
-	return nodeFacts{ready: true, cpus: cpus, memory: memory, cpuLabels: cpuLabels(cpu)}
+	labels := cpuLabels(cpu)
+	levels, err := cpuLevelLabels(a.hv.CPUProvides)
+	if err != nil {
+		a.logger.Error("compare CPU levels", "error", err)
+		levels = maps.Clone(f.cpuLabels)
+		maps.DeleteFunc(levels, func(k, _ string) bool { return !strings.HasPrefix(k, cpuLevelPrefix) })
+	}
+	maps.Copy(labels, levels)
+	return nodeFacts{ready: true, cpus: cpus, memory: memory, cpuLabels: labels}
+}
+
+// cpuLevelPrefix 加档位名是节点能提供该档 CPU 的 label，值为 "true"（ADR-0019 §3）。
+const cpuLevelPrefix = "compute.ayatori.ddupan.top/x86-64-"
+
+// cpuLevels 是 x86-64 psABI 的微架构档位，后一档包含前一档，特性名是 libvirt 的写法。
+var cpuLevels = []struct {
+	name     string
+	features []string
+}{
+	{"v2", []string{"cx16", "lahf_lm", "popcnt", "pni", "ssse3", "sse4.1", "sse4.2"}},
+	{"v3", []string{"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"}},
+	{"v4", []string{"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}},
+}
+
+// cpuLevelLabels 从低到高询问 hypervisor，到第一个不能提供的档位为止。用 libvirt 实际的比较而不是 CPU
+// 型号推断：型号相同时，微码或 BIOS 也可能关掉部分特性。基础型号是 kvm64：qemu64 带 AMD 专有特性，Intel
+// 节点上不兼容。
+func cpuLevelLabels(provides func(xml string) (bool, error)) (map[string]string, error) {
+	l := map[string]string{}
+	cpu := libvirtxml.DomainCPU{Mode: "custom", Match: "exact", Model: &libvirtxml.DomainCPUModel{Fallback: "forbid", Value: "kvm64"}}
+	for _, level := range cpuLevels {
+		for _, name := range level.features {
+			cpu.Features = append(cpu.Features, libvirtxml.DomainCPUFeature{Policy: "require", Name: name})
+		}
+		xml, err := cpu.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		ok, err := provides(xml)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		l[cpuLevelPrefix+level.name] = "true"
+	}
+	return l, nil
 }
 
 // cpuLabels 把 capabilities 中的 CPU 厂商与 CPUID 签名换成 node-feature-discovery 的 label，值与 NFD
