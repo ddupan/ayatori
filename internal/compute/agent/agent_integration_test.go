@@ -4,6 +4,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -408,7 +409,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 			if err := s.k.Get(ctx, client.ObjectKeyFromObject(v), v); err != nil {
 				return err
 			}
-			if v.Status.Path != "/images/"+v.Name || v.Status.Capacity != 1<<20 {
+			if !strings.HasSuffix(v.Status.Path, "/"+v.Name) || v.Status.Capacity != 1<<20 {
 				return fmt.Errorf("volume status = %+v", v.Status)
 			}
 			return nil
@@ -450,6 +451,57 @@ func (s *suite) managesVolumes(t *testing.T) {
 		return nil
 	})
 
+	// pool、卷和引用卷的实例同时删除：先清理实例，再删卷，最后才 undefine pool；pool 不能先于卷消失，
+	// 否则卷无法删除，文件残留。
+	const scratchPool = "scratch"
+	create(t, s.k, &computev1alpha1.LibvirtStoragePool{Name: scratchPool, Spec: computev1alpha1.LibvirtStoragePoolSpec{
+		XML: `<pool type='dir'><target><path>/scratch</path></target></pool>`}})
+	pending := volume("pending", node, computev1alpha1.ReclaimDelete)
+	pending.Spec.Libvirt.Pool = scratchPool
+	create(t, s.k, pending)
+	waitPath(pending)
+	vm4 := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm4", Spec: computev1alpha1.LibvirtDomainSpec{
+		NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{{Volume: "pending"}}}}
+	create(t, s.k, vm4)
+	s.waitState(t, vm4, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
+	scratchVolume := func() (bool, error) {
+		pool, err := s.l.LookupStoragePoolByName(scratchPool)
+		if err != nil {
+			return false, err
+		}
+		defer free(pool.Free)
+		vol, err := pool.LookupStorageVolByName("pending")
+		if libvirt.IsNotFound(err) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		free(vol.Free)
+		return true, nil
+	}
+	for _, obj := range []client.Object{&computev1alpha1.LibvirtStoragePool{Name: scratchPool}, pending} {
+		if err := s.k.Delete(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(3 * time.Second)
+	if found, err := scratchVolume(); err != nil || !found {
+		t.Fatalf("pool removed or volume deleted while a domain still references the volume: found=%v err=%v", found, err)
+	}
+	if err := s.k.Delete(ctx, vm4); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 15*time.Second, func() error {
+		pool, err := s.l.LookupStoragePoolByName(scratchPool)
+		if err == nil {
+			free(pool.Free)
+			return errors.New("pool scratch still defined")
+		}
+		if !libvirt.IsNotFound(err) {
+			return err
+		}
+		return nil
+	})
 	// Retain：删除对象保留卷，同名对象再次创建时接管而不是重建。
 	kept := volume("kept", node, computev1alpha1.ReclaimRetain)
 	create(t, s.k, kept)

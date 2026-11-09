@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,7 +24,8 @@ type observation struct {
 	status                any
 }
 
-// reconcile 按本地状态收敛本机 libvirt。network、pool、volume 依次先于 domain：后者引用前者。
+// reconcile 按本地状态收敛本机 libvirt。network、pool、volume 依次先于 domain 下发：后者引用前者；
+// 删除按相反的顺序，先清理引用方。
 func (a *Agent) reconcile() {
 	connected := a.connect()
 	a.metrics.libvirtUp.Set(boolGauge(connected))
@@ -31,14 +33,20 @@ func (a *Agent) reconcile() {
 		a.metrics.domains.snapshot.Store(&[]instanceStats{})
 		return
 	}
-	observed := map[string]observation{}
-	seen := map[objectID]bool{}
-	for _, kind := range kinds {
+	for _, kind := range slices.Backward(kinds) {
 		for _, r := range a.store.List(kind) {
 			if r.Deleted {
 				if err := a.remove(r); err != nil {
 					a.logger.Error("remove from libvirt", "kind", kind, "key", r.Key, "error", err)
 				}
+			}
+		}
+	}
+	observed := map[string]observation{}
+	seen := map[objectID]bool{}
+	for _, kind := range kinds {
+		for _, r := range a.store.List(kind) {
+			if r.Deleted {
 				continue
 			}
 			obs, err := a.apply(r)
@@ -111,6 +119,18 @@ func (a *Agent) remove(r state.Record) error {
 	case kindNetwork:
 		err = a.hv.RemoveNetwork(r.Key)
 	case kindPool:
+		// pool 上还有本节点的卷对象（包括等实例清理后才删的）时先不 undefine：否则之后无法删除卷，
+		// 卷文件会残留。
+		for _, v := range a.store.List(kindVolume) {
+			var vol computev1alpha1.LibvirtStorageVolume
+			if err := json.Unmarshal(v.Object, &vol); err != nil {
+				return err
+			}
+			if vol.Spec.Libvirt.Pool == r.Key {
+				a.logger.Info("pool still has volumes, removing later", "key", r.Key, "volume", v.Key)
+				return nil
+			}
+		}
 		err = a.hv.RemovePool(r.Key)
 	case kindVolume:
 		var removed bool
