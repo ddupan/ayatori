@@ -118,7 +118,7 @@ func TestEndpointIsAnImmutableComparableValue(t *testing.T) {
 
 func TestEndpointAddressIsOptional(t *testing.T) {
 	endpoint, err := instance.NewEndpoint(instance.EndpointValues{
-		Host: "postgres.home.arpa", Port: 5432, ManagementDatabase: "postgres", TLSMode: instance.TLSVerifyFull,
+		Host: "db.home.arpa", Port: 5432, ManagementDatabase: "postgres", TLSMode: instance.TLSVerifyFull,
 	})
 	if err != nil || endpoint.Values().HostAddr != "" {
 		t.Fatalf("未声明地址的连接目标应有效：%v", err)
