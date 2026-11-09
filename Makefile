@@ -195,7 +195,7 @@ OAPI_CODEGEN ?= $(LOCALBIN)/oapi-codegen
 # renovate: datasource=go depName=sigs.k8s.io/kustomize/kustomize/v5
 KUSTOMIZE_VERSION ?= v5.8.3
 # renovate: datasource=go depName=sigs.k8s.io/controller-tools
-CONTROLLER_TOOLS_VERSION ?= v0.22.0
+CONTROLLER_TOOLS_VERSION ?= v0.23.0
 
 #ENVTEST_VERSION is the controller-runtime release branch to use for setup-envtest, derived from go.mod.
 # 不用 vX.Y.Z：上面的 go list -m 已把 controller-runtime@vX.Y.Z 写进模块缓存，go install 随后直接用缓存里
