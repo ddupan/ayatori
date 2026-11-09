@@ -203,10 +203,11 @@ define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
 
-#ENVTEST_K8S_VERSION 是 envtest 二进制的完整版本（例如 1.37.0），由 go.mod 的 k8s.io/api 推导。
+#ENVTEST_K8S_VERSION 是 envtest 二进制的完整版本（例如 1.37.0），取 go.mod 的 k8s.io/api 的次版本：
+# controller-tools 只保证发布每个次版本的 .0，k8s.io/api 的补丁版本不一定有对应的 envtest。
 ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v" | sed -E 's/^v?0\.([0-9]+\.[0-9]+).*/1.\1/')
+  printf '%s\n' "$$v" | sed -E 's/^v?0\.([0-9]+)\..*/1.\1.0/')
 ENVTEST_ASSETS = $(LOCALBIN)/k8s/$(ENVTEST_K8S_VERSION)-$(shell go env GOOS)-$(shell go env GOARCH)
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint
