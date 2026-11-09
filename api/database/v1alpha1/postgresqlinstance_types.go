@@ -2,14 +2,15 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// PostgreSQLEndpoint 显式区分证书主机名与实际连接 IP，不进行 DNS 推导。
+// PostgreSQLEndpoint 区分证书主机名与实际连接 IP；未声明 hostaddr 时连接按 host 解析。
 type PostgreSQLEndpoint struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	Host string `json:"host"`
 	// +kubebuilder:validation:MaxLength=45
 	// +kubebuilder:validation:XValidation:rule="isIP(self)",message="hostaddr must be a single IPv4 or IPv6 address"
-	HostAddr string `json:"hostaddr"`
+	// +optional
+	HostAddr string `json:"hostaddr,omitempty"`
 	// +kubebuilder:default=5432
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535

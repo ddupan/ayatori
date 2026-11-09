@@ -48,7 +48,7 @@ metadata:
 spec:
   endpoint:
     host: ${POSTGRESQL_HOST}
-    hostaddr: ${POSTGRESQL_HOSTADDR}
+    hostaddr: ${POSTGRESQL_HOSTADDR:=}
     port: ${POSTGRESQL_PORT}
     database: postgres
     sslMode: verify-full

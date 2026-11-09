@@ -71,7 +71,7 @@ identifier 必须由管理员工具安全引用，不能把未经校验的值直
 - Database/Instance 身份及 Tenant 排他绑定正确；
 - OpenBao 凭据位置与 Database 管理范围及当前交付授权一致；
 - Tenant 已公布凭据位置，消费方集群的投射已就绪；
-- 新凭据可以通过 DNS host 和 IP hostaddr 分别登录空 database。
+- 新凭据可以通过 DNS host 登录空 database（声明了 hostaddr 时也用它验证）。
 
 ### 5. Restore
 

@@ -117,7 +117,7 @@ Tenant 删除记录 Database `status.phase=Released` 后移除 Tenant finalizer�
 | JSON path | 类型 | 必填/默认 | 合同 |
 | --- | --- | --- | --- |
 | `spec.endpoint.host` | string | 必填 | PostgreSQL DNS 名；必须被服务端证书 DNS SAN 覆盖 |
-| `spec.endpoint.hostaddr` | string | 必填 | 单个 IPv4/IPv6；必须被服务端证书 IP SAN 覆盖 |
+| `spec.endpoint.hostaddr` | string | 可选 | 单个 IPv4/IPv6；连接直接使用该地址，TLS 仍按 `host` 校验。未设置时按 `host` 解析 |
 | `spec.endpoint.port` | int32 | `5432` | 1–65535 |
 | `spec.endpoint.database` | string | `postgres` | 管理连接 database；合法 PostgreSQL identifier |
 | `spec.endpoint.sslMode` | enum | `verify-full` | `disable`、`require`、`verify-ca`、`verify-full` |

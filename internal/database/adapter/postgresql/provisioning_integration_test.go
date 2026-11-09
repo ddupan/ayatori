@@ -209,6 +209,7 @@ func TestDatabaseProvisioningWithRealBackends(t *testing.T) {
 	t.Run("回收遇到同名重建", func(t *testing.T) { testReclaimConflict(t, f) })
 	t.Run("导入与重新开放", func(t *testing.T) { testImport(t, f) })
 	t.Run("动态供应资源重新开放", func(t *testing.T) { testReopenProvisioned(t, f) })
+	t.Run("去掉 hostaddr 后按 host 连接", func(t *testing.T) { testEndpointWithoutAddress(t, f) })
 	t.Run("连接信息随 Instance 改写", func(t *testing.T) { testEndpointFollowsInstance(t, f) })
 	t.Run("导入 owner 不符", func(t *testing.T) { testImportOwnerMismatch(t, f) })
 	t.Run("实际manager观察与重启", func(t *testing.T) { testProvisioningManager(t, f) })

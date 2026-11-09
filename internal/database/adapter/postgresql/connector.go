@@ -158,8 +158,10 @@ func (i *Instances) config(endpoint instance.Endpoint, username, password, datab
 		return nil, errConnection
 	}
 	// pgx 不实现 libpq hostaddr；复用其 LookupFunc 扩展点，TLS 验证身份仍采用 host。
-	config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
-		return []string{values.HostAddr}, nil
+	if values.HostAddr != "" {
+		config.ConnConfig.LookupFunc = func(context.Context, string) ([]string, error) {
+			return []string{values.HostAddr}, nil
+		}
 	}
 	config.ConnConfig.Fallbacks = nil
 	return config, nil
