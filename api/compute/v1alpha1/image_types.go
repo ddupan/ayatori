@@ -3,7 +3,7 @@ package v1alpha1
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // ImageType 表示镜像的内容，决定谁能使用它（ADR-0019 §9）。
-// +kubebuilder:validation:Enum=Disk;ISO
+// +kubebuilder:validation:Enum=Disk;ISO;Rootfs
 type ImageType string
 
 const (
@@ -11,6 +11,8 @@ const (
 	ImageDisk ImageType = "Disk"
 	// ImageISO 是 ISO 9660 介质，由 domain 的 disks[].image 作为只读光驱挂载。
 	ImageISO ImageType = "ISO"
+	// ImageRootfs 是 tar 归档（可压缩），由卷的 source.image 解包为 LXC 的 ext4 rootfs。
+	ImageRootfs ImageType = "Rootfs"
 )
 
 // ImageHTTPSource 从 HTTP(S) 下载镜像，应指向内网镜像 bucket：家宽上联不稳定。

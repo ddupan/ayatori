@@ -13,7 +13,9 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
@@ -22,6 +24,12 @@ import (
 
 // isoMagicOffset 是 ISO 9660 主卷描述符中 "CD001" 的位置。
 const isoMagicOffset = 32769
+
+// tarMagicOffset 是 POSIX tar 头中 "ustar" 的位置。
+const (
+	tarMagicOffset = 257
+	tarMagic       = "ustar"
+)
 
 // download 是后台进行的一次镜像下载。下载只写临时文件、不碰 libvirt，几 GB 的镜像不会卡住
 // reconcile（实例的崩溃重启要靠它）；替换副本仍在 reconcile 循环中，与从副本创建卷不会交错。
@@ -154,6 +162,12 @@ func fetchImage(ctx context.Context, source computev1alpha1.ImageHTTPSource, kin
 
 // checkImageType 核对内容与 type。raw 磁盘没有文件头，所以 Disk 只能排除 ISO。
 func checkImageType(f io.ReaderAt, kind computev1alpha1.ImageType) error {
+	if kind == computev1alpha1.ImageRootfs {
+		if !isTarball(f) {
+			return errors.New("content does not match image type Rootfs: not a tar archive")
+		}
+		return nil
+	}
 	magic := make([]byte, 5)
 	_, err := f.ReadAt(magic, isoMagicOffset)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -166,8 +180,45 @@ func checkImageType(f io.ReaderAt, kind computev1alpha1.ImageType) error {
 	return nil
 }
 
+// isTarball 判断内容是否是 tar 归档：未压缩的看 ustar 标记，压缩的只能看压缩格式的文件头，内容错误时
+// 由解包报错。
+func isTarball(f io.ReaderAt) bool {
+	head := make([]byte, tarMagicOffset+len(tarMagic))
+	n, err := f.ReadAt(head, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	head = head[:n]
+	for _, magic := range [][]byte{{0x1f, 0x8b}, {0xfd, '7', 'z', 'X', 'Z', 0}, {0x28, 0xb5, 0x2f, 0xfd}} {
+		if bytes.HasPrefix(head, magic) {
+			return true
+		}
+	}
+	return n > tarMagicOffset && string(head[tarMagicOffset:]) == tarMagic
+}
+
+// buildRootfs 在 path 上生成容量为 capacity 的 ext4，内容来自 archive。mke2fs 直接读归档（需要 e2fsprogs
+// 1.47.1 与 libarchive），属主、权限、xattr 与挂载后解包相同，不用挂载，也不把未校验的文件系统交给内核。
+func buildRootfs(path, archive string, capacity uint64) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	err = f.Truncate(int64(capacity)) //nolint:gosec // capacity 来自 size，远小于 int64 上限
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if out, err := exec.Command("mkfs.ext4", "-q", "-F", "-d", archive, path).CombinedOutput(); err != nil { //nolint:gosec // 路径由 Agent 拼出，不经 shell
+		return fmt.Errorf("mkfs.ext4: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 // localImage 从本地状态取本节点的镜像并核对类型：用错类型时引用方被拒绝。
-func (a *Agent) localImage(name string, kind computev1alpha1.ImageType) (state.Record, *computev1alpha1.Image, error) {
+func (a *Agent) localImage(name string, kinds ...computev1alpha1.ImageType) (state.Record, *computev1alpha1.Image, error) {
 	for _, r := range a.store.List(kindImage) {
 		if r.Key != name {
 			continue
@@ -176,8 +227,8 @@ func (a *Agent) localImage(name string, kind computev1alpha1.ImageType) (state.R
 		if err := json.Unmarshal(r.Object, &img); err != nil {
 			return r, nil, err
 		}
-		if img.Spec.Type != kind {
-			return r, nil, fmt.Errorf("image %s has type %s, need %s", name, img.Spec.Type, kind)
+		if !slices.Contains(kinds, img.Spec.Type) {
+			return r, nil, fmt.Errorf("image %s has type %s, need %v", name, img.Spec.Type, kinds)
 		}
 		return r, &img, nil
 	}
@@ -188,7 +239,7 @@ func (a *Agent) localImage(name string, kind computev1alpha1.ImageType) (state.R
 // 等待，不悄悄用旧版本。版本先于创建写入本地状态：创建后崩溃也不会丢。返回复制的版本。
 // ponytail: 复制在 reconcile 循环中同步进行，大镜像会推迟其他对象的收敛；成为问题时放到后台。
 func (a *Agent) createVolumeFromImage(r state.Record, v *computev1alpha1.LibvirtStorageVolume) (string, error) {
-	ir, img, err := a.localImage(v.Spec.Source.Image, computev1alpha1.ImageDisk)
+	ir, img, err := a.localImage(v.Spec.Source.Image, computev1alpha1.ImageDisk, computev1alpha1.ImageRootfs)
 	if err != nil {
 		return "", err
 	}

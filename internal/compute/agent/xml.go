@@ -222,6 +222,15 @@ func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	return x.Marshal()
 }
 
+// volumeFormat 返回 volume XML 声明的格式；没写或解析不了时为空，解析错误由 prepareVolume 报告。
+func volumeFormat(xml string) string {
+	var x libvirtxml.StorageVolume
+	if xml == "" || x.Unmarshal(xml) != nil || x.Target == nil || x.Target.Format == nil {
+		return ""
+	}
+	return x.Target.Format.Type
+}
+
 // volumeCapacity 按 libvirt 的单位规则换算 volume XML 中的 capacity：KB 是 1000，K 与 KiB 是 1024。
 func volumeCapacity(xml string) (uint64, error) {
 	var x libvirtxml.StorageVolume

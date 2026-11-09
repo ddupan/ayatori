@@ -8,6 +8,7 @@ require (
 	github.com/int128/oauth2cli v1.18.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/joeig/go-powerdns/v3 v3.24.0
+	github.com/lxc/go-lxc v0.0.0-20260316180011-3af4ce000ed7
 	github.com/oapi-codegen/runtime v1.9.1
 	github.com/openbao/openbao/api/auth/kubernetes/v2 v2.7.0
 	github.com/openbao/openbao/api/v2 v2.7.1

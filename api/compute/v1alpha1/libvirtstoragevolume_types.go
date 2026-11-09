@@ -52,7 +52,7 @@ type LibvirtStorageVolumeSpec struct {
 // VolumeContentSource 是卷的初始内容。
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="source is immutable"
 type VolumeContentSource struct {
-	// Image 是 Disk 类型的 Image 的名字（ADR-0019 §9）。
+	// Image 是 Disk 或 Rootfs 类型的 Image 的名字（ADR-0019 §9）。Rootfs 要求卷是 dir pool 中的 raw 文件。
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 }

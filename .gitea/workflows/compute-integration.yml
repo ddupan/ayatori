@@ -45,7 +45,7 @@ jobs:
           sudo_cmd=""
           if [ "$(id -u)" != 0 ]; then sudo_cmd=sudo; fi
           $sudo_cmd apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config libvirt-dev
+          DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
 
       - name: Lint integration build
         run: make lint-compute-integration
@@ -84,7 +84,7 @@ jobs:
           sudo_cmd=""
           if [ "$(id -u)" != 0 ]; then sudo_cmd=sudo; fi
           $sudo_cmd apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config libvirt-dev
+          DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
 
       - name: Test Compute Agent with envtest and libvirtd
         run: make test-compute-integration

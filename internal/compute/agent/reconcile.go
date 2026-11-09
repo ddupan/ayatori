@@ -155,6 +155,8 @@ func (a *Agent) remove(r state.Record) error {
 	case kindDomain:
 		ns, name, _ := strings.Cut(r.Key, "/")
 		err = a.hv.RemoveDomain(domainName(ns, name))
+	case kindContainer:
+		err = a.removeContainer(r)
 	}
 	if err != nil {
 		return err
@@ -200,6 +202,13 @@ func (a *Agent) apply(r state.Record) (*observation, error) {
 		}
 		status, err := a.applyDomain(r, &d)
 		return &observation{kind: kindDomain, namespace: d.Namespace, name: d.Name, status: status}, err
+	case kindContainer:
+		var c computev1alpha1.LXCContainer
+		if err := json.Unmarshal(r.Object, &c); err != nil {
+			return nil, err
+		}
+		status, err := a.applyContainer(&c)
+		return &observation{kind: kindContainer, namespace: c.Namespace, name: c.Name, status: status}, err
 	}
 	return nil, nil
 }
@@ -345,6 +354,16 @@ func (a *Agent) removeVolume(r state.Record) (bool, error) {
 				a.logger.Info("volume still referenced, deleting later", "key", r.Key, "domain", d.Key)
 				return false, nil
 			}
+		}
+	}
+	for _, c := range a.store.List(kindContainer) {
+		var ct computev1alpha1.LXCContainer
+		if err := json.Unmarshal(c.Object, &ct); err != nil {
+			return false, err
+		}
+		if ct.Spec.Rootfs == v.Name {
+			a.logger.Info("volume still referenced, deleting later", "key", r.Key, "container", c.Key)
+			return false, nil
 		}
 	}
 	return true, a.volumes().Delete(&v)

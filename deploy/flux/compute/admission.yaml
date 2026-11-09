@@ -1,4 +1,4 @@
-# compute Agent 只写自己：domain 与 volume 的 status 只在 spec.nodeName 是自己时可写，domain 只能把自己
+# compute Agent 只写自己：domain、容器与 volume 的 status 只在 spec.nodeName 是自己时可写，domain 与容器只能把自己
 # 报告为运行节点；network、pool、image 的 status.nodes 中只能改自己那一项（PoC 09）。
 # ponytail: domain 按 spec.nodeName 判断；compute controller 计算候选节点后改为按候选 label（PoC 09）。
 apiVersion: admissionregistration.k8s.io/v1
@@ -12,7 +12,7 @@ spec:
     - apiGroups: [compute.ayatori.ddupan.top]
       apiVersions: ["*"]
       operations: [UPDATE]
-      resources: [libvirtdomains/status, libvirtstoragevolumes/status, libvirtnetworks/status, libvirtstoragepools/status, images/status]
+      resources: [libvirtdomains/status, lxccontainers/status, libvirtstoragevolumes/status, libvirtnetworks/status, libvirtstoragepools/status, images/status]
   matchConditions:
   - name: is-compute-agent
     expression: "'system:ayatori:role:compute' in request.userInfo.groups"
@@ -20,7 +20,7 @@ spec:
   - name: node
     expression: "request.userInfo.username.startsWith('system:ayatori:node:') ? request.userInfo.username.substring(20) : ''"
   - name: assigned
-    expression: "request.resource.resource in ['libvirtdomains', 'libvirtstoragevolumes']"
+    expression: "request.resource.resource in ['libvirtdomains', 'lxccontainers', 'libvirtstoragevolumes']"
   - name: others
     expression: >-
       variables.assigned ? [[], []] :
@@ -32,7 +32,7 @@ spec:
   - expression: "!variables.assigned || oldObject.spec.nodeName == variables.node"
     messageExpression: "'object is not assigned to node ' + variables.node"
   - expression: >-
-      request.resource.resource != 'libvirtdomains' || !has(object.status) || !has(object.status.nodeName) ||
+      !(request.resource.resource in ['libvirtdomains', 'lxccontainers']) || !has(object.status) || !has(object.status.nodeName) ||
       object.status.nodeName == variables.node ||
       (has(oldObject.status) && has(oldObject.status.nodeName) && object.status.nodeName == oldObject.status.nodeName)
     messageExpression: "'node ' + variables.node + ' may only report itself as the running node'"

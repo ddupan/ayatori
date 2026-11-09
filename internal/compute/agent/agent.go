@@ -32,24 +32,26 @@ import (
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
+	"go.ddupan.top/ayatori/internal/compute/adapter/lxc"
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
 	"go.ddupan.top/ayatori/internal/infra/clientcert"
 	"go.ddupan.top/ayatori/internal/infra/node"
 )
 
 const (
-	kindNetwork = "LibvirtNetwork"
-	kindPool    = "LibvirtStoragePool"
-	kindVolume  = "LibvirtStorageVolume"
-	kindDomain  = "LibvirtDomain"
-	kindImage   = "Image"
+	kindNetwork   = "LibvirtNetwork"
+	kindPool      = "LibvirtStoragePool"
+	kindVolume    = "LibvirtStorageVolume"
+	kindDomain    = "LibvirtDomain"
+	kindImage     = "Image"
+	kindContainer = "LXCContainer"
 
 	// downloadTimeout 是一次镜像下载的总时长上限。
 	downloadTimeout = 2 * time.Hour
 )
 
 // kinds 是收敛顺序：被引用的在前。
-var kinds = []string{kindNetwork, kindPool, kindImage, kindVolume, kindDomain}
+var kinds = []string{kindNetwork, kindPool, kindImage, kindVolume, kindDomain, kindContainer}
 
 // Config 是节点部署写入的本地配置。
 type Config struct {
@@ -109,6 +111,9 @@ func LoadConfig(path string) (Config, error) {
 }
 
 type Agent struct {
+	// Containers 是 LXC 运行时，New 设置为 liblxc；测试可以在 Run 之前替换。
+	Containers ContainerRuntime
+
 	config Config
 	store  *state.Store
 	hv     *libvirt.Client
@@ -159,7 +164,7 @@ func New(config Config, registry prometheus.Registerer, logger *slog.Logger) (*A
 	if err := computev1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	a := &Agent{config: config, store: store, scheme: scheme, logger: logger, restConfig: restConfig,
+	a := &Agent{Containers: lxc.New(), config: config, store: store, scheme: scheme, logger: logger, restConfig: restConfig,
 		stopCredentials: stopCredentials,
 		observed:        map[string]observation{}, reported: map[string]observation{},
 		metrics: newMetrics(registry), succeeded: map[objectID]time.Time{}, seen: map[objectID]bool{},
@@ -234,6 +239,7 @@ func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 	c, err := cache.New(config, cache.Options{Scheme: a.scheme, ByObject: map[client.Object]cache.ByObject{
 		&computev1alpha1.LibvirtStorageVolume{}: {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
 		&computev1alpha1.LibvirtDomain{}:        {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
+		&computev1alpha1.LXCContainer{}:         {Field: fields.OneTermEqualSelector("spec.nodeName", self)},
 		&corev1.Node{}:                          {Field: fields.OneTermEqualSelector("metadata.name", self)},
 	}})
 	if err != nil {
@@ -247,7 +253,7 @@ func (a *Agent) watch(ctx context.Context, config *rest.Config) {
 		DeleteFunc: func(any) { signal(changed) },
 	}
 	for _, obj := range []client.Object{&computev1alpha1.LibvirtNetwork{}, &computev1alpha1.LibvirtStoragePool{},
-		&computev1alpha1.LibvirtStorageVolume{}, &computev1alpha1.LibvirtDomain{}, &computev1alpha1.Image{}, &corev1.Node{}} {
+		&computev1alpha1.LibvirtStorageVolume{}, &computev1alpha1.LibvirtDomain{}, &computev1alpha1.LXCContainer{}, &computev1alpha1.Image{}, &corev1.Node{}} {
 		informer, err := c.GetInformer(ctx, obj)
 		if err != nil {
 			a.logger.Error("get informer", "error", err)
@@ -290,8 +296,9 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 	var pools computev1alpha1.LibvirtStoragePoolList
 	var volumes computev1alpha1.LibvirtStorageVolumeList
 	var domains computev1alpha1.LibvirtDomainList
+	var containers computev1alpha1.LXCContainerList
 	var images computev1alpha1.ImageList
-	for _, list := range []client.ObjectList{&nets, &pools, &volumes, &domains, &images} {
+	for _, list := range []client.ObjectList{&nets, &pools, &volumes, &domains, &containers, &images} {
 		if err := c.List(ctx, list); err != nil {
 			return err
 		}
@@ -334,6 +341,9 @@ func (a *Agent) sync(ctx context.Context, c client.Reader) error {
 	}
 	for i := range domains.Items {
 		keep(kindDomain, &domains.Items[i])
+	}
+	for i := range containers.Items {
+		keep(kindContainer, &containers.Items[i])
 	}
 	for _, kind := range kinds {
 		for _, r := range a.store.List(kind) {

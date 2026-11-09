@@ -108,7 +108,8 @@ spec:
                 description: Source 是卷创建时复制的内容；不写时是空卷。只在创建时生效，之后卷与来源无关。
                 properties:
                   image:
-                    description: Image 是 Disk 类型的 Image 的名字（ADR-0019 §9）。
+                    description: Image 是 Disk 或 Rootfs 类型的 Image 的名字（ADR-0019 §9）。Rootfs
+                      要求卷是 dir pool 中的 raw 文件。
                     minLength: 1
                     type: string
                 required:

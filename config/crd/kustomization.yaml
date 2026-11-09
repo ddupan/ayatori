@@ -15,6 +15,7 @@ resources:
 - bases/compute.ayatori.ddupan.top_libvirtnetworks.yaml
 - bases/compute.ayatori.ddupan.top_libvirtstoragepools.yaml
 - bases/compute.ayatori.ddupan.top_libvirtdomains.yaml
+- bases/compute.ayatori.ddupan.top_lxccontainers.yaml
 - bases/compute.ayatori.ddupan.top_images.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
