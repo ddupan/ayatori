@@ -101,12 +101,13 @@ func TestPrepareDomain(t *testing.T) {
 			t.Errorf("%s in domainXML: err = %v", owned, err)
 		}
 	}
+	const osEnd = "</os>"
 	for _, owned := range []struct{ old, new string }{
 		{"<serial", "<tpm model='tpm-crb'><backend type='emulator' version='2.0'/></tpm><serial"},
 		{"<os>", "<os firmware='efi'>"},
-		{"</os>", "<firmware><feature enabled='yes' name='secure-boot'/></firmware></os>"},
-		{"</os>", "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader></os>"},
-		{"</os>", "<nvram>/srv/vars.fd</nvram></os>"},
+		{osEnd, "<firmware><feature enabled='yes' name='secure-boot'/></firmware></os>"},
+		{osEnd, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader></os>"},
+		{osEnd, "<nvram>/srv/vars.fd</nvram></os>"},
 	} {
 		d.Spec.DomainXML = strings.Replace(native, owned.old, owned.new, 1)
 		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
