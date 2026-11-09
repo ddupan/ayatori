@@ -248,12 +248,11 @@ func (c *Client) CreateVolume(pool, xml string) error {
 	return v.Free()
 }
 
-// DeleteVolume 删除卷及其数据；pool 或卷不存在时什么也不做。
+// DeleteVolume 删除卷及其数据；卷不存在时什么也不做，pool 不存在时报错。
 func (c *Client) DeleteVolume(pool, name string) error {
 	p, err := c.conn.LookupStoragePoolByName(pool)
-	if IsNotFound(err) {
-		return nil
-	} else if err != nil {
+	if err != nil {
+		// pool 不存在时无从判断卷是否还在，不能当作已删除：卷文件可能仍在磁盘上。
 		return err
 	}
 	defer free(p.Free)
