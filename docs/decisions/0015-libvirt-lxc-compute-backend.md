@@ -122,7 +122,7 @@ spec:
 ```
 
 - **Ayatori 拥有的元素**：`name`、`uuid`、`<devices>` 中的 `<disk>`、`<interface>`、`<tpm>`，以及 `<os>`
-  中的 `<loader>`、`<nvram>`。它们由类型化字段渲染，`domainXML` 中出现就**拒绝**，原因写入 status，
+  的 `firmware` 属性和其中的 `<firmware>`、`<loader>`、`<nvram>`。它们由类型化字段渲染，`domainXML` 中出现就**拒绝**，原因写入 status，
   不再静默覆盖。其余内容是纯 libvirt 语义，原样透传：设备模型、`<hostdev>` 直通、图形与串口控制台、
   `<qemu:commandline>` 等。
 - **渲染细节不进入 API**：卷解析成 `file`/`block` 路径（PoC 02 的 AppArmor 问题）、网卡端口名、

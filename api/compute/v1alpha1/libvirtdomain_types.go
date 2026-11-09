@@ -56,12 +56,36 @@ type DomainInterface struct {
 	Model string `json:"model,omitempty"`
 }
 
+// FirmwareType 是实例的固件。
+// +kubebuilder:validation:Enum=BIOS;UEFI
+type FirmwareType string
+
+const (
+	FirmwareBIOS FirmwareType = "BIOS"
+	FirmwareUEFI FirmwareType = "UEFI"
+)
+
+// DomainFirmware 是实例的固件与 vTPM，由 Ayatori 渲染。NVRAM 与 vTPM 状态放在哪里由 Agent 决定（ADR-0015）。
+// +kubebuilder:validation:XValidation:rule="!(has(self.secureBoot) && self.secureBoot) || self.type == 'UEFI'",message="secureBoot requires UEFI"
+type DomainFirmware struct {
+	Type FirmwareType `json:"type"`
+	// +optional
+	SecureBoot bool `json:"secureBoot,omitempty"`
+	// TPM 给实例一个 TPM 2.0。
+	// +optional
+	TPM bool `json:"tpm,omitempty"`
+}
+
 // LibvirtDomainSpec 按归属拆开：引用 Ayatori 对象的设备是类型化字段，其余是原生 domain XML（ADR-0015）。
 type LibvirtDomainSpec struct {
-	// DomainXML 是原生 domain XML，不含 Ayatori 拥有的元素：<name>、<uuid>、<disk>、<interface>。
+	// DomainXML 是原生 domain XML，不含 Ayatori 拥有的元素：<name>、<uuid>、<disk>、<interface>、<tpm>，
+	// 以及 <os> 的 firmware 属性、<firmware>、<loader>、<nvram>。
 	// 这些元素出现时 Agent 拒绝下发并在 status 中说明。其余内容原样透传。
 	// +kubebuilder:validation:MinLength=1
 	DomainXML string `json:"domainXML"`
+	// Firmware 不写时使用 libvirt 的默认固件（x86 上是 BIOS）。
+	// +optional
+	Firmware *DomainFirmware `json:"firmware,omitempty"`
 	// Disks 按顺序渲染为 <disk>。
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=atomic

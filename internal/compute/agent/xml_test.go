@@ -65,6 +65,31 @@ func TestPrepareDomain(t *testing.T) {
 		t.Error("generated MACs must differ between interfaces")
 	}
 
+	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareUEFI, SecureBoot: true, TPM: true}
+	out, err = prepareDomain(d, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
+	for _, want := range []string{
+		`<os firmware="efi">`, `<features><acpi></acpi></features>`,
+		`<firmware><feature enabled="yes" name="secure-boot"></feature><feature enabled="yes" name="enrolled-keys"></feature></firmware>`,
+		`<tpm model="tpm-crb"><backend type="emulator" version="2.0"></backend></tpm>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prepared XML lacks %s:\n%s", want, out)
+		}
+	}
+	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareUEFI}
+	if out, err = prepareDomain(d, resolve); err != nil || !strings.Contains(out, `<feature enabled="no" name="secure-boot">`) || strings.Contains(out, "enrolled-keys") || strings.Contains(out, "<tpm") {
+		t.Errorf("UEFI without secure boot: err = %v\n%s", err, out)
+	}
+	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareBIOS}
+	if out, err = prepareDomain(d, resolve); err != nil || strings.Contains(out, "firmware") {
+		t.Errorf("BIOS must leave the firmware to libvirt: err = %v\n%s", err, out)
+	}
+	d.Spec.Firmware = nil
+
 	d.Spec.Disks = append(d.Spec.Disks, computev1alpha1.DomainDisk{Volume: "gone"})
 	if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Fatalf("unresolvable volume: err = %v", err)
@@ -74,6 +99,19 @@ func TestPrepareDomain(t *testing.T) {
 		d.Spec.DomainXML = strings.Replace(native, "<memory>", owned+"<memory>", 1)
 		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
 			t.Errorf("%s in domainXML: err = %v", owned, err)
+		}
+	}
+	const osEnd = "</os>"
+	for _, owned := range []struct{ old, new string }{
+		{"<serial", "<tpm model='tpm-crb'><backend type='emulator' version='2.0'/></tpm><serial"},
+		{"<os>", "<os firmware='efi'>"},
+		{osEnd, "<firmware><feature enabled='yes' name='secure-boot'/></firmware></os>"},
+		{osEnd, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader></os>"},
+		{osEnd, "<nvram>/srv/vars.fd</nvram></os>"},
+	} {
+		d.Spec.DomainXML = strings.Replace(native, owned.old, owned.new, 1)
+		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
+			t.Errorf("%s in domainXML: err = %v", owned.new, err)
 		}
 	}
 	for _, owned := range []string{`<disk type='file'><source file='/srv/raw.img'/><target dev='vdb'/></disk>`, `<interface type='bridge'><source bridge='br0'/></interface>`} {

@@ -42,7 +42,7 @@ var diskTargets = map[computev1alpha1.DiskBus]string{
 	computev1alpha1.DiskBusIDE: "hd", computev1alpha1.DiskBusFDC: "fd",
 }
 
-// prepareDomain 把类型化的 disks、interfaces 渲染进原生 domainXML，并填写 name 与 uuid（ADR-0015）。
+// prepareDomain 把类型化的 firmware、disks、interfaces 渲染进原生 domainXML，并填写 name 与 uuid（ADR-0015）。
 // 这些元素归 Ayatori，domainXML 中出现就拒绝，不静默覆盖。卷解析成具体路径：AppArmor 不会把
 // type='volume' 的源加入实例的 profile（PoC 02）。
 func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string) (Volume, error)) (string, error) {
@@ -63,6 +63,18 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string)
 	if dom.Devices != nil && len(dom.Devices.Interfaces) > 0 {
 		owned = append(owned, "<interface>")
 	}
+	if dom.Devices != nil && len(dom.Devices.TPMs) > 0 {
+		owned = append(owned, "<tpm>")
+	}
+	if dom.OS != nil && (dom.OS.Firmware != "" || dom.OS.FirmwareInfo != nil) {
+		owned = append(owned, "<os> firmware")
+	}
+	if dom.OS != nil && dom.OS.Loader != nil {
+		owned = append(owned, "<loader>")
+	}
+	if dom.OS != nil && dom.OS.NVRam != nil {
+		owned = append(owned, "<nvram>")
+	}
 	if len(owned) > 0 {
 		return "", fmt.Errorf("domainXML must not contain %s: Ayatori renders them from spec", strings.Join(owned, ", "))
 	}
@@ -71,6 +83,7 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string)
 	if dom.Devices == nil {
 		dom.Devices = &libvirtxml.DomainDeviceList{}
 	}
+	renderFirmware(&dom, d.Spec.Firmware)
 	used := map[string]int{}
 	for _, disk := range d.Spec.Disks {
 		vol, err := resolve(disk.Volume)
@@ -114,6 +127,36 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(volume string)
 		})
 	}
 	return dom.Marshal()
+}
+
+// renderFirmware 让 libvirt 按固件描述文件自动选择 OVMF，SMM 也由它按描述文件打开。不写 <nvram> 和
+// vTPM 的 <source>：本地存储用节点默认位置（ADR-0015）；DRBD 上的块设备随 LINSTOR 集成加入（ADR-0020）。
+// BIOS 不写 firmware 属性，libvirt 默认就是 SeaBIOS，节点也不必有 BIOS 的描述文件。
+func renderFirmware(dom *libvirtxml.Domain, f *computev1alpha1.DomainFirmware) {
+	if f == nil {
+		return
+	}
+	if f.Type == computev1alpha1.FirmwareUEFI {
+		if dom.OS == nil {
+			dom.OS = &libvirtxml.DomainOS{}
+		}
+		dom.OS.Firmware = "efi"
+		if dom.Features == nil {
+			dom.Features = &libvirtxml.DomainFeatureList{}
+		}
+		dom.Features.ACPI = &libvirtxml.DomainFeature{} // UEFI 必须有 ACPI，否则 libvirt 拒绝 define
+		features := []libvirtxml.DomainOSFirmwareFeature{{Enabled: "no", Name: "secure-boot"}}
+		if f.SecureBoot { // enrolled-keys：预置微软密钥，Windows 和带 shim 的 Linux 才能启动（PoC 02）
+			features = []libvirtxml.DomainOSFirmwareFeature{{Enabled: "yes", Name: "secure-boot"}, {Enabled: "yes", Name: "enrolled-keys"}}
+		}
+		dom.OS.FirmwareInfo = &libvirtxml.DomainOSFirmwareInfo{Features: features}
+	}
+	if f.TPM {
+		dom.Devices.TPMs = []libvirtxml.DomainTPM{{
+			Model:   "tpm-crb",
+			Backend: &libvirtxml.DomainTPMBackend{Emulator: &libvirtxml.DomainTPMBackendEmulator{Version: "2.0"}},
+		}}
+	}
 }
 
 // prepareNetwork 与 preparePool 把 name 与 uuid 填为对象名与 UID：各节点上同名，domain 按名字引用。
