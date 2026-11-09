@@ -24,6 +24,6 @@ jobs:
           persist-credentials: false
 
       - name: Security scan
-        uses: https://git.ddupan.top/panxiao81/ci-actions/security-scan@22d01cf092af1a472733fa632f218a652a27174c
+        uses: https://git.ddupan.top/panxiao81/ci-actions/security-scan@v1
         with:
           semgrep-config: p/default p/golang
