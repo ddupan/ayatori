@@ -13,11 +13,13 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
-// Volume 是 domain 引用的卷在本节点上的事实。
+// Volume 是卷在本节点上的事实。
 type Volume struct {
-	Path   string
-	Block  bool
-	Format string
+	Found    bool
+	Path     string
+	Block    bool
+	Format   string
+	Capacity uint64
 }
 
 // domainName 是实例在 libvirt 中的名字。Kubernetes 的名字里不会出现 "_"，因此不会与别的对象冲突。
