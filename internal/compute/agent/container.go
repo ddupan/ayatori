@@ -30,7 +30,7 @@ func prepareContainer(c *computev1alpha1.LXCContainer, rootfs Volume, bridge fun
 	}
 	path := rootfs.Path
 	if !rootfs.Block {
-		if rootfs.Format != "raw" {
+		if rootfs.Format != formatRaw {
 			return "", fmt.Errorf("rootfs volume must be raw, got %q", rootfs.Format)
 		}
 		path = "loop:" + path

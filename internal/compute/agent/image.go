@@ -200,7 +200,7 @@ func isTarball(f io.ReaderAt) bool {
 // buildRootfs 在 path 上生成容量为 capacity 的 ext4，内容来自 archive。mke2fs 直接读归档（需要 e2fsprogs
 // 1.47.1 与 libarchive），属主、权限、xattr 与挂载后解包相同，不用挂载，也不把未校验的文件系统交给内核。
 func buildRootfs(path, archive string, capacity uint64) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // 路径由 Agent 拼出
 	if err != nil {
 		return err
 	}

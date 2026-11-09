@@ -68,7 +68,7 @@ func (b libvirtVolumes) Grow(v *computev1alpha1.LibvirtStorageVolume, cur Volume
 // createRootfs 在临时文件上生成 ext4，完成后才 rename 成卷：中途崩溃不会留下内容不全、却被当作已有数据
 // 接管的卷（ADR-0019 §9）。
 func (b libvirtVolumes) createRootfs(v *computev1alpha1.LibvirtStorageVolume, image *computev1alpha1.Image, capacity uint64) error {
-	if format := volumeFormat(v.Spec.Libvirt.XML); format != "" && format != "raw" {
+	if format := volumeFormat(v.Spec.Libvirt.XML); format != "" && format != formatRaw {
 		return fmt.Errorf("a volume from a Rootfs image must be raw, got %q", format)
 	}
 	dir, err := b.hv.PoolDir(v.Spec.Libvirt.Pool)

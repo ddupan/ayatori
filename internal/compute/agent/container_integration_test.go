@@ -13,7 +13,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
@@ -89,10 +88,10 @@ func (f *fakeContainers) tamper(name string) {
 	f.configs[name] += "lxc.tty.max = 9\n"
 }
 
-func (f *fakeContainers) startCount(name string) int {
+func (f *fakeContainers) ct1Starts() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.starts[name]
+	return f.starts[ct1Name]
 }
 
 // reboot 模拟宿主机重启：所有容器停止，配置文件还在。
@@ -121,7 +120,7 @@ func (s *suite) waitContainer(t *testing.T, c *computev1alpha1.LXCContainer, ok 
 func (s *suite) rootfsVolume(t *testing.T, name string, reclaim computev1alpha1.ReclaimPolicy) {
 	t.Helper()
 	create(t, s.k, &computev1alpha1.LibvirtStorageVolume{Name: name, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
-		NodeName: node, ReclaimPolicy: reclaim, Size: ptr.To(resource.MustParse("1Mi")),
+		NodeName: node, ReclaimPolicy: reclaim, Size: new(resource.MustParse("1Mi")),
 		Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool}}})
 	s.waitVolume(t, name, func(st computev1alpha1.LibvirtStorageVolumeStatus) bool { return st.Path != "" })
 }
@@ -149,7 +148,7 @@ func (s *suite) volumeExists(t *testing.T, name string) bool {
 }
 
 func (s *suite) managesContainers(t *testing.T) {
-	const rootfs, ct1, libvirtName, base = "ct1-root", "ct1", "default_ct1", "lxc.arch = linux64\n"
+	const rootfs, ct1, libvirtName, base = "ct1-root", "ct1", ct1Name, "lxc.arch = linux64\n"
 	s.rootfsVolume(t, rootfs, computev1alpha1.ReclaimDelete)
 	c := newContainer(ct1, node, rootfs, base)
 	create(t, s.k, c)
@@ -174,10 +173,10 @@ func (s *suite) managesContainers(t *testing.T) {
 	})
 
 	// 容器停止（崩溃或容器内 poweroff，liblxc 区分不了）：拉起。
-	before := containers.startCount(libvirtName)
+	before := containers.ct1Starts()
 	containers.set(libvirtName, stateStopped)
 	eventually(t, 30*time.Second, func() error {
-		if containers.startCount(libvirtName) <= before {
+		if containers.ct1Starts() <= before {
 			return errors.New("not restarted")
 		}
 		return nil
@@ -192,9 +191,9 @@ func (s *suite) managesContainers(t *testing.T) {
 	s.waitContainer(t, c, func(st computev1alpha1.LXCContainerStatus) bool { return st.ObservedGeneration == c.Generation })
 	s.expectMetric(t, shouldRunMetric, domainLabels(ct1), is(0))
 	containers.set(libvirtName, stateStopped)
-	before = containers.startCount(libvirtName)
+	before = containers.ct1Starts()
 	time.Sleep(3 * time.Second)
-	if containers.startCount(libvirtName) != before {
+	if containers.ct1Starts() != before {
 		t.Error("a Stopped container was started")
 	}
 
@@ -226,6 +225,9 @@ func (s *suite) managesContainers(t *testing.T) {
 }
 
 const ctKeep, ctKeepRoot = "ct-keep", "ct-keep-root"
+
+// ct1Name 是 managesContainers 中容器在节点上的名字。
+const ct1Name = "default_ct1"
 
 func (s *suite) rejectsInvalidContainers(t *testing.T) {
 	const missing = "no-such-volume"

@@ -50,7 +50,7 @@ func (c *Client) Container(name string) (Container, error) {
 
 // Config 返回节点上的配置文件内容；不存在时为空。文件内容就是漂移判断的依据。
 func (c *Client) Config(name string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(c.path, name, configFile))
+	data, err := os.ReadFile(filepath.Join(c.path, name, configFile)) //nolint:gosec // 名字来自 Kubernetes 对象名，不含路径分隔符
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -64,7 +64,7 @@ func (c *Client) Define(name, config string) error {
 		return err
 	}
 	tmp := filepath.Join(dir, configFile+".tmp")
-	if err := os.WriteFile(tmp, []byte(config), 0o640); err != nil {
+	if err := os.WriteFile(tmp, []byte(config), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, configFile))

@@ -13,20 +13,20 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
+const lan = "lan"
+
 func container(config string, networks ...computev1alpha1.ContainerNetwork) *computev1alpha1.LXCContainer {
-	return &computev1alpha1.LXCContainer{ObjectMeta: metav1.ObjectMeta{Name: "web", UID: "0123456789abcdef"},
+	return &computev1alpha1.LXCContainer{Name: "web", UID: "0123456789abcdef",
 		Spec: computev1alpha1.LXCContainerSpec{Config: config, Networks: networks}}
 }
 
 func TestPrepareContainer(t *testing.T) {
 	bridge := func(n string) (string, error) { return "br-" + n, nil }
-	file := Volume{Path: "/p/root", Format: "raw"}
-	got, err := prepareContainer(container("lxc.arch = linux64\n", computev1alpha1.ContainerNetwork{Network: "lan"},
+	file := Volume{Path: "/p/root", Format: formatRaw}
+	got, err := prepareContainer(container("lxc.arch = linux64\n", computev1alpha1.ContainerNetwork{Network: lan},
 		computev1alpha1.ContainerNetwork{Network: "wan", MAC: "02:00:00:00:00:02"}), file, bridge)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestPrepareContainer(t *testing.T) {
 		t.Error("a qcow2 file cannot be a rootfs")
 	}
 	broken := errors.New("no bridge")
-	if _, err = prepareContainer(container("x = 1", computev1alpha1.ContainerNetwork{Network: "lan"}), file,
+	if _, err = prepareContainer(container("x = 1", computev1alpha1.ContainerNetwork{Network: lan}), file,
 		func(string) (string, error) { return "", broken }); !errors.Is(err, broken) {
 		t.Errorf("bridge error lost: %v", err)
 	}
@@ -55,13 +55,13 @@ func TestPrepareContainer(t *testing.T) {
 
 func TestPrepareContainerRejectsOwnedKeys(t *testing.T) {
 	for _, line := range []string{"lxc.uts.name = x", "lxc.rootfs.path=dir:/x", "  lxc.net.0.type = veth", "lxc.net ="} {
-		_, err := prepareContainer(container("lxc.arch = linux64\n"+line+"\n"), Volume{Format: "raw"}, nil)
+		_, err := prepareContainer(container("lxc.arch = linux64\n"+line+"\n"), Volume{Format: formatRaw}, nil)
 		if err == nil || !strings.Contains(err.Error(), "owned by Ayatori") {
 			t.Errorf("%q: got %v", line, err)
 		}
 	}
 	for _, line := range []string{"# lxc.net.0.type = veth", "lxc.rootfs.options = noatime", "lxc.include = /c"} {
-		if _, err := prepareContainer(container(line), Volume{Format: "raw"}, nil); err != nil {
+		if _, err := prepareContainer(container(line), Volume{Format: formatRaw}, nil); err != nil {
 			t.Errorf("%q must pass through: %v", line, err)
 		}
 	}

@@ -28,7 +28,7 @@ func TestPrepareDomain(t *testing.T) {
 			{Image: "debian-iso", Bus: computev1alpha1.DiskBusIDE},
 		},
 		Interfaces: []computev1alpha1.DomainInterface{
-			{Network: "lan", MAC: "52:54:00:AA:BB:CC"},
+			{Network: lan, MAC: "52:54:00:AA:BB:CC"},
 			{Network: "mgmt", Model: "e1000e"},
 		},
 	}}
@@ -36,7 +36,7 @@ func TestPrepareDomain(t *testing.T) {
 		"dns1-root": {Path: "/dev/data/dns1-root", Block: true},
 		"seed":      {Path: "/var/lib/libvirt/iso/seed.iso", Format: "iso"},
 		"data":      {Path: "/images/data.qcow2", Format: "qcow2"},
-		"dos":       {Path: "/images/dos.img", Format: "raw"},
+		"dos":       {Path: "/images/dos.img", Format: formatRaw},
 	}
 	resolve := func(disk computev1alpha1.DomainDisk) (Volume, error) {
 		if disk.Image != "" {

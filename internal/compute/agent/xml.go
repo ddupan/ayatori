@@ -13,6 +13,9 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
+// formatRaw 是 libvirt 的 raw 卷格式。
+const formatRaw = "raw"
+
 // Volume 是卷在本节点上的事实。
 type Volume struct {
 	Found    bool
@@ -97,7 +100,7 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha
 		prefix := diskTargets[bus]
 		x := libvirtxml.DomainDisk{
 			Device: "disk",
-			Driver: &libvirtxml.DomainDiskDriver{Name: "qemu", Type: "raw"},
+			Driver: &libvirtxml.DomainDiskDriver{Name: "qemu", Type: formatRaw},
 			Target: &libvirtxml.DomainDiskTarget{Dev: prefix + string(rune('a'+used[prefix])), Bus: string(bus)},
 		}
 		used[prefix]++
