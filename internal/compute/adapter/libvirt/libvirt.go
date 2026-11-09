@@ -470,6 +470,15 @@ func (c *Client) HostCPU() (libvirtxml.CapsHostCPU, error) {
 	return *caps.Host.CPU, nil
 }
 
+// CPUProvides 报告本机的 hypervisor 能否提供 xml 描述的 CPU。
+func (c *Client) CPUProvides(xml string) (bool, error) {
+	result, err := c.conn.CompareHypervisorCPU("", "", "", "", xml, 0)
+	if err != nil {
+		return false, err
+	}
+	return result != golibvirt.CPU_COMPARE_INCOMPATIBLE, nil
+}
+
 // DomainStats 是运行中实例的资源用量。累计量自实例启动起计。
 type DomainStats struct {
 	Name string

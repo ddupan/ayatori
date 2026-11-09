@@ -82,7 +82,30 @@ pve1 是 Intel，pve2/pve3 是 AMD。VM 100 用 `host` CPU 在线迁移失败，
   不能提供就写入该节点的 status，controller 将其排除出候选节点。
 - domain 使用 `host-passthrough`/`host-model`，而候选节点的 CPU 型号不一致时，controller 设置一个
   warning condition，但不拒绝，保持 ADR-0015 不限制原生配置的原则。示例和迁入工具默认使用具名型号
-  （`x86-64-v2-AES` 已在 PVE 上验证过）。在线迁移要求具名型号或两端型号一致。
+  （下面的档位）。在线迁移要求具名型号或两端型号一致。
+- 异构不只是厂商不同，同一厂商的不同代际也不同：实例冷切换到老一代节点后，下次启动就少了 AVX2 等特性，用到
+  它们的程序会崩溃。集群用 x86-64 psABI 的微架构档位（`v2`/`v3`/`v4`）作为 CPU 基线，相当于 vSphere EVC，
+  与发行版的基线一致（例如 RHEL 9 要求 v2，RHEL 10 要求 v3）：
+  - Agent 用 `virConnectCompareHypervisorCPU` 逐档询问，把能提供的档位写成 Node label
+    `compute.ayatori.ddupan.top/x86-64-v3: "true"`。放置用现有的 `nodeSelector`/`affinity`，不新增 API 字段。
+    型号相同不代表特性相同（微码、BIOS），所以不从型号推断。
+  - 档位用基础型号 `kvm64` 加特性表达。`x86-64-v2-AES` 是 Proxmox 的型号名，libvirt 不认识；`qemu64` 带 AMD
+    专有特性，Intel 节点上不兼容（已在 libvirt 11.3 验证）。例如 v2：
+
+    ```xml
+    <cpu mode='custom' match='exact'>
+      <model fallback='forbid'>kvm64</model>
+      <feature policy='require' name='cx16'/><feature policy='require' name='lahf_lm'/>
+      <feature policy='require' name='popcnt'/><feature policy='require' name='pni'/>
+      <feature policy='require' name='ssse3'/><feature policy='require' name='sse4.1'/>
+      <feature policy='require' name='sse4.2'/><feature policy='require' name='aes'/>
+    </cpu>
+    ```
+
+    psABI 的档位不含 `aes`，实际使用时建议加上，否则客户机没有 AES 硬件加速。各档的特性列表见 Agent 的
+    `cpuLevels`。
+  - 档位固定，不用 `virConnectBaselineHypervisorCPU` 动态计算：动态基线会因为加入一台老节点而改变所有实例下次
+    启动时看到的 CPU。
 
 ### 4. 放置：Node label 加 Kubernetes 的亲和表达
 
@@ -313,7 +336,8 @@ vSphere 的 Storage vMotion 同样会改写 VM 的配置文件。
 1. hostname 的 `required` 反亲和在冷启动时生效（DRBD 上见 ADR-0020）；zone 的反亲和由候选节点划分
    保证。
 2. 维护排空：按 `evacuate` 创建迁移对象，各类实例按预期迁走或关机；`SafeToRemove` 的时机正确。
-3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD 节点上对具名型号给出的结果。
+3. `virConnectCompareHypervisorCPU` 在 Intel 与 AMD、同厂商不同代际节点上对各档位给出的结果（已在 i7-8750H 上
+   验证：v2、v3 通过，v4 不通过）。
 4. 本地存储 VM 的 `--copy-storage-all` 在线迁移，限速下 1G 链路上 DRBD 不出现 quorum 抖动。
 5. 运行中 VM 的 `blockcopy` 换卷后重新 define，冷启动使用新卷。
 6. ~~ISO 镜像原地更新~~：已在 compute-dev1 用真实 QEMU 验证。运行中的 VM 继续持有旧 inode，重启后读到
