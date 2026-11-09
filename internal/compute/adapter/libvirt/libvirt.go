@@ -4,6 +4,7 @@ package libvirt
 
 import (
 	"errors"
+	"fmt"
 
 	golibvirt "libvirt.org/go/libvirt"
 	"libvirt.org/go/libvirtxml"
@@ -161,6 +162,37 @@ func (c *Client) PoolSpace(name string) (capacity, available uint64, err error) 
 	return info.Capacity, info.Available, nil
 }
 
+// PoolDir 返回 dir 类型 pool 的目录；其他类型报错。
+func (c *Client) PoolDir(name string) (string, error) {
+	p, err := c.conn.LookupStoragePoolByName(name)
+	if err != nil {
+		return "", err
+	}
+	defer free(p.Free)
+	desc, err := p.GetXMLDesc(0)
+	if err != nil {
+		return "", err
+	}
+	var x libvirtxml.StoragePool
+	if err := x.Unmarshal(desc); err != nil {
+		return "", err
+	}
+	if x.Type != "dir" || x.Target == nil {
+		return "", fmt.Errorf("pool %s has type %s, need dir", name, x.Type)
+	}
+	return x.Target.Path, nil
+}
+
+// RefreshPool 让 libvirt 重新读取 pool 中的文件。
+func (c *Client) RefreshPool(name string) error {
+	p, err := c.conn.LookupStoragePoolByName(name)
+	if err != nil {
+		return err
+	}
+	defer free(p.Free)
+	return p.Refresh(0)
+}
+
 // RemovePool 停止并删除定义，不删除底层存储。
 func (c *Client) RemovePool(name string) error {
 	p, err := c.conn.LookupStoragePoolByName(name)
@@ -246,6 +278,40 @@ func (c *Client) CreateVolume(pool, xml string) error {
 		return err
 	}
 	return v.Free()
+}
+
+// CreateVolumeFrom 按 volume XML 在 pool 中创建卷，内容完整复制自 sourcePool 中的 sourceName。
+// libvirt 复制时忽略比来源大的 capacity，这里再扩容到 capacity（字节）；比来源小时保持来源大小。
+// 扩容失败就删掉新卷：卷已存在时不再修改，留下来就永远是错的大小。
+func (c *Client) CreateVolumeFrom(pool, xml, sourcePool, sourceName string, capacity uint64) error {
+	p, err := c.conn.LookupStoragePoolByName(pool)
+	if err != nil {
+		return err
+	}
+	defer free(p.Free)
+	sp, err := c.conn.LookupStoragePoolByName(sourcePool)
+	if err != nil {
+		return err
+	}
+	defer free(sp.Free)
+	src, err := sp.LookupStorageVolByName(sourceName)
+	if err != nil {
+		return err
+	}
+	defer free(src.Free)
+	v, err := p.StorageVolCreateXMLFrom(xml, src, 0)
+	if err != nil {
+		return err
+	}
+	defer free(v.Free)
+	info, err := v.GetInfo()
+	if err == nil && info.Capacity < capacity {
+		err = v.Resize(capacity, 0)
+	}
+	if err != nil {
+		return errors.Join(err, v.Delete(0))
+	}
+	return nil
 }
 
 // DeleteVolume 删除卷及其数据；卷不存在时什么也不做，pool 不存在时报错。

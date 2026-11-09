@@ -23,6 +23,7 @@ func TestPrepareDomain(t *testing.T) {
 			{Volume: "seed", Bus: computev1alpha1.DiskBusSATA, ReadOnly: true},
 			{Volume: "data", Bus: computev1alpha1.DiskBusSCSI},
 			{Volume: "dos", Bus: computev1alpha1.DiskBusFDC},
+			{Image: "debian-iso", Bus: computev1alpha1.DiskBusIDE},
 		},
 		Interfaces: []computev1alpha1.DomainInterface{
 			{Network: "lan", MAC: "52:54:00:AA:BB:CC"},
@@ -35,8 +36,11 @@ func TestPrepareDomain(t *testing.T) {
 		"data":      {Path: "/images/data.qcow2", Format: "qcow2"},
 		"dos":       {Path: "/images/dos.img", Format: "raw"},
 	}
-	resolve := func(name string) (Volume, error) {
-		v, ok := vols[name]
+	resolve := func(disk computev1alpha1.DomainDisk) (Volume, error) {
+		if disk.Image != "" {
+			return Volume{Path: "/images/" + disk.Image}, nil
+		}
+		v, ok := vols[disk.Volume]
 		if !ok {
 			return Volume{}, errors.New("no such volume")
 		}
@@ -47,6 +51,9 @@ func TestPrepareDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
+	if !strings.Contains(out, `<disk type="file" device="cdrom"><driver name="qemu" type="raw"></driver><source file="/images/debian-iso"></source><target dev="hda" bus="ide"></target><readonly></readonly>`) {
+		t.Fatalf("cdrom not rendered:\n%s", out)
+	}
 	for _, want := range []string{
 		"<name>infra_dns1</name>", "<uuid>" + uid + "</uuid>",
 		`<disk type="block" device="disk"><driver name="qemu" type="raw"></driver><source dev="/dev/data/dns1-root"></source><target dev="vda" bus="virtio"></target><boot order="1"></boot>`,
@@ -134,5 +141,28 @@ func TestPoolHashIgnoresObservedValues(t *testing.T) {
 	hd, _ := poolHash(d)
 	if ha != hb || ha != hd || ha == hc {
 		t.Fatalf("usage and permissions must not count, config must: %s %s %s %s", ha, hb, hc, hd)
+	}
+}
+
+func TestVolumeCapacity(t *testing.T) {
+	for xml, want := range map[string]uint64{
+		`<volume><capacity>512</capacity></volume>`:              512,
+		`<volume><capacity unit='bytes'>512</capacity></volume>`: 512,
+		`<volume><capacity unit='KB'>2</capacity></volume>`:      2000,
+		`<volume><capacity unit='K'>2</capacity></volume>`:       2048,
+		`<volume><capacity unit='KiB'>2</capacity></volume>`:     2048,
+		`<volume><capacity unit='G'>20</capacity></volume>`:      20 << 30,
+		`<volume><capacity unit='GiB'>20</capacity></volume>`:    20 << 30,
+		`<volume><capacity unit='GB'>20</capacity></volume>`:     20_000_000_000,
+		`<volume><capacity unit='T'>1</capacity></volume>`:       1 << 40,
+	} {
+		if got, err := volumeCapacity(xml); err != nil || got != want {
+			t.Errorf("%s = %d, %v; want %d", xml, got, err, want)
+		}
+	}
+	for _, xml := range []string{`<volume></volume>`, `<volume><capacity unit='parsec'>1</capacity></volume>`} {
+		if _, err := volumeCapacity(xml); err == nil {
+			t.Errorf("%s accepted", xml)
+		}
 	}
 }

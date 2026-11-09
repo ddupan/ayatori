@@ -16,9 +16,10 @@ const (
 // LibvirtStorageVolumeSpec 声明一个卷（ADR-0015）。卷由一种存储后端提供，各后端是 spec 下互斥的
 // 一块：本版本只有 libvirt（经 libvirt pool 管理）；ADR-0020 的 LINSTOR 以后作为并列的 linstor 加入。
 // 后端与 nodeName 创建后不可修改：卷的内容是数据，Ayatori 不会为了让配置一致而重建它。
-// 扩容（ADR-0019 §7）与从 URL 导入（§9）在后续版本加入。
+// 扩容（ADR-0019 §7）在后续版本加入。
 // +kubebuilder:validation:XValidation:rule="has(self.libvirt)",message="a storage backend must be set: libvirt"
 // +kubebuilder:validation:XValidation:rule="has(self.libvirt) == has(oldSelf.libvirt)",message="storage backend is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.source) == has(oldSelf.source)",message="source is immutable"
 type LibvirtStorageVolumeSpec struct {
 	// NodeName 表示卷只存在于该节点上（本地存储），引用它的实例只能在该节点运行。共享存储（rbd、
 	// LINSTOR）以后不填。本版本只支持本地存储，必须指定。
@@ -32,6 +33,17 @@ type LibvirtStorageVolumeSpec struct {
 	// Libvirt 表示卷在 libvirt pool 中，由节点上的 Agent 经 libvirt 创建与删除。
 	// +optional
 	Libvirt *LibvirtVolumeSource `json:"libvirt,omitempty"`
+	// Source 是卷创建时复制的内容；不写时是空卷。只在创建时生效，之后卷与来源无关。
+	// +optional
+	Source *VolumeContentSource `json:"source,omitempty"`
+}
+
+// VolumeContentSource 是卷的初始内容。
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="source is immutable"
+type VolumeContentSource struct {
+	// Image 是 Disk 类型的 Image 的名字（ADR-0019 §9）。
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
 }
 
 // LibvirtVolumeSource 是 libvirt pool 中的卷。
@@ -56,6 +68,11 @@ type LibvirtStorageVolumeStatus struct {
 	// Capacity 是卷的容量（字节）。
 	// +optional
 	Capacity int64 `json:"capacity,omitempty"`
+	// Image 与 SHA256 是卷实际复制的镜像及其版本。
+	// +optional
+	Image string `json:"image,omitempty"`
+	// +optional
+	SHA256 string `json:"sha256,omitempty"`
 	// Message 是最近一次创建失败的原因；成功时为空。
 	// +optional
 	Message string `json:"message,omitempty"`
