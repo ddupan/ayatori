@@ -13,11 +13,13 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
-// Volume 是 domain 引用的卷在本节点上的事实。
+// Volume 是卷在本节点上的事实。
 type Volume struct {
-	Path   string
-	Block  bool
-	Format string
+	Found    bool
+	Path     string
+	Block    bool
+	Format   string
+	Capacity uint64
 }
 
 // domainName 是实例在 libvirt 中的名字。Kubernetes 的名字里不会出现 "_"，因此不会与别的对象冲突。
@@ -208,10 +210,15 @@ func poolHash(xml string) (string, error) {
 // prepareVolume 把 name 填为对象名：domain 按 <source pool='…' volume='对象名'/> 引用。
 func prepareVolume(v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	var x libvirtxml.StorageVolume
-	if err := x.Unmarshal(v.Spec.Libvirt.XML); err != nil {
-		return "", fmt.Errorf("parse volume xml: %w", err)
+	if v.Spec.Libvirt.XML != "" {
+		if err := x.Unmarshal(v.Spec.Libvirt.XML); err != nil {
+			return "", fmt.Errorf("parse volume xml: %w", err)
+		}
 	}
 	x.Name = v.Name
+	if v.Spec.Size != nil {
+		x.Capacity = &libvirtxml.StorageVolumeSize{Unit: "bytes", Value: uint64(v.Spec.Size.Value())}
+	}
 	return x.Marshal()
 }
 

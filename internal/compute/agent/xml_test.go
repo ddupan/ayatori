@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 )
 
@@ -141,6 +143,24 @@ func TestPoolHashIgnoresObservedValues(t *testing.T) {
 	hd, _ := poolHash(d)
 	if ha != hb || ha != hd || ha == hc {
 		t.Fatalf("usage and permissions must not count, config must: %s %s %s %s", ha, hb, hc, hd)
+	}
+}
+
+func TestPrepareVolumeSize(t *testing.T) {
+	size := resource.MustParse("2Gi")
+	v := &computev1alpha1.LibvirtStorageVolume{Spec: computev1alpha1.LibvirtStorageVolumeSpec{Size: &size,
+		Libvirt: &computev1alpha1.LibvirtVolumeSource{XML: `<volume><capacity unit='G'>1</capacity><target><format type='qcow2'/></target></volume>`}}}
+	v.Name = "root"
+	out, err := prepareVolume(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := volumeCapacity(out); err != nil || got != 2<<30 || !strings.Contains(out, "qcow2") {
+		t.Fatalf("capacity %d, err %v:\n%s", got, err, out)
+	}
+	v.Spec.Libvirt.XML = ""
+	if out, err = prepareVolume(v); err != nil || !strings.Contains(out, "<name>root</name>") {
+		t.Fatalf("size only: err %v:\n%s", err, out)
 	}
 }
 

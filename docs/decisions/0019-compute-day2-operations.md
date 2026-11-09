@@ -162,6 +162,11 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 - 由 controller（LINSTOR 卷）或 Agent（本地 pool，`vol-resize`）扩大卷。实例运行中时，Agent 调用
   `virDomainBlockResize` 让客户机看到新容量；客户机内的分区和文件系统扩展由客户机自己完成，例如
   cloud-init 的 growpart。LXC 的 ext4 rootfs 由 Agent 在线执行 `resize2fs`。
+- `size` 优先于 volume XML 中的 capacity，也可以不写 XML 只写 `size`。libvirt 的 `logical` pool 不支持改变卷
+  容量（已在 compute-dev1 验证），这类卷扩容时报错并写入 status，Agent 不代为执行 `lvextend`。
+- 节点上对卷的操作经固定的后端接口（`volumeBackend`：读取、创建或从镜像复制、扩容、删除）。各后端的扩容方式
+  不同，差异只留在实现中：libvirt 的文件卷运行中由 QEMU 扩容，块设备先扩大设备；LINSTOR 的设备由 controller
+  扩大，节点上只需让实例看到新容量。
 
 ### 8. 从 PVE 迁入现有客户机
 

@@ -247,26 +247,23 @@ func (a *Agent) applyVolume(r state.Record, v *computev1alpha1.LibvirtStorageVol
 		status.Message = err.Error()
 		return status, err
 	}
-	cur, err := a.hv.Volume(v.Spec.Libvirt.Pool, v.Name)
+	backend := a.volumes()
+	cur, err := backend.Get(v)
 	if err != nil {
 		return fail(err)
 	}
 	sha := r.AppliedInputHash
 	if !cur.Found {
-		want, err := prepareVolume(v)
-		if err != nil {
-			return fail(err)
-		}
 		if v.Spec.Source != nil {
-			sha, err = a.createVolumeFromImage(r, v, want)
+			sha, err = a.createVolumeFromImage(r, v)
 		} else {
-			err = a.hv.CreateVolume(v.Spec.Libvirt.Pool, want)
+			err = backend.Create(v, nil)
 		}
 		if err != nil {
 			return fail(err)
 		}
-		a.logger.Info("created", "kind", kindVolume, "key", v.Name, "pool", v.Spec.Libvirt.Pool)
-		if cur, err = a.hv.Volume(v.Spec.Libvirt.Pool, v.Name); err != nil {
+		a.logger.Info("created", "kind", kindVolume, "key", v.Name)
+		if cur, err = backend.Get(v); err != nil {
 			return fail(err)
 		}
 	}
@@ -274,7 +271,58 @@ func (a *Agent) applyVolume(r state.Record, v *computev1alpha1.LibvirtStorageVol
 	if v.Spec.Source != nil {
 		status.Image, status.SHA256 = v.Spec.Source.Image, sha
 	}
+	if v.Spec.Size != nil {
+		if err := a.growVolume(v, cur, uint64(v.Spec.Size.Value())); err != nil {
+			return fail(err)
+		}
+		if cur, err = backend.Get(v); err != nil {
+			return fail(err)
+		}
+		status.Capacity = int64(cur.Capacity)
+	}
 	return status, nil
+}
+
+// growVolume 决定卷要不要扩容，怎么扩由后端决定。实例运行中时以它看到的容量判断：设备已扩大、实例还没
+// 看到时（中途失败），下一轮能继续。
+func (a *Agent) growVolume(v *computev1alpha1.LibvirtStorageVolume, cur Volume, want uint64) error {
+	domain, err := a.runningDomainOf(v.Name)
+	if err != nil {
+		return err
+	}
+	current := cur.Capacity
+	if domain != "" {
+		if current, err = a.hv.BlockCapacity(domain, cur.Path); err != nil {
+			return err
+		}
+	}
+	if current >= want {
+		return nil
+	}
+	a.logger.Info("growing volume", "volume", v.Name, "domain", domain, "bytes", want)
+	return a.volumes().Grow(v, cur, want, domain)
+}
+
+// runningDomainOf 返回本节点上正在使用该卷的实例在 libvirt 中的名字；没有时为空。
+func (a *Agent) runningDomainOf(volume string) (string, error) {
+	for _, r := range a.store.List(kindDomain) {
+		var d computev1alpha1.LibvirtDomain
+		if err := json.Unmarshal(r.Object, &d); err != nil {
+			return "", err
+		}
+		if !slices.ContainsFunc(d.Spec.Disks, func(disk computev1alpha1.DomainDisk) bool { return disk.Volume == volume }) {
+			continue
+		}
+		name := domainName(d.Namespace, d.Name)
+		cur, err := a.hv.Domain(name)
+		if err != nil {
+			return "", err
+		}
+		if cur.Running() {
+			return name, nil
+		}
+	}
+	return "", nil
 }
 
 // removeVolume 按 reclaimPolicy 处理已删除的卷对象。Delete 时，本节点上仍有实例（包括待清理的）引用它
@@ -299,7 +347,7 @@ func (a *Agent) removeVolume(r state.Record) (bool, error) {
 			}
 		}
 	}
-	return true, a.hv.DeleteVolume(v.Spec.Libvirt.Pool, v.Name)
+	return true, a.volumes().Delete(&v)
 }
 
 // define 在需要时下发 want，并记录输入与读回配置的 hash。read 返回对象的现状（持久配置）。
@@ -353,11 +401,11 @@ func (a *Agent) resolveVolume(name string) (Volume, error) {
 		if err := json.Unmarshal(r.Object, &v); err != nil {
 			return Volume{}, err
 		}
-		cur, err := a.hv.Volume(v.Spec.Libvirt.Pool, name)
+		cur, err := a.volumes().Get(&v)
 		if err == nil && !cur.Found {
 			err = errors.New("volume not created yet")
 		}
-		return Volume{Path: cur.Path, Block: cur.Block, Format: cur.Format}, err
+		return cur, err
 	}
 	return Volume{}, errors.New("no such volume on this node")
 }

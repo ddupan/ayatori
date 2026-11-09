@@ -134,7 +134,7 @@ func fetchImage(ctx context.Context, source computev1alpha1.ImageHTTPSource, kin
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s: %s", source.URL, resp.Status)
 	}
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644) //nolint:gosec // 镜像不是机密，QEMU 以 libvirt-qemu 用户读取
 	if err != nil {
 		return err
 	}
@@ -184,10 +184,10 @@ func (a *Agent) localImage(name string, kind computev1alpha1.ImageType) (state.R
 	return state.Record{}, nil, fmt.Errorf("no such image on this node: %s", name)
 }
 
-// createVolumeFromImage 由 libvirt 把副本完整复制成新卷，并按 volume XML 转换格式。副本与 spec 不一致时
+// createVolumeFromImage 由后端把副本完整复制成新卷。副本与 spec 不一致时
 // 等待，不悄悄用旧版本。版本先于创建写入本地状态：创建后崩溃也不会丢。返回复制的版本。
 // ponytail: 复制在 reconcile 循环中同步进行，大镜像会推迟其他对象的收敛；成为问题时放到后台。
-func (a *Agent) createVolumeFromImage(r state.Record, v *computev1alpha1.LibvirtStorageVolume, xml string) (string, error) {
+func (a *Agent) createVolumeFromImage(r state.Record, v *computev1alpha1.LibvirtStorageVolume) (string, error) {
 	ir, img, err := a.localImage(v.Spec.Source.Image, computev1alpha1.ImageDisk)
 	if err != nil {
 		return "", err
@@ -199,11 +199,7 @@ func (a *Agent) createVolumeFromImage(r state.Record, v *computev1alpha1.Libvirt
 	if err := a.store.Update(r.Kind, r.Key, func(rec *state.Record) { rec.AppliedInputHash = want }); err != nil {
 		return "", err
 	}
-	capacity, err := volumeCapacity(xml)
-	if err != nil {
-		return "", err
-	}
-	return want, a.hv.CreateVolumeFrom(v.Spec.Libvirt.Pool, xml, img.Spec.Pool, img.Name, capacity)
+	return want, a.volumes().Create(v, img)
 }
 
 // resolveDisk 找到 domain 一块盘在本节点的路径。ISO 只要求已有副本：更新在途时已有实例不受影响。
