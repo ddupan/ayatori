@@ -55,6 +55,8 @@ jobs:
 
       - name: Set up Go
         uses: ./.gitea/actions/setup-go
+        with:
+          lint: 'true'
 
       - name: Lint
         run: make lint
