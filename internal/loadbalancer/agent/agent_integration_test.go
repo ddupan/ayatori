@@ -142,7 +142,8 @@ func freePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-// startRouter 在进程内运行作为对端的 GoBGP（模拟 VyOS：被动，接受全部路径）。
+// startRouter 在进程内运行作为对端的 GoBGP（模拟 VyOS：被动，接受全部路径，与 FRR 默认一样是
+// graceful restart helper）。
 func startRouter(t *testing.T, port int) *server.BgpServer {
 	t.Helper()
 	router := server.NewBgpServer()
@@ -155,13 +156,18 @@ func startRouter(t *testing.T, port int) *server.BgpServer {
 	}
 	if err := router.AddPeer(t.Context(), &api.AddPeerRequest{Peer: &api.Peer{
 		Conf: &api.PeerConf{NeighborAddress: loopback, PeerAsn: 65100}, Transport: &api.Transport{PassiveMode: true},
+		GracefulRestart: &api.GracefulRestart{Enabled: true, HelperOnly: true},
+		AfiSafis: []*api.AfiSafi{{
+			Config:            &api.AfiSafiConfig{Family: &api.Family{Afi: api.Family_AFI_IP, Safi: api.Family_SAFI_UNICAST}, Enabled: true},
+			MpGracefulRestart: &api.MpGracefulRestart{Config: &api.MpGracefulRestartConfig{Enabled: true}},
+		}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	return router
 }
 
-// received 返回对端从会话收到的 /32。
+// received 返回对端从会话收到的 /32，值为路径是否 stale（graceful restart 中保留的旧路径）。
 func received(t *testing.T, router *server.BgpServer) map[netip.Addr]bool {
 	t.Helper()
 	got := map[netip.Addr]bool{}
@@ -170,7 +176,7 @@ func received(t *testing.T, router *server.BgpServer) map[netip.Addr]bool {
 			prefix := netip.MustParsePrefix(nlri.String())
 			for _, p := range paths {
 				if p.PeerAddress.IsValid() {
-					got[prefix.Addr()] = true
+					got[prefix.Addr()] = p.Stale
 				}
 			}
 		}); err != nil {
@@ -196,7 +202,7 @@ func receives(t *testing.T, router *server.BgpServer, want ...netip.Addr) func()
 			return false
 		}
 		for _, addr := range want {
-			if !got[addr] {
+			if _, ok := got[addr]; !ok {
 				return false
 			}
 		}
@@ -238,13 +244,15 @@ func (f *fakeVIPs) refuse(vip netip.Addr, refused bool) {
 	f.refused[vip] = refused
 }
 
-func startAgent(t *testing.T, port int, vips agent.VIPs) (*agent.Agent, context.CancelFunc) {
+// startAgent 中 gracefulRestart 为零时不开启 graceful restart。
+func startAgent(t *testing.T, port int, vips agent.VIPs, gracefulRestart time.Duration) (*agent.Agent, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	a, err := agent.New(ctx, agent.Config{
 		ASN: 65100, RouterID: routerID, VIPPool: vipPool, HAProxySocket: socket,
-		Neighbors: []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
-		Interval:  metav1.Duration{Duration: 200 * time.Millisecond},
+		Neighbors:           []agent.Neighbor{{Address: loopback, ASN: 65002, Port: uint32(port)}},
+		GracefulRestartTime: metav1.Duration{Duration: gracefulRestart},
+		Interval:            metav1.Duration{Duration: 200 * time.Millisecond},
 	}, vips, prometheus.NewRegistry(), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +299,7 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 	router := startRouter(t, port)
 	vips := newFakeVIPs()
 	top := t
-	a, stopAgent := startAgent(t, port, vips)
+	a, stopAgent := startAgent(t, port, vips, 0)
 
 	waitFor(t, "后端全部失败时仍宣告 VIP 段内的全部 VIP", receives(t, router, vip, another))
 	waitFor(t, "status 报告两个 VIP 都已发给路由器", reports(t, a, true, map[netip.Addr]loadbalancer.Reason{vip: "", another: ""}))
@@ -334,7 +342,7 @@ func TestAgentAnnouncesFromHAProxy(t *testing.T) {
 		stopAgent()
 		waitFor(t, "agent 停止后对端撤回全部路径", receives(t, router))
 		// 用外层 t：subtest 的 Cleanup 会在 subtest 结束时停掉 agent，后面的 subtest 就验证不到它。
-		a, stopAgent = startAgent(top, port, vips)
+		a, stopAgent = startAgent(top, port, vips, 0)
 		waitFor(t, "重启后补回", receives(t, router, vip, another))
 	})
 
