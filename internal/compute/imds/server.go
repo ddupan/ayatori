@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	tokenHeader    = "X-aws-ec2-metadata-token"
-	tokenTTLHeader = "X-aws-ec2-metadata-token-ttl-seconds"
+	tokenHeader    = "X-aws-ec2-metadata-token"             //nolint:gosec // header 名，不是凭据
+	tokenTTLHeader = "X-aws-ec2-metadata-token-ttl-seconds" //nolint:gosec // header 名，不是凭据
 	maxTokenTTL    = 6 * time.Hour
 )
 

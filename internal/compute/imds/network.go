@@ -109,7 +109,7 @@ func applyRules(rules string) error {
 func setupAddress() error {
 	link, err := netlink.LinkByName(dummyLink)
 	if errors.As(err, new(netlink.LinkNotFoundError)) {
-		if err := netlink.LinkAdd(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: dummyLink}}); err != nil {
+		if err := netlink.LinkAdd(&netlink.Dummy{Name: dummyLink}); err != nil {
 			return fmt.Errorf("add %s: %w", dummyLink, err)
 		}
 		link, err = netlink.LinkByName(dummyLink)

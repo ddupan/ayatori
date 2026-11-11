@@ -13,6 +13,8 @@ import (
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
 )
 
+const ns, ct = "infra", "ct1"
+
 func TestReadPorts(t *testing.T) {
 	dir := t.TempDir()
 	store, err := state.Open(dir)
@@ -26,13 +28,13 @@ func TestReadPorts(t *testing.T) {
 		}
 	}
 	const vmUID, ctUID = "11111111-0000-4000-8000-000000000001", "22222222-0000-4000-8000-000000000002"
-	put("LibvirtDomain", "infra/vm1", vmUID, computev1alpha1.LibvirtDomain{Namespace: "infra", Name: "vm1", UID: vmUID,
+	put("LibvirtDomain", ns+"/vm1", vmUID, computev1alpha1.LibvirtDomain{Namespace: ns, Name: "vm1", UID: vmUID,
 		Spec: computev1alpha1.LibvirtDomainSpec{NodeName: "n1", Interfaces: []computev1alpha1.DomainInterface{{Network: "a"}, {Network: "b"}}}})
-	put("LXCContainer", "infra/ct1", ctUID, computev1alpha1.LXCContainer{Namespace: "infra", Name: "ct1", UID: ctUID,
+	put("LXCContainer", ns+"/"+ct, ctUID, computev1alpha1.LXCContainer{Namespace: ns, Name: ct, UID: ctUID,
 		Spec: computev1alpha1.LXCContainerSpec{NodeName: "n1", Networks: []computev1alpha1.ContainerNetwork{{Network: "a"}}}})
-	put("LXCContainer", "infra/gone", "33333333-0000-4000-8000-000000000003", computev1alpha1.LXCContainer{
+	put("LXCContainer", ns+"/gone", "33333333-0000-4000-8000-000000000003", computev1alpha1.LXCContainer{
 		Spec: computev1alpha1.LXCContainerSpec{Networks: []computev1alpha1.ContainerNetwork{{Network: "a"}}}})
-	if err := store.MarkDeleted("LXCContainer", "infra/gone"); err != nil {
+	if err := store.MarkDeleted("LXCContainer", ns+"/gone"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +42,7 @@ func TestReadPorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
+	got := make([]string, 0, len(ports))
 	for _, p := range ports {
 		got = append(got, p.Name+"="+p.Instance.Kind+":"+p.Instance.Namespace+"/"+p.Instance.Name+"@"+p.Instance.Node)
 	}
@@ -68,7 +70,7 @@ func TestRenderRules(t *testing.T) {
 
 func TestHandler(t *testing.T) {
 	now := time.Unix(1000, 0)
-	h := newHandler(Instance{Kind: "LXCContainer", Namespace: "infra", Name: "ct1", UID: "uid-1", Node: "n1"})
+	h := newHandler(Instance{Kind: "LXCContainer", Namespace: ns, Name: ct, UID: "uid-1", Node: "n1"})
 	h.now = func() time.Time { return now }
 	do := func(method, path string, header map[string]string) (int, string) {
 		r := httptest.NewRequest(method, path, nil)
@@ -102,8 +104,8 @@ func TestHandler(t *testing.T) {
 	auth := map[string]string{tokenHeader: token}
 	for path, want := range map[string]string{
 		"/latest/meta-data/instance-id":    "uid-1",
-		"/latest/meta-data/local-hostname": "ct1",
-		"/latest/meta-data/namespace":      "infra",
+		"/latest/meta-data/local-hostname": ct,
+		"/latest/meta-data/namespace":      ns,
 		"/latest/meta-data/node":           "n1",
 	} {
 		if code, body := do(http.MethodGet, path, auth); code != http.StatusOK || body != want {
