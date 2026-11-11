@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -201,7 +200,7 @@ func New(ctx context.Context, config Config, vips VIPs, registry prometheus.Regi
 // Run 先按本机 HAProxy 现状收敛一轮宣告，再加入控制面（ADR-0022）：控制面不可用、证书尚未签发时
 // 宣告照常。
 func (a *Agent) Run(ctx context.Context) {
-	defer func() { a.speaker.Stop(systemRunning()) }()
+	defer a.speaker.Stop()
 	defer a.stopCredentials()
 	ticker := time.NewTicker(a.config.Interval.Duration)
 	defer ticker.Stop()
@@ -317,18 +316,6 @@ func (a *Agent) StatusHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(a.Status())
 	})
-}
-
-// systemRunning 报告系统是否在正常运行（而不是在关机）：只有这时退出才可能是重启，值得让路由器
-// 保留本机路径。关机时 HAProxy 随后也会停止，保留只会让流量在 restart time 内被拒绝；查询失败
-// 同样按关机处理。
-func systemRunning() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	// 非 running 时退出码非零，结论只看输出。
-	out, _ := exec.CommandContext(ctx, "systemctl", "is-system-running").Output()
-	state := strings.TrimSpace(string(out))
-	return state == "running" || state == "degraded"
 }
 
 func boolGauge(value bool) float64 {

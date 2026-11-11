@@ -167,17 +167,9 @@ func (s *Speaker) Established(ctx context.Context) (map[string]bool, error) {
 	return peers, err
 }
 
-// Stop 断开会话。retain 且开启了 graceful restart 时不发 NOTIFICATION：按 RFC 4724，收到
-// NOTIFICATION 的路由器会立即撤回本机路径，只有直接断开的会话才进入保留。
-func (s *Speaker) Stop(retain bool) {
-	if retain && s.config.GracefulRestartTime.Duration > 0 {
-		if err := s.server.StopBgp(context.Background(), &api.StopBgpRequest{AllowGracefulRestart: true}); err != nil {
-			slog.Error("停止 BGP 失败", "error", err)
-		}
-		return
-	}
-	s.server.Stop()
-}
+// Stop 发出 NOTIFICATION 后断开会话，路由器立即撤回本机路径，开启 graceful restart 时也一样。
+// 只有不经 Stop 的断开（进程被杀、崩溃）才让路由器保留路径；升级时有意以 SIGKILL 重启（ADR-0025）。
+func (s *Speaker) Stop() { s.server.Stop() }
 
 // path 以 0.0.0.0 为 next-hop，GoBGP 在 eBGP 宣告时改写为会话的本地地址。
 func path(vip netip.Addr) *apiutil.Path {
