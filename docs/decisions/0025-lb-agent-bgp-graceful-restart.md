@@ -103,8 +103,10 @@ lb-dev-2 上，所以动作都在 lb-dev-2 上执行。restart time 为 30s。
 
 ## 待验证
 
-- [ ] 集成测试：GoBGP 作为 helper 路由器，覆盖 SIGKILL 式断开时保留、restart time 到期撤回、
-      `Stop` 时立即撤回，以及先填 RIB 再连接（不发空的 End-of-RIB）。
+- [x] 集成测试（`TestAgentGracefulRestart`）：GoBGP 作为 helper 路由器，覆盖 SIGKILL 式断开时保留、
+      restart time 到期撤回、`Stop` 时立即撤回，以及重启期间路由器不撤回任何路径。「先填 RIB 再
+      连接」本身测不出来：GoBGP 首次主动连接前有延迟，去掉连接前的那次收敛测试照样通过；这个顺序
+      只是不依赖该延迟的保证。
 - [ ] cookbook 写入 `gracefulRestartTime`，升级时以 SIGKILL 重启 agent；在 Dev 与 Prod 的 policy
       中开启。
 - [ ] Prod 上逐台验证一次 J 组。
