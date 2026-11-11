@@ -9,11 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	golxc "github.com/lxc/go-lxc"
+	"golang.org/x/sys/unix"
 )
 
 const (
+	// ext4IocResizeFS 是 EXT4_IOC_RESIZE_FS，即 _IOW('f', 16, __u64)；x/sys 没有定义。
+	ext4IocResizeFS = 0x40086610
+
 	configFile      = "config"
 	startTimeout    = 30 * time.Second
 	shutdownTimeout = 30 * time.Second
@@ -89,6 +94,55 @@ func (c *Client) Start(name string) error {
 	}
 	if !ct.Wait(golxc.RUNNING, startTimeout) {
 		return fmt.Errorf("container did not reach RUNNING within %s (see %s)", startTimeout, log)
+	}
+	return nil
+}
+
+// GrowRootfs 在线扩大运行中容器的 ext4 rootfs（ADR-0019 §7）。loop 设备先刷新容量。文件系统只挂载在容器的 mount
+// namespace 里，宿主机上的 resize2fs 看不到它已挂载，可能按离线方式改写；所以经 /proc/<pid>/root 打开容器的根目录，
+// 直接发 resize2fs 在线时用的 ioctl。
+func (c *Client) GrowRootfs(name, rootfs string, blocks uint64) error {
+	ct, err := golxc.NewContainer(name, c.path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ct.Release() }()
+	pid := ct.InitPid()
+	if pid <= 0 {
+		return fmt.Errorf("container %s has no init process", name)
+	}
+	if err := refreshLoop(rootfs); err != nil {
+		return err
+	}
+	root, err := os.Open(fmt.Sprintf("/proc/%d/root", pid)) //nolint:gosec // 路径由 init 的 pid 拼出
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, root.Fd(), ext4IocResizeFS, uintptr(unsafe.Pointer(&blocks))); errno != 0 { //nolint:gosec // ioctl 的参数必须是指针
+		return fmt.Errorf("EXT4_IOC_RESIZE_FS: %w", errno)
+	}
+	return nil
+}
+
+// refreshLoop 让挂着 backing 文件的 loop 设备重新读取文件大小；块设备 rootfs 没有 loop，什么也不做。
+func refreshLoop(backing string) error {
+	files, err := filepath.Glob("/sys/block/loop*/loop/backing_file")
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file) //nolint:gosec // 路径来自上面固定的 glob
+		if err != nil || strings.TrimSpace(string(data)) != backing {
+			continue
+		}
+		dev := filepath.Join("/dev", filepath.Base(filepath.Dir(filepath.Dir(file))))
+		f, err := os.Open(dev) //nolint:gosec // 同上
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		return unix.IoctlSetInt(int(f.Fd()), unix.LOOP_SET_CAPACITY, 0) //nolint:gosec // 文件描述符不会溢出 int
 	}
 	return nil
 }

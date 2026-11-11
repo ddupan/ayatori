@@ -76,6 +76,8 @@ func (f *fakeContainers) Remove(name string) error {
 	return nil
 }
 
+func (f *fakeContainers) GrowRootfs(string, string, uint64) error { return nil }
+
 func (f *fakeContainers) set(name, state string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
