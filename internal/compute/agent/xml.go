@@ -11,6 +11,7 @@ import (
 	"libvirt.org/go/libvirtxml"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
+	"go.ddupan.top/ayatori/internal/compute/naming"
 )
 
 // formatRaw 是 libvirt 的 raw 卷格式。
@@ -27,13 +28,6 @@ type Volume struct {
 
 // domainName 是实例在 libvirt 中的名字。Kubernetes 的名字里不会出现 "_"，因此不会与别的对象冲突。
 func domainName(namespace, name string) string { return namespace + "_" + name }
-
-// portName 是实例第 i 块网卡在宿主机上的端口名。固定下来，按端口写的 nftables 规则（元数据服务）
-// 在冷启动后仍然有效；Linux 接口名最长 15 字符（ADR-0016）。
-// ponytail: 取 UID 前 8 个十六进制字符，同一节点上的实例碰撞概率可忽略；规模变大时改用节点内分配。
-func portName(uid string, i int) string {
-	return fmt.Sprintf("ay%sn%d", strings.ReplaceAll(uid, "-", "")[:8], i)
-}
 
 // macAddress 是实例第 i 块网卡缺省的 MAC：由 UID 稳定生成，冷启动换节点后不变（DHCP 预留依赖它）。
 // ponytail: 只有 24 位随机部分，homelab 规模下碰撞可忽略；规模变大时改用集中分配。
@@ -132,7 +126,7 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha
 			Source: &libvirtxml.DomainInterfaceSource{Network: &libvirtxml.DomainInterfaceSourceNetwork{Network: nic.Network}},
 			MAC:    &libvirtxml.DomainInterfaceMAC{Address: mac},
 			Model:  &libvirtxml.DomainInterfaceModel{Type: cmp.Or(nic.Model, "virtio")},
-			Target: &libvirtxml.DomainInterfaceTarget{Dev: portName(string(d.UID), i)},
+			Target: &libvirtxml.DomainInterfaceTarget{Dev: naming.PortName(string(d.UID), i)},
 		})
 	}
 	return dom.Marshal()
