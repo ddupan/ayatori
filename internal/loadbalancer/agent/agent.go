@@ -31,6 +31,9 @@ type Config struct {
 	ASN       uint32     `json:"asn"`
 	RouterID  string     `json:"routerID"`
 	Neighbors []Neighbor `json:"neighbors"`
+	// GracefulRestartTime 非零时开启 BGP graceful restart（RFC 4724，ADR-0025）：agent 重启期间路由器
+	// 保留本机宣告，超过这个时间仍未恢复才撤回。主机失联不受它影响，仍由 hold timer 决定。
+	GracefulRestartTime metav1.Duration `json:"gracefulRestartTime,omitempty"`
 	// VIPPool 是本环境的 VIP 段；只有 bind 地址在段内的 frontend 参与宣告。
 	VIPPool       string `json:"vipPool"`
 	HAProxySocket string `json:"haproxySocket"`
@@ -202,6 +205,10 @@ func (a *Agent) Run(ctx context.Context) {
 	ticker := time.NewTicker(a.config.Interval.Duration)
 	defer ticker.Stop()
 	a.reconcile(ctx)
+	if err := a.speaker.Connect(ctx); err != nil {
+		a.logger.Error("连接 BGP 邻居失败", "error", err)
+		return
+	}
 	if a.restConfig != nil {
 		go a.register(ctx)
 	}

@@ -13,12 +13,15 @@ import (
 )
 
 // Speaker 是进程内的 GoBGP：本机唯一的 BGP speaker，只有本进程能增删路径，不开放 gRPC。
-// 路径只存在于进程内，进程退出即会话断开，路由器撤回本机全部路径。
+// 路径只存在于进程内，进程退出即会话断开；未开 graceful restart 时路由器随即撤回本机全部路径，
+// 开启时路由器保留它们直到 restart time 到期或本机重连后发出 End-of-RIB。
 type Speaker struct {
 	server *server.BgpServer
+	config Config
 }
 
-// StartSpeaker 建立到各邻居的会话。只主动连接（不监听 179）：路由器侧为 passive。
+// StartSpeaker 启动 speaker 但不连接邻居：本地 RIB 先按 HAProxy 现状填好再 Connect，
+// 否则重连后可能先发出空的 End-of-RIB，路由器随之删掉保留的路径。
 //
 // 全局 import 与 export 都只接受 VIP 段内的 /32、默认拒绝：export 是宣告的最后一道过滤；
 // GoBGP 的全局 import 策略也作用于本机添加的路径，所以 import 不能是单纯的 reject。
@@ -28,7 +31,7 @@ func StartSpeaker(ctx context.Context, config Config, logger *slog.Logger) (*Spe
 	level.Set(slog.LevelWarn)
 	s := server.NewBgpServer(server.LoggerOption(logger, level))
 	go s.Serve()
-	speaker := &Speaker{server: s}
+	speaker := &Speaker{server: s, config: config}
 	if err := speaker.configure(ctx, config); err != nil {
 		s.Stop()
 		return nil, err
@@ -63,10 +66,26 @@ func (s *Speaker) configure(ctx context.Context, config Config) error {
 			return fmt.Errorf("assign policy: %w", err)
 		}
 	}
-	for _, neighbor := range config.Neighbors {
+	return nil
+}
+
+// Connect 建立到各邻居的会话。只主动连接（不监听 179）：路由器侧为 passive。
+//
+// 开启 graceful restart 时每次启动都以 restarting 身份连接：路由器若保留着上一个进程的路径，
+// 会等本机的 End-of-RIB 再替换；GoBGP 在收到路由器的 End-of-RIB（或 deferral 到期）后才发出本机路径。
+func (s *Speaker) Connect(ctx context.Context) error {
+	restart := uint32(s.config.GracefulRestartTime.Seconds())
+	for _, neighbor := range s.config.Neighbors {
 		peer := &api.Peer{Conf: &api.PeerConf{NeighborAddress: neighbor.Address, PeerAsn: neighbor.ASN}}
 		if neighbor.Port != 0 {
 			peer.Transport = &api.Transport{RemotePort: neighbor.Port}
+		}
+		if restart > 0 {
+			peer.GracefulRestart = &api.GracefulRestart{Enabled: true, RestartTime: restart, DeferralTime: 10, LocalRestarting: true}
+			peer.AfiSafis = []*api.AfiSafi{{
+				Config:            &api.AfiSafiConfig{Family: &api.Family{Afi: api.Family_AFI_IP, Safi: api.Family_SAFI_UNICAST}, Enabled: true},
+				MpGracefulRestart: &api.MpGracefulRestart{Config: &api.MpGracefulRestartConfig{Enabled: true}},
+			}}
 		}
 		if err := s.server.AddPeer(ctx, &api.AddPeerRequest{Peer: peer}); err != nil {
 			return fmt.Errorf("add neighbor %s: %w", neighbor.Address, err)
@@ -148,6 +167,8 @@ func (s *Speaker) Established(ctx context.Context) (map[string]bool, error) {
 	return peers, err
 }
 
+// Stop 发出 NOTIFICATION 后断开会话，路由器立即撤回本机路径，开启 graceful restart 时也一样。
+// 只有不经 Stop 的断开（进程被杀、崩溃）才让路由器保留路径；升级时有意以 SIGKILL 重启（ADR-0025）。
 func (s *Speaker) Stop() { s.server.Stop() }
 
 // path 以 0.0.0.0 为 next-hop，GoBGP 在 eBGP 宣告时改写为会话的本地地址。
