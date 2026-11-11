@@ -20,6 +20,8 @@ type ContainerRuntime interface {
 	Define(name, config string) error
 	Start(name string) error
 	Remove(name string) error
+	// GrowRootfs 在线把运行中容器的 ext4 rootfs 扩大到 blocks 个块。
+	GrowRootfs(name, rootfs string, blocks uint64) error
 }
 
 // prepareContainer 把 rootfs 与 networks 渲染进原生配置（ADR-0015）。这些键归 Ayatori，config 中出现就拒绝，
@@ -119,6 +121,10 @@ func (a *Agent) applyContainer(c *computev1alpha1.LXCContainer) (computev1alpha1
 	cur, err := a.Containers.Container(name)
 	if err != nil {
 		return fail(err)
+	}
+	if err := a.growRootfs(name, rootfs, cur); err != nil {
+		status.State = cur.State
+		return fail(fmt.Errorf("grow rootfs: %w", err))
 	}
 	if cur.Stopped() && shouldRun {
 		if err := a.Containers.Start(name); err != nil {

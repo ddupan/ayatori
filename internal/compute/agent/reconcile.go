@@ -90,6 +90,7 @@ func (a *Agent) collectDomainStats(seen map[objectID]bool) {
 			snapshot = append(snapshot, instanceStats{id.namespace, id.name, s})
 		}
 	}
+	snapshot = append(snapshot, a.collectContainerStats(seen)...)
 	a.metrics.domains.snapshot.Store(&snapshot)
 }
 

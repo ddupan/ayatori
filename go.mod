@@ -5,6 +5,7 @@ go 1.27.4
 require (
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-logr/logr v1.4.4
+	github.com/google/go-cmp v0.7.0
 	github.com/int128/oauth2cli v1.18.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/joeig/go-powerdns/v3 v3.24.0

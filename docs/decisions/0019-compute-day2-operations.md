@@ -175,7 +175,9 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
   `virConnectGetAllDomainStats` 和 LXC 的 cgroup 导出，实例名同样使用 `name` 标签。不另装 libvirt
   exporter，因为它不覆盖 LXC，标签也不一致。VM 部分为 `ayatori_compute_agent_domain_cpu_seconds_total`、
   `_memory_bytes{type=current|maximum|rss}`、`_disk_{read,written}_bytes_total{device}`、
-  `_network_{receive,transmit}_bytes_total{device}`；只导出运行中的实例。
+  `_network_{receive,transmit}_bytes_total{device}`；只导出运行中的实例。LXC 的用量来自 cgroup v2 的
+  `lxc.payload.<实例>` 与宿主机侧 veth，使用同一组指标：`memory_bytes` 的 `current` 是 cgroup 记账的内存（含页缓存，
+  与 VM 的 balloon 语义不同），`maximum` 是 `memory.max`（无限制时缺项），`rss` 是匿名内存。
 - 节点 journald 中 drbd-reactor、Agent 和监管进程的日志接入集中日志，补上现有 PVE 节点 journald
   未采集的缺口。
 
@@ -184,7 +186,9 @@ ADR-0015 和 ADR-0020 的告警只覆盖 HA。换掉 PVE 后，现有的 pve-exp
 - `LibvirtStorageVolume` 的 `size` 只允许增大，用 CEL `self >= oldSelf` 校验。
 - 由 controller（LINSTOR 卷）或 Agent（本地 pool，`vol-resize`）扩大卷。实例运行中时，Agent 调用
   `virDomainBlockResize` 让客户机看到新容量；客户机内的分区和文件系统扩展由客户机自己完成，例如
-  cloud-init 的 growpart。LXC 的 ext4 rootfs 由 Agent 在线执行 `resize2fs`。
+  cloud-init 的 growpart。LXC 的 ext4 rootfs 由 Agent 扩大：运行中刷新 loop 设备容量后，经 `/proc/<pid>/root` 对
+  容器的根目录发 `EXT4_IOC_RESIZE_FS`（`resize2fs` 在线时用的 ioctl）。不在宿主机执行 `resize2fs`：文件系统只挂载在
+  容器的 mount namespace 里，宿主机上看不到它已挂载。容器停止时用 `e2fsck` 与 `resize2fs`。
 - `size` 优先于 volume XML 中的 capacity，也可以不写 XML 只写 `size`。libvirt 的 `logical` pool 不支持改变卷
   容量（已在 compute-dev1 验证），这类卷扩容时报错并写入 status，Agent 不代为执行 `lvextend`。
 - 节点上对卷的操作经固定的后端接口（`volumeBackend`：读取、创建或从镜像复制、扩容、删除）。各后端的扩容方式
