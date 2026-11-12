@@ -16,7 +16,8 @@ concurrency:
 
 jobs:
   security-scan:
-    runs-on: [self-hosted, pod]
+    # 云端池（GKE Autopilot）：扫描器直接装在 runner 上，不需要 Docker 和内网。
+    runs-on: [cloud]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,4 +27,5 @@ jobs:
       - name: Security scan
         uses: https://git.ddupan.top/panxiao81/ci-actions/security-scan@v1
         with:
+          cloud: 'true'
           semgrep-config: p/default p/golang
