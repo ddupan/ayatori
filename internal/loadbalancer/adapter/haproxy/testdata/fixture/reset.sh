@@ -5,6 +5,7 @@ set -e
 cp /fixture/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
 rm -rf /tmp/haproxy-transactions
 kill -USR2 "$(cat /var/run/haproxy.pid)"
-old=$(pgrep -x dataplaneapi)
+# -o：dataplaneapi 执行 reload 命令时，fork 出的子进程在 exec 前也叫 dataplaneapi。
+old=$(pgrep -o -x dataplaneapi)
 kill "$old"
 while kill -0 "$old" 2>/dev/null; do sleep 0.1; done
