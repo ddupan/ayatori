@@ -246,11 +246,11 @@ metricsAddress: 10.60.0.30:9641
 # 以下加入控制面（ADR-0022）；不写 nodeName 时只在本机宣告。
 nodeName: lb-1
 credentialsDir: /etc/ayatori/lb-agent   # 部署方写入 bootstrap-kubeconfig；kubeconfig 二选一，用于开发
-dataPlane:                              # 在本机收敛（ADR-0022）；与 manager 远程收敛二选一
-  url: http://127.0.0.1:5555
-  username: ayatori-agent
-  passwordFile: /etc/ayatori/lb-agent/dataplane-password
-  connectTimeout: 5s                    # 与 --loadbalancer-connect-timeout 相同含义
+dataPlane:                              # 在本机收敛（ADR-0022）：只经 loopback 访问本机 Data Plane API
+  url: http://127.0.0.1:5556
+  username: lb-agent
+  passwordFile: /etc/ayatori/lb-agent-dataplane.password
+  connectTimeout: 5s                    # 代理连接后端的超时
 ```
 
 ## 状态
@@ -329,18 +329,17 @@ LB 主机部署（homelab-infra）须保证：
 | 参数 | 含义 |
 | --- | --- |
 | `--loadbalancer-address-pool` | VIP 池；为空时不启用 LoadBalancer |
-| `--loadbalancer-credentials=<namespace>/<name>` | 为空时只分配 VIP；凭据 Secret：`username`/`password`（Data Plane API Basic）、`tls.crt`/`tls.key`/`ca.crt`（Data Plane API 的 mTLS）与 `powerdns-api-key`（维护 Hostname 时使用） |
-| `--loadbalancer-connect-timeout`、`--loadbalancer-resolvers` | 代理连接后端超时；DNS endpoint 的 resolvers section |
-| `--loadbalancer-agent-convergence` | 代理配置由各主机的 agent 在本机收敛（ADR-0022）：manager 不连接主机，按 LoadBalancerHost 的 `status.loadBalancers[]` 判定 Attachment（摘要与期望一致才算写入完成）与 endpoint 健康；删除 LoadBalancer 等全部 agent 报告已清除，删除 LoadBalancerHost 等 agent 报告 `Purged`。凭据 Secret 只用于 PowerDNS API key。与远程收敛按环境整体切换 |
+| `--loadbalancer-credentials=<namespace>/<name>` | 凭据 Secret，只有 `powerdns-api-key`（维护 Hostname 时使用） |
+| `--loadbalancer-agent-convergence` | 已废弃，只能为 `true`（默认），下一个 minor 删除 |
 | `--loadbalancer-agent-stale-after`（默认 1m） | agent 的 Lease 超过此值未续约即 `AgentReady=Unknown`（`AgentStale`） |
 | `--loadbalancer-dns-url`、`--loadbalancer-dns-zone` | PowerDNS API 与独占 zone；同时设置时维护 Hostname，API key 取凭据 Secret 的 `powerdns-api-key` |
 
+代理配置由各主机的 agent 在本机收敛（ADR-0022）：manager 不连接主机，按 LoadBalancerHost 的
+`status.loadBalancers[]` 判定 Attachment（摘要与期望一致才算写入完成）与 endpoint 健康；删除
+LoadBalancer 等全部 agent 报告已清除，删除 LoadBalancerHost 等 agent 报告 `Purged`。
+
 凭据 Secret 由部署 role 的 `deploy/flux/loadbalancer` 以 ExternalSecret 从 OpenBao 同步到 controller
-namespace（见 `deploy/README.md`）。客户端证书由各环境独立的根 `pki-loadbalancer-<env>` 签发（3 天寿命，ESO 每天重签），
-manager 每分钟从 Secret 刷新、每次 TLS 握手取最新证书，轮换无需重启；刷新失败时沿用上一张。
-服务端 CA 与 Basic 凭据只在启动时读取：CA 是寿命 10 年的内部根，轮换时重启 manager。
-LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署，须以 `<hostname>.lab.ddupan.top`
-访问（ACME 证书只有 DNS SAN）。
+namespace（见 `deploy/README.md`）。LB 主机由 homelab-cookbooks 的 `homelab_loadbalancer` 部署。
 
 ## 待评审
 

@@ -6,8 +6,8 @@ import (
 
 // LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
 type LoadBalancerHostSpec struct {
-	// DataPlaneURL 是该主机 Data Plane API 的 HTTPS 地址，controller 以 mTLS 与 Basic 凭据访问。
-	// ponytail: 迁移期间 manager 仍远程收敛时使用（ADR-0022「下线与迁移」）；agent 在本机收敛后删除。
+	// DataPlaneURL 已废弃、不再使用：manager 不再连接 LB 主机（ADR-0022）。只为仍在 GitOps 中声明它的
+	// 环境保留，下一个 minor 删除。
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() == 'https'",message="dataPlaneURL must be an https URL"
 	// +optional

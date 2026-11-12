@@ -21,7 +21,6 @@ import (
 
 const (
 	LoadBalancerHostFinalizer = "network.ayatori.ddupan.top/loadbalancerhost"
-	dataPlaneReachableType    = "DataPlaneReachable"
 	agentReadyType            = "AgentReady"
 	// agentStale 是 controller 在 agent 的 Lease 过期时写入的 AgentReady reason；只有此时
 	// status.vips 不是 agent 的报告（ADR-0022）。
@@ -32,23 +31,12 @@ const (
 	PurgedType = "Purged"
 )
 
-// HostBackend 观察与清理整台主机，不区分 LoadBalancer。
-type HostBackend interface {
-	Probe(context.Context, loadbalancer.Host) error
-	// Purge 删除主机上全部由 Ayatori 写入的配置；返回 true 表示运行中的代理已不再服务它们。
-	Purge(context.Context, loadbalancer.Host) (bool, error)
-}
-
-// LoadBalancerHostReconciler 报告主机可达性。agent 的报告（AgentReady 与 vips）由 agent 自己写入；
-// 它的 Lease 过期时，像 Node lifecycle controller 一样把 AgentReady 置为 Unknown 并清空 vips
-// （ADR-0022）。删除时先清理主机上全部 LoadBalancer 配置再放行（ADR-0018）；主机不可达时删除等待，
-// 由管理员移除 finalizer 强制完成。
+// LoadBalancerHostReconciler 不连接主机（ADR-0022）。agent 的报告（AgentReady 与 vips）由 agent
+// 自己写入；它的 Lease 过期时，像 Node lifecycle controller 一样把 AgentReady 置为 Unknown 并清空
+// vips。删除时等 agent 在本机清除全部配置并报告 Purged 再放行（ADR-0018）；agent 失联时删除一直
+// 等待，由管理员移除 finalizer 强制完成。
 type LoadBalancerHostReconciler struct {
 	Client client.Client
-	Proxy  HostBackend
-	// AgentConvergence 时主机上的配置由 agent 在本机收敛（ADR-0022）：不连接主机，删除时等 agent
-	// 报告 Purged 再放行；Proxy 不使用。
-	AgentConvergence bool
 	// AgentStaleAfter 是 agent 的 Lease 最近一次续约距今的上限，超过即视为 agent 失联。
 	AgentStaleAfter time.Duration
 	// Now 只供测试替换。
@@ -77,35 +65,7 @@ func (r *LoadBalancerHostReconciler) Reconcile(ctx context.Context, request ctrl
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if r.AgentConvergence {
-		return r.reconcileAgent(ctx, object, deleting, stale, staleIn)
-	}
-	host := hostOf(object)
-	hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
-	defer cancel()
-	probe := r.Proxy.Probe(hostCtx, host)
-	if err := r.saveHost(ctx, object, probe, stale); err != nil {
-		return ctrl.Result{}, err
-	}
-	if !deleting || probe != nil {
-		return ctrl.Result{RequeueAfter: min(observeInterval, staleIn)}, nil
-	}
-	done, err := r.Proxy.Purge(hostCtx, host)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !done {
-		return ctrl.Result{RequeueAfter: hostRetry}, nil
-	}
-	controllerutil.RemoveFinalizer(object, LoadBalancerHostFinalizer)
-	return ctrl.Result{}, client.IgnoreNotFound(r.Client.Update(ctx, object))
-}
-
-// reconcileAgent 是 AgentConvergence 时的观察与删除：controller 不连接主机，删除等 agent 在本机清除
-// 全部配置并报告 Purged。agent 失联时删除一直等待，由管理员移除 finalizer 强制完成。
-func (r *LoadBalancerHostReconciler) reconcileAgent(ctx context.Context, object *networkv1alpha1.LoadBalancerHost,
-	deleting bool, stale string, staleIn time.Duration) (ctrl.Result, error) {
-	if err := r.saveHost(ctx, object, nil, stale); err != nil {
+	if err := r.saveHost(ctx, object, stale); err != nil {
 		return ctrl.Result{}, err
 	}
 	if !deleting || stale != "" || !meta.IsStatusConditionTrue(object.Status.Conditions, PurgedType) {
@@ -137,21 +97,10 @@ func (r *LoadBalancerHostReconciler) agentStale(ctx context.Context, name string
 	return "", left + time.Second, nil
 }
 
-// saveHost 远程收敛时写入 DataPlaneReachable，AgentConvergence 时去掉它；stale 不为空时覆盖 agent
-// 写入的 AgentReady 与 vips。
-func (r *LoadBalancerHostReconciler) saveHost(ctx context.Context, object *networkv1alpha1.LoadBalancerHost,
-	probe error, stale string) error {
+// saveHost 在 stale 不为空时覆盖 agent 写入的 AgentReady 与 vips。
+func (r *LoadBalancerHostReconciler) saveHost(ctx context.Context, object *networkv1alpha1.LoadBalancerHost, stale string) error {
 	status := object.Status.DeepCopy()
 	status.ObservedGeneration = object.Generation
-	if r.AgentConvergence {
-		meta.RemoveStatusCondition(&status.Conditions, dataPlaneReachableType)
-	} else {
-		reachable := condition(dataPlaneReachableType, true, "Reachable", "", object.Generation)
-		if probe != nil {
-			reachable = condition(dataPlaneReachableType, false, "Unreachable", probe.Error(), object.Generation)
-		}
-		meta.SetStatusCondition(&status.Conditions, reachable)
-	}
 	if stale != "" {
 		// 失联 agent 的报告不再可信：宁可报告未宣告，也不报告没有证实的宣告。
 		status.VIPs = nil
@@ -192,7 +141,7 @@ func reportOf(object *networkv1alpha1.LoadBalancerHost) loadbalancer.AgentReport
 }
 
 func hostOf(object *networkv1alpha1.LoadBalancerHost) loadbalancer.Host {
-	return loadbalancer.Host{Name: object.Name, ProxyURL: object.Spec.DataPlaneURL}
+	return loadbalancer.Host{Name: object.Name}
 }
 
 func (r *LoadBalancerHostReconciler) SetupWithManager(manager ctrl.Manager) error {

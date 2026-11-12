@@ -58,7 +58,7 @@ type DataPlane struct {
 	URL          string `json:"url"`
 	Username     string `json:"username"`
 	PasswordFile string `json:"passwordFile"`
-	// ConnectTimeout 是代理连接后端的超时，缺省 5 秒；与 manager 的 --loadbalancer-connect-timeout 相同。
+	// ConnectTimeout 是代理连接后端的超时，缺省 5 秒。
 	ConnectTimeout metav1.Duration `json:"connectTimeout,omitempty"`
 	// Resolvers 是 DNS endpoint 使用的 resolvers section 名称；为空时只在启动时解析。
 	Resolvers string `json:"resolvers,omitempty"`

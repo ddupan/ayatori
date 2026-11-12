@@ -75,13 +75,13 @@ func phases(t *testing.T, c client.Client, lb *networkv1alpha1.LoadBalancer) []s
 	return result
 }
 
-// TestAgentConvergence：AgentConvergence 时 controller 不连接主机，按各主机 agent 的报告判定
+// TestAgentConvergence：controller 不连接主机，按各主机 agent 的报告判定
 // Attachment、Programmed 与 endpoint 健康；删除 LoadBalancer 与 LoadBalancerHost 都等 agent 报告
 // 本机已清除再放行（ADR-0022）。
 func TestAgentConvergence(t *testing.T) {
 	c := environment(t)
-	r := &LoadBalancerReconciler{Client: c, Pool: testPool, AgentConvergence: true}
-	hosts := &LoadBalancerHostReconciler{Client: c, AgentConvergence: true, AgentStaleAfter: time.Minute}
+	r := &LoadBalancerReconciler{Client: c, Pool: testPool}
+	hosts := &LoadBalancerHostReconciler{Client: c, AgentStaleAfter: time.Minute}
 	createHosts(t, c, "lb1", secondHost)
 	backend := &networkv1alpha1.Backend{Spec: networkv1alpha1.BackendSpec{
 		Endpoints: []networkv1alpha1.Endpoint{{Address: "10.60.0.21", Port: 6443}},
@@ -90,7 +90,7 @@ func TestAgentConvergence(t *testing.T) {
 	create(t, c, backend)
 	lb := newLoadBalancer("pg", "")
 	create(t, c, lb)
-	converge(t, r, lb)
+	converge(t, r, nil, lb)
 	if got := phases(t, c, lb); !slices.Equal(got, []string{"lb1=Unavailable", secondHost + "=Unavailable"}) || programmed(t, c, lb) == "Programmed" {
 		t.Fatalf("agent 未报告时不可用，got %v", got)
 	}
@@ -100,12 +100,12 @@ func TestAgentConvergence(t *testing.T) {
 		stale := converged(t, c, lb, true)
 		stale.Digest = "0000"
 		agentReports(t, c, secondHost, false, stale)
-		converge(t, r, lb)
+		converge(t, r, nil, lb)
 		if got := phases(t, c, lb); !slices.Equal(got, []string{"lb1=Ready", secondHost + "=Pending"}) {
 			t.Fatalf("摘要不一致的主机仍在写入，got %v", got)
 		}
 		agentReports(t, c, secondHost, false, converged(t, c, lb, true))
-		converge(t, r, lb)
+		converge(t, r, nil, lb)
 		if got := phases(t, c, lb); !slices.Equal(got, []string{"lb1=Ready", secondHost + "=Ready"}) || programmed(t, c, lb) != "Programmed" {
 			t.Fatalf("got %v", got)
 		}
@@ -118,14 +118,14 @@ func TestAgentConvergence(t *testing.T) {
 		if err := c.Delete(t.Context(), lb); err != nil {
 			t.Fatal(err)
 		}
-		converge(t, r, lb)
+		converge(t, r, nil, lb)
 		if got := phases(t, c, lb); !slices.Equal(got, []string{"lb1=Configured", secondHost + "=Configured"}) {
 			t.Fatalf("got %v", got)
 		}
 		agentReports(t, c, "lb1", false, converged(t, c, lb, false))
 		// 已删除完成的 agent 可以不再报告该对象。
 		agentReports(t, c, secondHost, false)
-		converge(t, r, lb)
+		converge(t, r, nil, lb)
 		if err := c.Get(t.Context(), client.ObjectKeyFromObject(lb), lb); !apierrors.IsNotFound(err) {
 			t.Fatalf("全部主机已清除后应放行删除: %v %+v", err, lb.Status.Hosts)
 		}
@@ -145,9 +145,6 @@ func TestAgentConvergence(t *testing.T) {
 		reconcile()
 		if err := c.Get(t.Context(), client.ObjectKey{Name: secondHost}, host); err != nil || !controllerutil.ContainsFinalizer(host, LoadBalancerHostFinalizer) {
 			t.Fatalf("agent 报告之前不得放行: %v", err)
-		}
-		if meta.FindStatusCondition(host.Status.Conditions, dataPlaneReachableType) != nil {
-			t.Fatal("不连接主机时不报告 DataPlaneReachable")
 		}
 		agentReports(t, c, secondHost, true)
 		reconcile()
