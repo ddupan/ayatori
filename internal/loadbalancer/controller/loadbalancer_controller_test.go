@@ -90,7 +90,7 @@ func newLoadBalancer(name, requested string) *networkv1alpha1.LoadBalancer {
 
 // converge 模拟 controller-runtime 的连续协调，直到不再请求立即重试。每轮之后各主机的 agent 写入
 // 报告，再由 LoadBalancerHost controller 观察。
-func converge(t *testing.T, r *LoadBalancerReconciler, lb *networkv1alpha1.LoadBalancer) ctrl.Result {
+func converge(t *testing.T, r *LoadBalancerReconciler, plane *dataPlane, lb *networkv1alpha1.LoadBalancer) ctrl.Result {
 	t.Helper()
 	var result ctrl.Result
 	for range 5 {
@@ -99,19 +99,19 @@ func converge(t *testing.T, r *LoadBalancerReconciler, lb *networkv1alpha1.LoadB
 		if err != nil {
 			t.Fatal(err)
 		}
-		refreshAgents(t, r)
+		refreshAgents(t, r, plane)
 	}
 	return result
 }
 
 // refreshAgents 只观察已带 finalizer 且未在删除的主机：加 finalizer 与删除时的清理由各测试显式驱动。
-func refreshAgents(t *testing.T, r *LoadBalancerReconciler) {
+// plane 为空时 agent 由测试自己扮演。
+func refreshAgents(t *testing.T, r *LoadBalancerReconciler, plane *dataPlane) {
 	t.Helper()
-	plane, ok := r.Proxy.(*dataPlane)
-	if !ok {
+	if plane == nil {
 		return
 	}
-	hosts := &LoadBalancerHostReconciler{Client: r.Client, Proxy: plane, AgentStaleAfter: time.Minute}
+	hosts := &LoadBalancerHostReconciler{Client: r.Client, AgentStaleAfter: time.Minute}
 	list := &networkv1alpha1.LoadBalancerHostList{}
 	if err := r.Client.List(t.Context(), list); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func refreshAgents(t *testing.T, r *LoadBalancerReconciler) {
 		if !object.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(object, LoadBalancerHostFinalizer) {
 			continue
 		}
-		plane.report(t, r.Client, object.Name)
+		plane.agent(t, r.Client, object.Name)
 		if _, err := hosts.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(object)}); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestLoadBalancerAddressLifecycle(t *testing.T) {
 
 	first := newLoadBalancer("api", "")
 	create(t, c, first)
-	converge(t, r, first)
+	converge(t, r, nil, first)
 	if reason := programmed(t, c, first); reason != loadbalancer.ReasonDataPlanePending || first.Status.Address != firstVIP {
 		t.Fatalf("自动分配 = %s %s", first.Status.Address, reason)
 	}
@@ -167,7 +167,7 @@ func TestLoadBalancerAddressLifecycle(t *testing.T) {
 	t.Run("指定地址被占用时报告冲突", func(t *testing.T) {
 		lb := newLoadBalancer("conflict", firstVIP)
 		create(t, c, lb)
-		if result := converge(t, r, lb); result.RequeueAfter != pendingRetry {
+		if result := converge(t, r, nil, lb); result.RequeueAfter != pendingRetry {
 			t.Fatalf("冲突时应低频重试，got %v", result)
 		}
 		if reason := programmed(t, c, lb); reason != loadbalancer.ReasonAddressConflict || lb.Status.Address != "" {
@@ -184,7 +184,7 @@ func TestLoadBalancerAddressLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		create(t, c, ipAddress(netip.MustParseAddr("10.62.0.9"), lb))
-		converge(t, r, lb)
+		converge(t, r, nil, lb)
 		reload(t, c, lb)
 		if lb.Status.Address != "10.62.0.9" {
 			t.Fatalf("应采用已占用的 10.62.0.9，got %q", lb.Status.Address)
@@ -195,7 +195,7 @@ func TestLoadBalancerAddressLifecycle(t *testing.T) {
 		if err := c.Delete(t.Context(), ipAddressOf(t, c, firstVIP)); err != nil {
 			t.Fatal(err)
 		}
-		converge(t, r, first)
+		converge(t, r, nil, first)
 		reload(t, c, first)
 		if first.Status.Address != firstVIP || ipAddressOf(t, c, firstVIP) == nil {
 			t.Fatal("应重新认领原 VIP 而不是换地址")
@@ -224,7 +224,7 @@ func TestLoadBalancerAddressLifecycle(t *testing.T) {
 		if err := c.Delete(t.Context(), first); err != nil {
 			t.Fatal(err)
 		}
-		converge(t, r, first)
+		converge(t, r, nil, first)
 		if err := c.Get(t.Context(), client.ObjectKey{Name: firstVIP}, &networkingv1.IPAddress{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("VIP 应已释放: %v", err)
 		}

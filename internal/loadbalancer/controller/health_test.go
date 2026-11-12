@@ -17,7 +17,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 	createHosts(t, c, firstHost, secondHost)
 	plane := newDataPlane()
 	clock := time.Date(2026, 11, 3, 16, 0, 0, 0, time.UTC)
-	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Proxy: plane, Now: func() time.Time { return clock }}
+	r := &LoadBalancerReconciler{Client: c, Pool: testPool, Now: func() time.Time { return clock }}
 	backends := &BackendReconciler{Client: c}
 
 	primary, standby := loadbalancer.Endpoint{Address: "10.60.0.11", Port: 6443}, loadbalancer.Endpoint{Address: "10.60.0.12", Port: 6443}
@@ -38,7 +38,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 		firstHost:  {up(primary), down(standby)},
 		secondHost: {up(primary), down(standby)},
 	}
-	converge(t, r, lb)
+	converge(t, r, plane, lb)
 	reconcileBackend(t, backends, backend)
 
 	reload(t, c, lb)
@@ -65,7 +65,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 	t.Run("state 不变时不更新时间、不产生新版本", func(t *testing.T) {
 		version := lb.ResourceVersion
 		clock = clock.Add(time.Minute)
-		converge(t, r, lb)
+		converge(t, r, plane, lb)
 		reload(t, c, lb)
 		if at := observed(lb, primary, firstHost).LastTransitionTime; lb.ResourceVersion != version || !at.Equal(&first) {
 			t.Fatalf("got %s → %s, %v", version, lb.ResourceVersion, at)
@@ -76,7 +76,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 		clock = clock.Add(time.Minute)
 		plane.health[firstHost] = []loadbalancer.ServerHealth{down(primary), up(standby)}
 		plane.health[secondHost] = []loadbalancer.ServerHealth{down(primary), up(standby)}
-		converge(t, r, lb)
+		converge(t, r, plane, lb)
 		reload(t, c, lb)
 		if got := observed(lb, standby, firstHost); got.State != "UP" || !got.LastTransitionTime.Time.Equal(clock) {
 			t.Fatalf("got %+v", got)
@@ -86,7 +86,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 	t.Run("全部成员 DOWN 时两个 Ready 都为 False", func(t *testing.T) {
 		plane.health[firstHost] = []loadbalancer.ServerHealth{down(primary), down(standby)}
 		plane.health[secondHost] = []loadbalancer.ServerHealth{down(primary), down(standby)}
-		converge(t, r, lb)
+		converge(t, r, plane, lb)
 		reconcileBackend(t, backends, backend)
 		if conditionStatus(t, c, lb, endpointsReadyType) != string(metav1.ConditionFalse) {
 			t.Fatalf("got %+v", lb.Status.Conditions)
@@ -100,7 +100,7 @@ func TestEndpointHealthStatus(t *testing.T) {
 	t.Run("主机不可达时删去它的观察", func(t *testing.T) {
 		plane.health[firstHost] = []loadbalancer.ServerHealth{up(primary), down(standby)}
 		plane.unreachable[secondHost] = true
-		converge(t, r, lb)
+		converge(t, r, plane, lb)
 		reload(t, c, lb)
 		if got := lb.Status.Endpoints; len(got) != 2 || got[0].Host != firstHost || got[1].Host != firstHost {
 			t.Fatalf("got %+v", got)

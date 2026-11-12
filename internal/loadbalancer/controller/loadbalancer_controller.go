@@ -45,13 +45,6 @@ const (
 	hostTimeout     = 10 * time.Second
 )
 
-// ProxyBackend 读写 LB 主机代理上属于本 LoadBalancer 的配置，只返回事实。
-type ProxyBackend interface {
-	Observe(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) (loadbalancer.ProxyFacts, error)
-	Apply(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) error
-	Remove(context.Context, loadbalancer.Host, *loadbalancer.LoadBalancer) error
-}
-
 // DNSBackend 维护 Ayatori 独占 zone 中的 A 记录。
 type DNSBackend interface {
 	Record(context.Context, string) ([]netip.Addr, error)
@@ -59,19 +52,15 @@ type DNSBackend interface {
 	Remove(context.Context, string) error
 }
 
-// LoadBalancerReconciler 认领与释放 VIP，逐主机收敛代理配置，并写 LoadBalancer status。
+// LoadBalancerReconciler 认领与释放 VIP，汇总各主机的落地结果，并写 LoadBalancer status。
 // 路由由各主机的 LB agent 自行宣告（ADR-0017）；主机是 LoadBalancerHost 资源，Attachment 是否就绪
-// 以其 status 中 agent 的报告为准（ADR-0018）。AgentConvergence 时代理配置由各主机的 agent 在本机
-// 收敛，这里只汇总它们的报告（ADR-0022）；否则经 Proxy 远程收敛，Proxy 为空时只分配 VIP。
-// DNS 为空时不维护 Hostname。
+// 以其 status 中 agent 的报告为准（ADR-0018）。代理配置由各主机的 agent 在本机收敛，这里不连接
+// 主机，只汇总它们的报告（ADR-0022）。DNS 为空时不维护 Hostname。
 type LoadBalancerReconciler struct {
-	Client client.Client
-	Pool   address.Pool
-	Proxy  ProxyBackend
-	// AgentConvergence 与 Proxy 二选一，按环境整体切换：同一台主机不能有两个写入方。
-	AgentConvergence bool
-	DNS              DNSBackend
-	DNSZone          string
+	Client  client.Client
+	Pool    address.Pool
+	DNS     DNSBackend
+	DNSZone string
 	// Now 只供测试替换。
 	Now func() time.Time
 }
@@ -165,38 +154,16 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	}
 }
 
-// converge 在每台主机上至多执行一次写入；主机之间相互独立，失败只影响该主机的 Attachment。
+// converge 按各主机 agent 的报告判定 Attachment；写入由 agent 在本机执行（ADR-0022），
+// 这里只用 PlanHost 判定，不执行它返回的动作。
 func (r *LoadBalancerReconciler) converge(ctx context.Context, lb *loadbalancer.LoadBalancer, deleting bool) error {
-	if r.Proxy == nil && !r.AgentConvergence {
-		return nil
-	}
 	hosts, err := r.hosts(ctx)
 	if err != nil {
 		return err
 	}
-	if r.AgentConvergence {
-		for _, target := range hosts {
-			// 写入由 agent 在本机执行，这里只用 PlanHost 判定 Attachment。
-			facts, err := reported(target, lb)
-			lb.PlanHost(target.host.Name, facts, target.agent, err, deleting)
-		}
-		return nil
-	}
 	for _, target := range hosts {
-		host := target.host
-		hostCtx, cancel := context.WithTimeout(ctx, hostTimeout)
-		facts, err := r.Proxy.Observe(hostCtx, host, lb)
-		var write error
-		switch lb.PlanHost(host.Name, facts, target.agent, err, deleting) {
-		case loadbalancer.ApplyConfig:
-			write = r.Proxy.Apply(hostCtx, host, lb)
-		case loadbalancer.RemoveConfig:
-			write = r.Proxy.Remove(hostCtx, host, lb)
-		}
-		cancel()
-		if write != nil {
-			lb.HostFailed(host.Name, write)
-		}
+		facts, err := reported(target, lb)
+		lb.PlanHost(target.host.Name, facts, target.agent, err, deleting)
 	}
 	return nil
 }

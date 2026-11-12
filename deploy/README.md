@@ -46,14 +46,11 @@ PostgreSQLDatabase、LoadBalancer、Backend 与 LoadBalancerHost。该 Kustomiza
 `flux-system/gitops-tenants` 模拟应用，只能管理这些资源，其他对象被 apiserver 拒绝；
 `prune: true`，从目录移除 Tenant 即释放（默认 Retain，不删数据）。
 
-声明 `loadbalancer` 时 Flux 另同步 `deploy/flux/loadbalancer`：ESO 把 Data Plane API 客户端证书
-（`pki-loadbalancer-<env>` 每天签发）、服务端 CA（`pki/cert/ca`）与 Basic 凭据
-（`kv/infra/loadbalancer/<env>`）写入 `ayatori-system/loadbalancer-credentials`。PowerDNS API key
-也写进同一个 Secret（默认 Bao `kv/k8s/powerdns` 的 `api_key`）；不声明 `dns` 时同样会读取，所以
-ESO 角色始终需要它的读权限。首次部署时，Secret 同步完成之前 manager 会启动失败并不断重试。
+声明 `loadbalancer` 时 Flux 另同步 `deploy/flux/loadbalancer`：ESO 把 PowerDNS API key（默认 Bao
+`kv/k8s/powerdns` 的 `api_key`）写入 `ayatori-system/loadbalancer-credentials`；不声明 `dns` 时同样
+会读取，所以 ESO 角色始终需要它的读权限。首次部署时，Secret 同步完成之前 manager 会启动失败并不断重试。
 同一目录还有 LB agent 的 RBAC 与准入策略（`agent-*.yaml`）：LoadBalancerHost 由各主机的 lb-agent
-加入控制面后自行注册（ADR-0022）；迁移期间仍由 manager 远程收敛的主机，在 `gitops` 目录中为它
-声明 `spec.dataPlaneURL`。
+加入控制面后自行注册，并在本机收敛代理配置；manager 不连接 LB 主机（ADR-0022）。
 
 首次部署后，OpenBao 的 Kubernetes auth mount 需要本环境 API 的公开 CA
 （`/var/lib/k0s/pki/ca.crt`），由 homelab-infra 的 OpenBao Terraform 管理；合并前 ESO 与
