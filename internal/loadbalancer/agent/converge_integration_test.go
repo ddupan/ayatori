@@ -299,7 +299,8 @@ func (f convergence) keepsWhileAPIDown(t *testing.T, api *apiProxy, spec network
 	waitForLong(t, "API 恢复后清理", f.owners(t))
 }
 
-// apiProxy 把 TCP 连接转发到 apiserver；cut 停止监听并断开全部连接，restore 在同一地址恢复。
+// apiProxy 把 TCP 连接转发到 host（apiserver 或 BGP 对端）；cut 停止监听并断开全部连接，
+// restore 在同一地址恢复。
 type apiProxy struct {
 	target, addr string
 	mu           sync.Mutex
