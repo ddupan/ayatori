@@ -1,0 +1,70 @@
+<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+  <memory unit='GiB'>2</memory>
+  <currentMemory unit='GiB'>2</currentMemory>
+  <vcpu placement='static'>2</vcpu>
+  <iothreads>1</iothreads>
+  <os firmware='efi'>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <firmware>
+      <feature enabled='no' name='secure-boot'/>
+    </firmware>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-model' check='partial'/>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <disk device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap' iothread='1'/>
+      <target dev='vda' bus='virtio'/>
+      <boot order='1'/>
+      <alias name='ua-root'/>
+    </disk>
+    <disk device='cdrom'>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+      <alias name='ua-seed'/>
+      <address type='drive' controller='0' bus='0' target='0' unit='0'/>
+    </disk>
+    <controller type='usb' index='0' model='qemu-xhci' ports='15'/>
+    <controller type='pci' index='0' model='pcie-root'/>
+    <interface type='network'>
+      <mac address='52:54:00:12:34:56'/>
+      <model type='virtio'/>
+      <driver name='vhost' queues='2'/>
+      <alias name='ua-net0'/>
+    </interface>
+    <serial type='pty'>
+      <target type='isa-serial' port='0'>
+        <model name='isa-serial'/>
+      </target>
+      <alias name='ua-ayatori-console'/>
+    </serial>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+    <input type='tablet' bus='usb'/>
+    <graphics type='vnc'/>
+    <video>
+      <model type='virtio' heads='1' primary='yes'/>
+    </video>
+    <memballoon model='virtio'>
+      <stats period='10'/>
+    </memballoon>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+    </rng>
+  </devices>
+  <qemu:commandline>
+    <qemu:arg value='-no-hpet'/>
+  </qemu:commandline>
+</domain>

@@ -30,12 +30,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	golibvirt "libvirt.org/go/libvirt"
+	"libvirt.org/go/libvirtxml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
 	"go.ddupan.top/ayatori/internal/compute/agent"
+	"go.ddupan.top/ayatori/internal/compute/domainspec"
 	nodeagent "go.ddupan.top/ayatori/internal/infra/node"
 )
 
@@ -204,7 +206,7 @@ func TestAgent(t *testing.T) {
 	t.Run("keeps a replica of each image and creates volumes from it", func(sub *testing.T) { s.managesImages(sub, t) })
 	t.Run("runs containers and restarts them when they stop", s.managesContainers)
 	s.vm2 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm2", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(""), Interfaces: []computev1alpha1.DomainInterface{{Network: lan}}}}
+		NodeName: node, Domain: domainSpec(t, nicXML), Interfaces: []computev1alpha1.DomainInterface{{Alias: lanAlias, Network: lan}}}}
 	create(t, s.k, s.vm2)
 	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
@@ -288,9 +290,9 @@ func (s *suite) createObjects(t *testing.T) {
 	create(t, s.k, &computev1alpha1.LibvirtStorageVolume{Name: "disk1", Spec: computev1alpha1.LibvirtStorageVolumeSpec{
 		NodeName: node, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: localPool, XML: `<volume><capacity>1048576</capacity></volume>`}}})
 	s.vm1 = &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm1", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(""),
-		Disks:      []computev1alpha1.DomainDisk{{Volume: "disk1"}},
-		Interfaces: []computev1alpha1.DomainInterface{{Network: lan, MAC: "52:54:00:00:00:01"}}}}
+		NodeName: node, Domain: domainSpec(t, diskXML+`<interface type='network'><mac address='52:54:00:00:00:01'/><alias name='ua-lan'/></interface>`),
+		Disks:      []computev1alpha1.DomainDisk{{Alias: diskAlias, Volume: "disk1"}},
+		Interfaces: []computev1alpha1.DomainInterface{{Alias: lanAlias, Network: lan}}}}
 	create(t, s.k, s.vm1)
 }
 
@@ -308,25 +310,6 @@ func (s *suite) definesSelected(t *testing.T) {
 		t.Error("domain autostart must be off")
 	}
 
-	// Ayatori 拥有的元素写在 domainXML 中：拒绝下发并说明原因，不静默覆盖。
-	owned := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "owned", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(`<interface type='network'><source network='lan'/></interface>`)}}
-	create(t, s.k, owned)
-	eventually(t, 30*time.Second, func() error {
-		if err := s.k.Get(t.Context(), client.ObjectKeyFromObject(owned), owned); err != nil {
-			return err
-		}
-		if !strings.Contains(owned.Status.Message, "must not contain <interface>") {
-			return fmt.Errorf("status = %+v", owned.Status)
-		}
-		return nil
-	})
-	if _, err := s.l.LookupDomainByName("default_owned"); !libvirt.IsNotFound(err) {
-		t.Errorf("domain with Ayatori-owned elements in domainXML was defined: %v", err)
-	}
-	if err := s.k.Delete(t.Context(), owned); err != nil {
-		t.Fatal(err)
-	}
 	var n computev1alpha1.LibvirtNetwork
 	eventually(t, 10*time.Second, func() error {
 		if err := s.k.Get(t.Context(), client.ObjectKey{Name: lan}, &n); err != nil {
@@ -441,7 +424,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 
 	// 被实例引用的卷：删除对象后，等实例清理了才删卷。
 	vm := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm3", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{{Volume: "disk2"}}}}
+		NodeName: node, Domain: domainSpec(t, diskXML), Disks: []computev1alpha1.DomainDisk{{Alias: diskAlias, Volume: "disk2"}}}}
 	create(t, s.k, vm)
 	s.waitState(t, vm, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	if err := s.k.Delete(ctx, disk); err != nil {
@@ -471,7 +454,7 @@ func (s *suite) managesVolumes(t *testing.T) {
 	create(t, s.k, pending)
 	waitPath(pending)
 	vm4 := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm4", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{{Volume: "pending"}}}}
+		NodeName: node, Domain: domainSpec(t, diskXML), Disks: []computev1alpha1.DomainDisk{{Alias: diskAlias, Volume: "pending"}}}}
 	create(t, s.k, vm4)
 	s.waitState(t, vm4, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	scratchVolume := func() (bool, error) {
@@ -714,7 +697,7 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	fileIs(v1)
 
 	vm := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "vm-cd", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{{Image: cd, Bus: computev1alpha1.DiskBusSATA}}}}
+		NodeName: node, Domain: domainSpec(t, cdromXML), Disks: []computev1alpha1.DomainDisk{{Alias: cdAlias, Image: cd}}}}
 	create(t, s.k, vm)
 	s.waitState(t, vm, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
 	dom := s.domain(t, "default_vm-cd")
@@ -821,7 +804,7 @@ func (s *suite) managesImages(t, parent *testing.T) {
 	if err := s.k.Delete(ctx, &computev1alpha1.Image{Name: root}); err != nil {
 		t.Fatal(err)
 	}
-	s.rejectsInvalidDisks(t, cd)
+	s.validatesDomains(t, cd)
 }
 
 func (s *suite) waitImage(t *testing.T, name string, ok func(computev1alpha1.ImageNodeStatus) bool) {
@@ -852,19 +835,65 @@ func (s *suite) waitVolume(t *testing.T, name string, ok func(computev1alpha1.Li
 	})
 }
 
-func (s *suite) rejectsInvalidDisks(t *testing.T, cd string) {
+// validatesDomains 检查 CRD 对 spec.domain 的约束（ADR-0026）：Ayatori 拥有的字段、绑定、联合体与默认值。
+func (s *suite) validatesDomains(t *testing.T, cd string) {
 	ctx := t.Context()
-	// 一块盘必须且只能引用卷或镜像；镜像是光驱，不能接 virtio。
-	for _, disk := range []computev1alpha1.DomainDisk{
-		{},
-		{Volume: "a", Image: cd, Bus: computev1alpha1.DiskBusSATA},
-		{Image: cd},
+	vm := func(domain runtime.RawExtension, disks []computev1alpha1.DomainDisk, nics []computev1alpha1.DomainInterface) *computev1alpha1.LibvirtDomain {
+		return &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "invalid", Spec: computev1alpha1.LibvirtDomainSpec{
+			NodeName: node, Domain: domain, Disks: disks, Interfaces: nics}}
+	}
+	raw := func(js string) runtime.RawExtension { return runtime.RawExtension{Raw: []byte(js)} }
+	cdrom := domainSpec(t, cdromXML)
+	for name, bad := range map[string]*computev1alpha1.LibvirtDomain{
+		"disk binding without volume or image": vm(cdrom, []computev1alpha1.DomainDisk{{Alias: cdAlias}}, nil),
+		"disk binding with volume and image":   vm(cdrom, []computev1alpha1.DomainDisk{{Alias: cdAlias, Volume: "a", Image: cd}}, nil),
+		"disk binding to a missing alias":      vm(cdrom, []computev1alpha1.DomainDisk{{Alias: "ua-x", Image: cd}}, nil),
+		"duplicate disk binding":               vm(cdrom, []computev1alpha1.DomainDisk{{Alias: cdAlias, Image: cd}, {Alias: cdAlias, Image: cd}}, nil),
+		"interface binding to a missing alias": vm(cdrom, nil, []computev1alpha1.DomainInterface{{Alias: lanAlias, Network: lan}}),
+		"unbound interface":                    vm(domainSpec(t, nicXML), nil, nil),
+		"domain name":                          vm(raw(`{"type":"test","name":"x"}`), nil, nil),
+		"disk source":                          vm(raw(`{"type":"test","devices":{"disks":[{"source":{"file":{"file":"/etc/shadow"}}}]}}`), nil, nil),
+		"disk driver type":                     vm(raw(`{"type":"test","devices":{"disks":[{"driver":{"type":"qcow2"}}]}}`), nil, nil),
+		"interface target":                     vm(raw(`{"type":"test","devices":{"interfaces":[{"alias":{"name":"ua-lan"},"target":{"dev":"tap0"}}]}}`), nil, []computev1alpha1.DomainInterface{{Alias: lanAlias, Network: lan}}),
+		"nvram":                                vm(raw(`{"type":"test","os":{"nvRam":{"nvRam":"/srv/vars.fd"}}}`), nil, nil),
+		"vnc port":                             vm(raw(`{"type":"test","devices":{"graphics":[{"vnc":{"port":5900}}]}}`), nil, nil),
+		"union with two branches":              vm(raw(`{"type":"test","devices":{"graphics":[{"vnc":{},"spice":{}}]}}`), nil, nil),
+		"unknown field":                        vm(raw(`{"type":"test","bogus":2}`), nil, nil),
 	} {
-		bad := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "invalid", Spec: computev1alpha1.LibvirtDomainSpec{
-			NodeName: node, DomainXML: domainXML(""), Disks: []computev1alpha1.DomainDisk{disk}}}
-		if err := s.k.Create(ctx, bad); err == nil {
-			t.Fatalf("disk %+v accepted", disk)
+		if err := s.k.Create(ctx, bad, client.FieldValidation("Strict")); err == nil {
+			_ = s.k.Delete(ctx, bad)
+			t.Errorf("%s: accepted", name)
+		} else {
+			t.Logf("%s: %v", name, err)
 		}
+	}
+
+	// 默认值：UEFI、ACPI 与控制台串口，在 spec 中可见。
+	def := vm(raw(`{"type":"test"}`), nil, nil)
+	def.Name = "defaults"
+	def.Spec.RunState = computev1alpha1.RunStateStopped
+	create(t, s.k, def)
+	defer func() { _ = s.k.Delete(ctx, def) }()
+	d, err := domainspec.Decode(def.Spec.Domain.Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.OS == nil || d.OS.Firmware != "efi" || d.Features == nil || d.Features.ACPI == nil ||
+		d.Devices == nil || len(d.Devices.Serials) != 1 || d.Devices.Serials[0].Alias.Name != "ua-ayatori-console" ||
+		d.Devices.Serials[0].Source.Pty == nil || d.Devices.Serials[0].Target.Port == nil {
+		t.Errorf("defaults not applied: %s", def.Spec.Domain.Raw)
+	}
+	// 写了的字段不再补默认值：显式 BIOS、自己的串口。
+	own := vm(domainSpec(t, `<serial type='pty'><target port='1'/></serial>`), nil, nil)
+	own.Name = "own"
+	own.Spec.RunState = computev1alpha1.RunStateStopped
+	create(t, s.k, own)
+	defer func() { _ = s.k.Delete(ctx, own) }()
+	if d, err = domainspec.Decode(own.Spec.Domain.Raw); err != nil {
+		t.Fatal(err)
+	}
+	if d.OS.Firmware != "bios" || len(d.Devices.Serials) != 1 || d.Devices.Serials[0].Alias != nil {
+		t.Errorf("defaults overrode the spec: %s", own.Spec.Domain.Raw)
 	}
 }
 
@@ -878,8 +907,34 @@ func ready(n corev1.Node) bool {
 	return false
 }
 
-func domainXML(devices string) string {
-	return fmt.Sprintf(`<domain type='test'><memory unit='KiB'>65536</memory><os><type>hvm</type></os><devices>%s</devices></domain>`, devices)
+const (
+	diskAlias, cdAlias, lanAlias = "ua-disk", "ua-cd", "ua-lan"
+
+	diskXML  = `<disk device='disk'><target dev='vda' bus='virtio'/><alias name='ua-disk'/></disk>`
+	cdromXML = `<disk device='cdrom'><target dev='sda' bus='sata'/><readonly/><alias name='ua-cd'/></disk>`
+	nicXML   = `<interface type='network'><alias name='ua-lan'/></interface>`
+)
+
+// domainSpec 由 test 驱动的 domain XML 生成 spec.domain。test 驱动不做固件自动选择，显式写 BIOS，
+// 不用 CRD 默认的 UEFI。
+func domainSpec(t *testing.T, devices string) runtime.RawExtension {
+	t.Helper()
+	var d libvirtxml.Domain
+	if err := d.Unmarshal(fmt.Sprintf(`<domain type='test'><memory unit='KiB'>65536</memory><os firmware='bios'><type>hvm</type></os><devices>%s</devices></domain>`, devices)); err != nil {
+		t.Fatal(err)
+	}
+	// libvirtxml 解析时按 type 补上空的 source 分支；source 归 Ayatori，用户的 spec 中不写。
+	for i := range d.Devices.Disks {
+		d.Devices.Disks[i].Source = nil
+	}
+	for i := range d.Devices.Interfaces {
+		d.Devices.Interfaces[i].Source = nil
+	}
+	js, err := domainspec.Encode(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime.RawExtension{Raw: js}
 }
 
 func create(t *testing.T, k client.Client, obj client.Object) {

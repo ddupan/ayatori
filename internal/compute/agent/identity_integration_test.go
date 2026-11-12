@@ -100,7 +100,7 @@ func TestAgentIdentity(t *testing.T) {
 		create(t, k, &computev1alpha1.LibvirtNetwork{Name: identNet, Spec: computev1alpha1.LibvirtNetworkSpec{
 			XML: `<network><forward mode='bridge'/><bridge name='br-ident'/></network>`}})
 		mine := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: identMine, Spec: computev1alpha1.LibvirtDomainSpec{
-			NodeName: node, DomainXML: domainXML("")}}
+			NodeName: node, Domain: domainSpec(t, "")}}
 		create(t, k, mine)
 		vol := &computev1alpha1.LibvirtStorageVolume{Name: identMine, Spec: computev1alpha1.LibvirtStorageVolumeSpec{
 			NodeName: node, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: "missing", XML: "<volume><capacity>1</capacity></volume>"}}}
@@ -138,7 +138,7 @@ func TestAgentIdentity(t *testing.T) {
 	}
 	owner := client.FieldOwner("intruder")
 	theirs := &computev1alpha1.LibvirtDomain{Namespace: corev1.NamespaceDefault, Name: "ident-theirs", Spec: computev1alpha1.LibvirtDomainSpec{
-		NodeName: other, DomainXML: domainXML("")}}
+		NodeName: other, Domain: domainSpec(t, "")}}
 	create(t, k, theirs)
 	theirVolume := &computev1alpha1.LibvirtStorageVolume{Name: "ident-theirs", Spec: computev1alpha1.LibvirtStorageVolumeSpec{
 		NodeName: other, Libvirt: &computev1alpha1.LibvirtVolumeSource{Pool: "missing", XML: "<volume><capacity>1</capacity></volume>"}}}
