@@ -7,40 +7,59 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
+	"libvirt.org/go/libvirtxml"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
+	"go.ddupan.top/ayatori/internal/compute/domainspec"
 )
 
+// spec 把 domain XML 转换为 spec.domain，测试用。
+func spec(t *testing.T, xml string) runtime.RawExtension {
+	t.Helper()
+	var d libvirtxml.Domain
+	if err := d.Unmarshal(xml); err != nil {
+		t.Fatal(err)
+	}
+	js, err := domainspec.Encode(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime.RawExtension{Raw: js}
+}
+
 func TestPrepareDomain(t *testing.T) {
-	const uid = "1b2c3d4e-0000-4000-8000-000000000001"
+	const uid, root = "1b2c3d4e-0000-4000-8000-000000000001", "dns1-root"
 	native := `<domain type='kvm'><memory>524288</memory>
   <os><type arch='x86_64' machine='q35'>hvm</type></os>
-  <devices><serial type='pty'/></devices>
+  <devices>
+    <disk device='disk'><target dev='vda' bus='virtio'/><boot order='1'/><alias name='ua-root'/></disk>
+    <disk device='disk'><driver discard='unmap'/><target dev='sdb' bus='scsi'/><alias name='ua-data'/></disk>
+    <disk device='cdrom'><target dev='hda' bus='ide'/><readonly/><alias name='ua-iso'/></disk>
+    <disk device='cdrom'><target dev='hdb' bus='ide'/><readonly/></disk>
+    <interface type='network'><mac address='52:54:00:AA:BB:CC'/><model type='virtio'/><alias name='ua-lan'/></interface>
+    <interface type='network'><model type='e1000e'/><alias name='ua-mgmt'/></interface>
+    <serial type='pty'><target port='0'/><alias name='ua-ayatori-console'/></serial>
+    <graphics type='vnc'/>
+  </devices>
   <qemu:commandline xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'><qemu:arg value='-no-hpet'/></qemu:commandline>
 </domain>`
 	d := &computev1alpha1.LibvirtDomain{Namespace: "infra", Name: "dns1", UID: uid, Spec: computev1alpha1.LibvirtDomainSpec{
-		DomainXML: native,
+		Domain: spec(t, native),
 		Disks: []computev1alpha1.DomainDisk{
-			{Volume: "dns1-root", BootOrder: 1},
-			{Volume: "seed", Bus: computev1alpha1.DiskBusSATA, ReadOnly: true},
-			{Volume: "data", Bus: computev1alpha1.DiskBusSCSI},
-			{Volume: "dos", Bus: computev1alpha1.DiskBusFDC},
-			{Image: "debian-iso", Bus: computev1alpha1.DiskBusIDE},
+			{Alias: "ua-root", Volume: root},
+			{Alias: "ua-data", Volume: "data"},
+			{Alias: "ua-iso", Image: "debian-iso"},
 		},
-		Interfaces: []computev1alpha1.DomainInterface{
-			{Network: lan, MAC: "52:54:00:AA:BB:CC"},
-			{Network: "mgmt", Model: "e1000e"},
-		},
+		Interfaces: []computev1alpha1.DomainInterface{{Alias: "ua-lan", Network: lan}, {Alias: "ua-mgmt", Network: "mgmt"}},
 	}}
 	vols := map[string]Volume{
-		"dns1-root": {Path: "/dev/data/dns1-root", Block: true},
-		"seed":      {Path: "/var/lib/libvirt/iso/seed.iso", Format: "iso"},
-		"data":      {Path: "/images/data.qcow2", Format: "qcow2"},
-		"dos":       {Path: "/images/dos.img", Format: formatRaw},
+		root:   {Path: "/dev/data/dns1-root", Block: true},
+		"data": {Path: "/images/data.qcow2", Format: "qcow2"},
 	}
 	resolve := func(disk computev1alpha1.DomainDisk) (Volume, error) {
 		if disk.Image != "" {
-			return Volume{Path: "/images/" + disk.Image}, nil
+			return Volume{Path: "/images/" + disk.Image, Format: "iso"}, nil
 		}
 		v, ok := vols[disk.Volume]
 		if !ok {
@@ -53,18 +72,17 @@ func TestPrepareDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
-	if !strings.Contains(out, `<disk type="file" device="cdrom"><driver name="qemu" type="raw"></driver><source file="/images/debian-iso"></source><target dev="hda" bus="ide"></target><readonly></readonly>`) {
-		t.Fatalf("cdrom not rendered:\n%s", out)
-	}
 	for _, want := range []string{
 		"<name>infra_dns1</name>", "<uuid>" + uid + "</uuid>",
 		`<disk type="block" device="disk"><driver name="qemu" type="raw"></driver><source dev="/dev/data/dns1-root"></source><target dev="vda" bus="virtio"></target><boot order="1"></boot>`,
-		`<source file="/var/lib/libvirt/iso/seed.iso"></source><target dev="sda" bus="sata"></target><readonly></readonly>`,
-		`<driver name="qemu" type="qcow2"></driver><source file="/images/data.qcow2"></source><target dev="sdb" bus="scsi">`,
-		`<disk type="file" device="floppy">`, `<target dev="fda" bus="fdc">`,
-		`<mac address="52:54:00:aa:bb:cc"></mac><source network="lan"></source><target dev="ay1b2c3d4en0"></target><model type="virtio">`,
+		`<driver name="qemu" type="qcow2" discard="unmap"></driver><source file="/images/data.qcow2"></source><target dev="sdb" bus="scsi">`,
+		`<disk type="file" device="cdrom"><driver name="qemu" type="raw"></driver><source file="/images/debian-iso"></source><target dev="hda" bus="ide"></target><readonly></readonly>`,
+		`<disk type="file" device="cdrom"><target dev="hdb" bus="ide"></target><readonly></readonly></disk>`, // 未绑定的空光驱
+		`<mac address="52:54:00:AA:BB:CC"></mac><source network="lan"></source><target dev="ay1b2c3d4en0"></target><model type="virtio">`,
 		`<mac address="` + macAddress(uid, 1) + `"></mac><source network="mgmt"></source><target dev="ay1b2c3d4en1"></target><model type="e1000e">`,
-		`<serial type="pty">`, "-no-hpet",
+		`<serial type="pty"><target port="0"></target><alias name="ua-ayatori-console"></alias></serial>`,
+		`<graphics type="vnc"><listen type="socket"></listen></graphics>`,
+		"-no-hpet",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prepared XML lacks %s:\n%s", want, out)
@@ -74,60 +92,27 @@ func TestPrepareDomain(t *testing.T) {
 		t.Error("generated MACs must differ between interfaces")
 	}
 
-	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareUEFI, SecureBoot: true, TPM: true}
-	out, err = prepareDomain(d, resolve)
-	if err != nil {
-		t.Fatal(err)
+	bad := d.DeepCopy()
+	bad.Spec.Disks = append(bad.Spec.Disks, computev1alpha1.DomainDisk{Alias: "ua-gone", Volume: root})
+	if _, err := prepareDomain(bad, resolve); err == nil || !strings.Contains(err.Error(), "ua-gone") {
+		t.Errorf("binding to a missing disk: err = %v", err)
 	}
-	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
-	for _, want := range []string{
-		`<os firmware="efi">`, `<features><acpi></acpi></features>`,
-		`<firmware><feature enabled="yes" name="secure-boot"></feature><feature enabled="yes" name="enrolled-keys"></feature></firmware>`,
-		`<tpm model="tpm-crb"><backend type="emulator" version="2.0"></backend></tpm>`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("prepared XML lacks %s:\n%s", want, out)
-		}
+	bad = d.DeepCopy()
+	bad.Spec.Disks[1].Volume = "gone"
+	if _, err := prepareDomain(bad, resolve); err == nil || !strings.Contains(err.Error(), "no such volume") {
+		t.Errorf("unresolvable volume: err = %v", err)
 	}
-	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareUEFI}
-	if out, err = prepareDomain(d, resolve); err != nil || !strings.Contains(out, `<feature enabled="no" name="secure-boot">`) || strings.Contains(out, "enrolled-keys") || strings.Contains(out, "<tpm") {
-		t.Errorf("UEFI without secure boot: err = %v\n%s", err, out)
+	// 镜像是共享的副本，只能作为只读光驱挂载。
+	bad = d.DeepCopy()
+	bad.Spec.Disks[1] = computev1alpha1.DomainDisk{Alias: "ua-data", Image: "debian-iso"}
+	if _, err := prepareDomain(bad, resolve); err == nil || !strings.Contains(err.Error(), "read-only cdrom") {
+		t.Errorf("image on a writable disk: err = %v", err)
 	}
-	d.Spec.Firmware = &computev1alpha1.DomainFirmware{Type: computev1alpha1.FirmwareBIOS}
-	if out, err = prepareDomain(d, resolve); err != nil || strings.Contains(out, "firmware") {
-		t.Errorf("BIOS must leave the firmware to libvirt: err = %v\n%s", err, out)
-	}
-	d.Spec.Firmware = nil
-
-	d.Spec.Disks = append(d.Spec.Disks, computev1alpha1.DomainDisk{Volume: "gone"})
-	if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "gone") {
-		t.Fatalf("unresolvable volume: err = %v", err)
-	}
-
-	for _, owned := range []string{"<name>x</name>", "<uuid>" + uid + "</uuid>"} {
-		d.Spec.DomainXML = strings.Replace(native, "<memory>", owned+"<memory>", 1)
-		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
-			t.Errorf("%s in domainXML: err = %v", owned, err)
-		}
-	}
-	const osEnd = "</os>"
-	for _, owned := range []struct{ old, new string }{
-		{"<serial", "<tpm model='tpm-crb'><backend type='emulator' version='2.0'/></tpm><serial"},
-		{"<os>", "<os firmware='efi'>"},
-		{osEnd, "<firmware><feature enabled='yes' name='secure-boot'/></firmware></os>"},
-		{osEnd, "<loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader></os>"},
-		{osEnd, "<nvram>/srv/vars.fd</nvram></os>"},
-	} {
-		d.Spec.DomainXML = strings.Replace(native, owned.old, owned.new, 1)
-		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
-			t.Errorf("%s in domainXML: err = %v", owned.new, err)
-		}
-	}
-	for _, owned := range []string{`<disk type='file'><source file='/srv/raw.img'/><target dev='vdb'/></disk>`, `<interface type='bridge'><source bridge='br0'/></interface>`} {
-		d.Spec.DomainXML = strings.Replace(native, "<serial", owned+"<serial", 1)
-		if _, err := prepareDomain(d, resolve); err == nil || !strings.Contains(err.Error(), "must not contain") {
-			t.Errorf("%s in domainXML: err = %v", owned, err)
-		}
+	bad = d.DeepCopy()
+	bad.Spec.Disks, bad.Spec.Interfaces = nil, nil
+	bad.Spec.Domain.Raw = []byte(`{"type":"kvm","devices":{"graphics":[{"vnc":{},"spice":{}}]}}`)
+	if _, err := prepareDomain(bad, resolve); err == nil || !strings.Contains(err.Error(), "spec.domain") {
+		t.Errorf("lossy union: err = %v", err)
 	}
 }
 

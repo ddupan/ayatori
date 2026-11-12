@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"libvirt.org/go/libvirtxml"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
+	"go.ddupan.top/ayatori/internal/compute/domainspec"
 	"go.ddupan.top/ayatori/internal/compute/naming"
 )
 
@@ -36,130 +38,74 @@ func macAddress(uid string, i int) string {
 	return fmt.Sprintf("52:54:00:%02x:%02x:%02x", sum[0], sum[1], sum[2])
 }
 
-// diskTargets 是各总线上客户机看到的设备名前缀；scsi 与 sata 共用 sd。
-var diskTargets = map[computev1alpha1.DiskBus]string{
-	computev1alpha1.DiskBusVirtio: "vd", computev1alpha1.DiskBusSCSI: "sd", computev1alpha1.DiskBusSATA: "sd",
-	computev1alpha1.DiskBusIDE: "hd", computev1alpha1.DiskBusFDC: "fd",
-}
-
-// prepareDomain 把类型化的 firmware、disks、interfaces 渲染进原生 domainXML，并填写 name 与 uuid（ADR-0015）。
-// 这些元素归 Ayatori，domainXML 中出现就拒绝，不静默覆盖。卷解析成具体路径：AppArmor 不会把
-// type='volume' 的源加入实例的 profile（PoC 02）。
+// prepareDomain 把 spec.domain 映射为 domain XML，只填写 Ayatori 拥有的字段（ADR-0026）：name、uuid；绑定的
+// 磁盘的 source 与 driver.type；绑定的网卡的 source、target 与缺省的 mac；VNC/SPICE 的本机 socket 监听。
+// 其余内容原样交给 libvirt。卷解析成具体路径：AppArmor 不会把 type='volume' 的源加入实例的 profile（PoC 02）。
+// 用户不能写这些字段由 CRD 的 CEL 规则保证，这里不再检查。
 func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha1.DomainDisk) (Volume, error)) (string, error) {
-	var dom libvirtxml.Domain
-	if err := dom.Unmarshal(d.Spec.DomainXML); err != nil {
-		return "", fmt.Errorf("parse domainXML: %w", err)
-	}
-	var owned []string
-	if dom.Name != "" {
-		owned = append(owned, "<name>")
-	}
-	if dom.UUID != "" {
-		owned = append(owned, "<uuid>")
-	}
-	if dom.Devices != nil && len(dom.Devices.Disks) > 0 {
-		owned = append(owned, "<disk>")
-	}
-	if dom.Devices != nil && len(dom.Devices.Interfaces) > 0 {
-		owned = append(owned, "<interface>")
-	}
-	if dom.Devices != nil && len(dom.Devices.TPMs) > 0 {
-		owned = append(owned, "<tpm>")
-	}
-	if dom.OS != nil && (dom.OS.Firmware != "" || dom.OS.FirmwareInfo != nil) {
-		owned = append(owned, "<os> firmware")
-	}
-	if dom.OS != nil && dom.OS.Loader != nil {
-		owned = append(owned, "<loader>")
-	}
-	if dom.OS != nil && dom.OS.NVRam != nil {
-		owned = append(owned, "<nvram>")
-	}
-	if len(owned) > 0 {
-		return "", fmt.Errorf("domainXML must not contain %s: Ayatori renders them from spec", strings.Join(owned, ", "))
+	dom, err := domainspec.Decode(d.Spec.Domain.Raw)
+	if err != nil {
+		return "", fmt.Errorf("spec.domain: %w", err)
 	}
 	dom.Name = domainName(d.Namespace, d.Name)
 	dom.UUID = string(d.UID)
 	if dom.Devices == nil {
 		dom.Devices = &libvirtxml.DomainDeviceList{}
 	}
-	renderFirmware(&dom, d.Spec.Firmware)
-	used := map[string]int{}
-	for _, disk := range d.Spec.Disks {
-		vol, err := resolve(disk)
+	for _, b := range d.Spec.Disks {
+		i := slices.IndexFunc(dom.Devices.Disks, func(x libvirtxml.DomainDisk) bool { return x.Alias != nil && x.Alias.Name == b.Alias })
+		if i < 0 {
+			return "", fmt.Errorf("no disk with alias %s", b.Alias)
+		}
+		disk := &dom.Devices.Disks[i]
+		if b.Image != "" && (disk.Device != "cdrom" || disk.ReadOnly == nil) {
+			return "", fmt.Errorf("disk %s: image %s can only back a read-only cdrom", b.Alias, b.Image)
+		}
+		vol, err := resolve(b)
 		if err != nil {
-			return "", fmt.Errorf("resolve disk %s: %w", disk.Volume+disk.Image, err)
+			return "", fmt.Errorf("resolve disk %s: %w", b.Alias, err)
 		}
-		bus := cmp.Or(disk.Bus, computev1alpha1.DiskBusVirtio)
-		prefix := diskTargets[bus]
-		x := libvirtxml.DomainDisk{
-			Device: "disk",
-			Driver: &libvirtxml.DomainDiskDriver{Name: "qemu", Type: formatRaw},
-			Target: &libvirtxml.DomainDiskTarget{Dev: prefix + string(rune('a'+used[prefix])), Bus: string(bus)},
+		if disk.Driver == nil {
+			disk.Driver = &libvirtxml.DomainDiskDriver{}
 		}
-		used[prefix]++
-		if bus == computev1alpha1.DiskBusFDC {
-			x.Device = "floppy"
-		}
+		disk.Driver.Name = cmp.Or(disk.Driver.Name, "qemu")
+		disk.Driver.Type = formatRaw
 		if vol.Format != "" && vol.Format != "iso" {
-			x.Driver.Type = vol.Format
+			disk.Driver.Type = vol.Format
 		}
 		if vol.Block {
-			x.Source = &libvirtxml.DomainDiskSource{Block: &libvirtxml.DomainDiskSourceBlock{Dev: vol.Path}}
+			disk.Source = &libvirtxml.DomainDiskSource{Block: &libvirtxml.DomainDiskSourceBlock{Dev: vol.Path}}
 		} else {
-			x.Source = &libvirtxml.DomainDiskSource{File: &libvirtxml.DomainDiskSourceFile{File: vol.Path}}
+			disk.Source = &libvirtxml.DomainDiskSource{File: &libvirtxml.DomainDiskSourceFile{File: vol.Path}}
 		}
-		if disk.Image != "" {
-			x.Device = "cdrom"
-		}
-		if disk.ReadOnly || disk.Image != "" {
-			x.ReadOnly = &libvirtxml.DomainDiskReadOnly{}
-		}
-		if disk.BootOrder > 0 {
-			x.Boot = &libvirtxml.DomainDeviceBoot{Order: uint(disk.BootOrder)}
-		}
-		dom.Devices.Disks = append(dom.Devices.Disks, x)
 	}
-	for i, nic := range d.Spec.Interfaces {
-		mac := strings.ToLower(cmp.Or(nic.MAC, macAddress(string(d.UID), i)))
-		dom.Devices.Interfaces = append(dom.Devices.Interfaces, libvirtxml.DomainInterface{
-			Source: &libvirtxml.DomainInterfaceSource{Network: &libvirtxml.DomainInterfaceSourceNetwork{Network: nic.Network}},
-			MAC:    &libvirtxml.DomainInterfaceMAC{Address: mac},
-			Model:  &libvirtxml.DomainInterfaceModel{Type: cmp.Or(nic.Model, "virtio")},
-			Target: &libvirtxml.DomainInterfaceTarget{Dev: naming.PortName(string(d.UID), i)},
-		})
-	}
-	return dom.Marshal()
-}
-
-// renderFirmware 让 libvirt 按固件描述文件自动选择 OVMF，SMM 也由它按描述文件打开。不写 <nvram> 和
-// vTPM 的 <source>：本地存储用节点默认位置（ADR-0015）；DRBD 上的块设备随 LINSTOR 集成加入（ADR-0020）。
-// BIOS 不写 firmware 属性，libvirt 默认就是 SeaBIOS，节点也不必有 BIOS 的描述文件。
-func renderFirmware(dom *libvirtxml.Domain, f *computev1alpha1.DomainFirmware) {
-	if f == nil {
-		return
-	}
-	if f.Type == computev1alpha1.FirmwareUEFI {
-		if dom.OS == nil {
-			dom.OS = &libvirtxml.DomainOS{}
+	for n, b := range d.Spec.Interfaces {
+		i := slices.IndexFunc(dom.Devices.Interfaces, func(x libvirtxml.DomainInterface) bool { return x.Alias != nil && x.Alias.Name == b.Alias })
+		if i < 0 {
+			return "", fmt.Errorf("no interface with alias %s", b.Alias)
 		}
-		dom.OS.Firmware = "efi"
-		if dom.Features == nil {
-			dom.Features = &libvirtxml.DomainFeatureList{}
+		nic := &dom.Devices.Interfaces[i]
+		nic.Source = &libvirtxml.DomainInterfaceSource{Network: &libvirtxml.DomainInterfaceSourceNetwork{Network: b.Network}}
+		nic.Target = &libvirtxml.DomainInterfaceTarget{Dev: naming.PortName(string(d.UID), n)}
+		if nic.MAC == nil {
+			nic.MAC = &libvirtxml.DomainInterfaceMAC{Address: macAddress(string(d.UID), n)}
 		}
-		dom.Features.ACPI = &libvirtxml.DomainFeature{} // UEFI 必须有 ACPI，否则 libvirt 拒绝 define
-		features := []libvirtxml.DomainOSFirmwareFeature{{Enabled: "no", Name: "secure-boot"}}
-		if f.SecureBoot { // enrolled-keys：预置微软密钥，Windows 和带 shim 的 Linux 才能启动（PoC 02）
-			features = []libvirtxml.DomainOSFirmwareFeature{{Enabled: "yes", Name: "secure-boot"}, {Enabled: "yes", Name: "enrolled-keys"}}
+	}
+	// 控制台不对外暴露端口，只监听本机 unix socket，由 Agent 中继（ADR-0016）。
+	socket := []libvirtxml.DomainGraphicListener{{Socket: &libvirtxml.DomainGraphicListenerSocket{}}}
+	for _, g := range dom.Devices.Graphics {
+		if g.VNC != nil {
+			g.VNC.Listeners = socket
 		}
-		dom.OS.FirmwareInfo = &libvirtxml.DomainOSFirmwareInfo{Features: features}
+		if g.Spice != nil {
+			g.Spice.Listeners = socket
+		}
 	}
-	if f.TPM {
-		dom.Devices.TPMs = []libvirtxml.DomainTPM{{
-			Model:   "tpm-crb",
-			Backend: &libvirtxml.DomainTPMBackend{Emulator: &libvirtxml.DomainTPMBackendEmulator{Version: "2.0"}},
-		}}
+	xml, err := domainspec.Marshal(dom)
+	if err != nil {
+		return "", fmt.Errorf("spec.domain: %w", err)
 	}
+	return xml, nil
 }
 
 // prepareNetwork 与 preparePool 把 name 与 uuid 填为对象名与 UID：各节点上同名，domain 按名字引用。

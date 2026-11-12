@@ -111,8 +111,8 @@ LINSTOR API，自动冷启动依赖 DRBD quorum 与 drbd-reactor，在线迁移�
 
 | volume | 内容 | 写入方 |
 |---|---|---|
-| 磁盘 | 客户机磁盘，多块盘各占一个 volume | 用户在 `disks` 中引用卷对象，Agent 渲染 |
-| NVRAM | raw 块设备，`<nvram type='block'>` | Agent 按 `firmware` 渲染；`domainXML` 中出现即拒绝（ADR-0015） |
+| 磁盘 | 客户机磁盘，多块盘各占一个 volume | 用户在 `disks` 中按 alias 绑定卷对象，Agent 填写 source |
+| NVRAM | raw 块设备，`<nvram type='block'>` | `os.firmware` 为 `efi` 时由 Agent 填写；`os.nvRam` 归 Ayatori，写了即拒绝（ADR-0026） |
 | vTPM 状态 | raw 块设备，`<backend type='emulator'><source type='file' path='/dev/drbd/by-res/...'/>` | 同上 |
 | 状态卷 | ext4，几十 MiB，只放电源意图标记 | 监管进程 |
 
