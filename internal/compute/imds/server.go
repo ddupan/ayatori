@@ -89,6 +89,8 @@ func (h *handler) nocloud(w http.ResponseWriter, r *http.Request, file string) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// user-data 是用户写的任意文本，固定为纯文本返回（ServeHTTP 已设置，这里写明，不依赖调用方）。
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	inst := h.instance.Load()
 	switch file {
 	case "meta-data":
