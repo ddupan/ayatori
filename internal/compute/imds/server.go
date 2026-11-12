@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -38,6 +38,9 @@ func newHandler(inst Instance) *handler {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 值来自实例名等用户输入，固定为纯文本，避免被当作 HTML 解析。
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Path == "/latest/api/token" {
 		h.token(w, r)
 		return
@@ -64,9 +67,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		http.NotFound(w, r)
 	case key == "":
-		_, _ = fmt.Fprint(w, "instance-id\nlocal-hostname\nkind\nnamespace\nname\nnode")
+		_, _ = io.WriteString(w, "instance-id\nlocal-hostname\nkind\nnamespace\nname\nnode")
 	case meta[key] != "":
-		_, _ = fmt.Fprint(w, meta[key])
+		_, _ = io.WriteString(w, meta[key])
 	default:
 		http.NotFound(w, r)
 	}
@@ -100,7 +103,7 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 	h.tokens[token] = now.Add(time.Duration(seconds) * time.Second)
 	h.mu.Unlock()
 	w.Header().Set(tokenTTLHeader, strconv.Itoa(seconds))
-	_, _ = fmt.Fprint(w, token)
+	_, _ = io.WriteString(w, token)
 }
 
 func (h *handler) valid(token string) bool {
