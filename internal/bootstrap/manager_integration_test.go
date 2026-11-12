@@ -106,7 +106,7 @@ func createLoadBalancerCredentials(t *testing.T, config *rest.Config) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "loadbalancer-hosts", Namespace: "default"},
+	secret := &corev1.Secret{Name: "loadbalancer-hosts", Namespace: "default",
 		Data: map[string][]byte{"powerdns-api-key": []byte("AYATORI-TEST-ONLY")}}
 	if _, err := clientset.CoreV1().Secrets("default").Create(t.Context(), secret, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
