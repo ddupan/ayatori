@@ -22,9 +22,13 @@ env:
   # envtest 与 golangci-lint 走 Artifact Keeper 的缓存，不直连 GitHub。
   GITHUB_RELEASES: https://artifacts.lab.ddupan.top/api/v1/repositories/github-releases/download
 
+# test 与 lint 都在云端池（GKE Autopilot，gitea-dynamic-runner 的 cloud-scheduler）运行：不需要 Docker 和内网。
+# 云端连不上内网：envtest 与 golangci-lint 直接从 GitHub release 下载，在 job 级覆盖上面的 Artifact Keeper 前缀。
 jobs:
   test:
-    runs-on: [self-hosted, pod]
+    runs-on: [cloud]
+    env:
+      GITHUB_RELEASES: https://github.com
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,6 +37,8 @@ jobs:
 
       - name: Set up Go
         uses: ./.gitea/actions/setup-go
+        with:
+          cloud: 'true'
 
       - name: Verify generated files and tests
         run: |
@@ -45,10 +51,8 @@ jobs:
           go build -o bin/manager cmd/main.go
           ./bin/manager --help
 
-  # 云端池（GKE Autopilot，gitea-dynamic-runner 的 cloud-scheduler）。lint 不需要 Docker 和内网。
   lint:
     runs-on: [cloud]
-    # 云端连不上内网：golangci-lint 直接从 GitHub release 下载，覆盖 workflow 级的 Artifact Keeper 前缀。
     env:
       GITHUB_RELEASES: https://github.com
     steps:
