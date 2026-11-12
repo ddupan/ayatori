@@ -11,6 +11,7 @@ import (
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/libvirt"
+	"go.ddupan.top/ayatori/internal/compute/naming"
 )
 
 // sysRoot 是 sysfs 的挂载点。
@@ -116,7 +117,7 @@ func (a *Agent) collectContainerStats(seen map[objectID]bool) []instanceStats {
 		}
 		ports := make([]string, len(c.Spec.Networks))
 		for i := range c.Spec.Networks {
-			ports[i] = portName(string(c.UID), i)
+			ports[i] = naming.PortName(string(c.UID), i)
 		}
 		if s, ok := containerStats(sysRoot, domainName(c.Namespace, c.Name), ports); ok {
 			out = append(out, instanceStats{c.Namespace, c.Name, s})

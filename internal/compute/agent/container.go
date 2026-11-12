@@ -10,6 +10,7 @@ import (
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
 	"go.ddupan.top/ayatori/internal/compute/adapter/lxc"
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
+	"go.ddupan.top/ayatori/internal/compute/naming"
 )
 
 // ContainerRuntime 是节点上的 LXC 操作。liblxc 没有 libvirt 那样的进程内 test 驱动，集成测试换成内存实现，
@@ -50,7 +51,7 @@ func prepareContainer(c *computev1alpha1.LXCContainer, rootfs Volume, bridge fun
 			mac = macAddress(string(c.UID), i)
 		}
 		fmt.Fprintf(&b, "lxc.net.%[1]d.type = veth\nlxc.net.%[1]d.link = %[2]s\nlxc.net.%[1]d.flags = up\n"+
-			"lxc.net.%[1]d.hwaddr = %[3]s\nlxc.net.%[1]d.veth.pair = %[4]s\n", i, link, mac, portName(string(c.UID), i))
+			"lxc.net.%[1]d.hwaddr = %[3]s\nlxc.net.%[1]d.veth.pair = %[4]s\n", i, link, mac, naming.PortName(string(c.UID), i))
 	}
 	return b.String(), nil
 }

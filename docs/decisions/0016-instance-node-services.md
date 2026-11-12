@@ -64,6 +64,18 @@
   OpenStack 的 metadata proxy 需要额外签名的 header 才能防伪，宿主机上则直接掌握这个事实。
   PoC 04 的做法：bridge 层按入口端口打 mark，三层按 mark DNAT 到该实例专属的端口；不需要
   `br_netfilter`。
+- **宿主机在实例的 bridge 上不需要 IP**（bridge 直连物理 VLAN 时通常没有；PoC 04、07 中恰好有）。
+  2026-11-11 在 compute-dev1 上验证：
+  - `169.254.169.254/32` 放在独立的 dummy 接口 `ayimds0` 上，arp 表丢弃对它的 ARP 请求，宿主机
+    不在任何链路上应答这个地址；
+  - DNAT 时把 mark 存入 connmark，本机回包在 output 取回 mark，按 fwmark 查一张只有
+    `default dev <bridge> src 169.254.169.254` 的路由表，从实例所在的 bridge 发出；
+  - bridge 打开 `src_valid_mark`，否则源地址校验按主路由表反查，请求被 rp_filter 丢弃；
+  - **回包只能从该实例的端口发出**（bridge output 按 mark 限制出口）。同一链路上的邻居把实例当
+    路由器时，请求从实例的端口进入，回包却会直接发给邻居，TTL=1 拦不住；限制出口后回包只能交给
+    实例，再转发一跳即被丢弃。
+- **`ayatori-imds` 不修改 Chef 管理的 bridge**，规则整表原子替换并定期重新下发，被 flush 后自动恢复；
+  退出时保留规则：去掉拦截后，实例的请求会经网关发到网络上的任意主机。
 - **实例端口名由 Agent 固定**：渲染 `interfaces` 时在 domain 中写 `<target dev='ay-<实例>'/>`，LXC 写
   `lxc.net.N.veth.pair`。默认的 `vnetN` 在冷启动后会变，按端口写的规则随之失效（PoC 04）。
 - **防 SSRF，照搬 AWS IMDSv2**：先 PUT 换取会话 token；响应包的 IP TTL 设为 1，嵌套容器或被转发的
@@ -72,6 +84,8 @@
 - **TTL 可按实例调整**：默认 1。实例内还要运行容器（Docker 默认网络多一跳）时，用
   `spec.metadata.hopLimit` 调大，对应 EC2 的 `HttpPutResponseHopLimit`。每个实例本来就有自己的
   监听 socket，按实例设置不需要额外机制。
+- **元数据来源**：Ayatori 计算节点上只读 Compute Agent 的本地状态，不另定接口：二者随同一 release
+  发布，本地状态只含分配给本节点的实例，控制面不可用时同样可用。
 - **不依赖客户机路由**：拦截发生在 bridge 层，客户机把请求发给哪个网关都能拦到，retro 和
   Windows 也不需要任何配置。下发 `169.254.169.254/32` 主机路由（cloud-init network-config 或
   DHCP option 121）只解决**没有默认网关的隔离网络**里请求发不出去的问题，OpenStack 的 DHCP
