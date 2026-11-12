@@ -1,6 +1,6 @@
 # ADR-0025：LB agent 开启 BGP graceful restart
 
-- 状态：Proposed（lb-dev 实验已完成；实现与测试见「待验证」）
+- 状态：Accepted（v0.4.0；Dev 与 Prod 于 2026-11-12 开启并验证，见「验证」）
 - 日期：2026-11-11
 - 依据：维护者讨论（[ADR-0024](0024-unified-version-with-skew.md) 的讨论中确认：agent 重启的代价
   落在数据面，是不强制同版本部署的主要原因）。
@@ -101,12 +101,15 @@ lb-dev-2 上，所以动作都在 lb-dev-2 上执行。restart time 为 30s。
 让后端健康不影响宣告，但它针对的是稳态；HAProxy 刚启动、检查尚未完成时是否应该推迟首次宣告，
 另行讨论。
 
-## 待验证
+## 验证
 
 - [x] 集成测试（`TestAgentGracefulRestart`）：GoBGP 作为 helper 路由器，覆盖 SIGKILL 式断开时保留、
       restart time 到期撤回、`Stop` 时立即撤回，以及重启期间路由器不撤回任何路径。「先填 RIB 再
       连接」本身测不出来：GoBGP 首次主动连接前有延迟，去掉连接前的那次收敛测试照样通过；这个顺序
       只是不依赖该延迟的保证。
-- [ ] cookbook 写入 `gracefulRestartTime`，升级时以 SIGKILL 重启 agent；在 Dev 与 Prod 的 policy
-      中开启。
-- [ ] Prod 上逐台验证一次 J 组。
+- [x] cookbook 写入 `gracefulRestartTime`，开启后以 SIGKILL 重启 agent（homelab-cookbooks #38，
+      v0.4.15）；Dev 与 Prod 的 policy 开启 30s（homelab-infra #719、#727）。这次是从未开 GR 的
+      0.3.0 升级，被杀的旧 agent 不会触发保留，因此仍逐台 apply；之后的升级不再需要。
+- [x] J 组：在 lb-dev-2、lb-prod-1、lb-prod-2 上，按 cookbook 的方式 SIGKILL agent，systemd 约 5s
+      后拉起，同时每 0.5s 采样一次 VyOS 路由，共 40s，期间 VIP 的两个 nexthop 一直都在。FRR 显示会话
+      协商了 GR（Remote Restart timer 30s），重连后收到 End-of-RIB。
