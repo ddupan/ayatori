@@ -169,6 +169,7 @@ spec:
 | `os.loader` 的路径、`os.nvram` | 固件与 NVRAM 状态的位置 |
 | `devices.tpms[*].backend.emulator.source` | vTPM 状态的位置 |
 | `devices.graphics[*]` 的监听（地址、端口、socket） | 只监听本机 unix socket，由 Agent 中继（ADR-0016） |
+| 写了 `userData` 时：`os.smBios`、SMBIOS 的 system serial | 指向元数据服务上的 NoCloud seed（ADR-0016）；SMBIOS 的其他内容由用户写 |
 
 - **所有权以字段为单位，不以元素为单位。** 用户可以在同一列表里加自己的条目：第二个串口、额外的光驱都
   可以写。以后接管新的字段仍是不兼容变更，但范围缩小到具体字段。

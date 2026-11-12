@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -174,6 +176,27 @@ func (s *suite) managesContainers(t *testing.T) {
 		return nil
 	})
 
+	// userData：seed 写入本地状态目录，只读挂载给容器内的 cloud-init。
+	seed := filepath.Join(s.config.StateDir, "seed", libvirtName)
+	patch := client.MergeFrom(c.DeepCopy())
+	c.Spec.UserData = "#cloud-config\nruncmd: [true]\n"
+	if err := s.k.Patch(t.Context(), c, patch); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 30*time.Second, func() error {
+		got, _ := containers.Config(libvirtName)
+		if !strings.Contains(got, "lxc.mount.entry = "+seed+" var/lib/cloud/seed/nocloud none bind,ro,create=dir 0 0\n") {
+			return fmt.Errorf("seed not mounted:\n%s", got)
+		}
+		if data, err := os.ReadFile(filepath.Join(seed, "user-data")); err != nil || string(data) != c.Spec.UserData { //nolint:gosec // 测试目录
+			return fmt.Errorf("user-data = %q, %v", data, err)
+		}
+		if data, err := os.ReadFile(filepath.Join(seed, "meta-data")); err != nil || !strings.Contains(string(data), "instance-id: "+string(c.UID)) { //nolint:gosec // 同上
+			return fmt.Errorf("meta-data = %q, %v", data, err)
+		}
+		return nil
+	})
+
 	// 容器停止（崩溃或容器内 poweroff，liblxc 区分不了）：拉起。
 	before := containers.ct1Starts()
 	containers.set(libvirtName, stateStopped)
@@ -185,7 +208,7 @@ func (s *suite) managesContainers(t *testing.T) {
 	})
 
 	// runState 为 Stopped 时停止后不拉起，也不算应运行。
-	patch := client.MergeFrom(c.DeepCopy())
+	patch = client.MergeFrom(c.DeepCopy())
 	c.Spec.RunState = computev1alpha1.RunStateStopped
 	if err := s.k.Patch(t.Context(), c, patch); err != nil {
 		t.Fatal(err)
@@ -215,6 +238,9 @@ func (s *suite) managesContainers(t *testing.T) {
 	eventually(t, 30*time.Second, func() error {
 		if found, _ := containers.Container(libvirtName); found.Found || s.volumeExists(t, rootfs) {
 			return fmt.Errorf("container %+v or its volume still exists", found)
+		}
+		if _, err := os.Stat(seed); !os.IsNotExist(err) {
+			return fmt.Errorf("seed still exists: %v", err)
 		}
 		return nil
 	})

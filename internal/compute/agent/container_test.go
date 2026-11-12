@@ -27,7 +27,7 @@ func TestPrepareContainer(t *testing.T) {
 	bridge := func(n string) (string, error) { return "br-" + n, nil }
 	file := Volume{Path: "/p/root", Format: formatRaw}
 	got, err := prepareContainer(container("lxc.arch = linux64\n", computev1alpha1.ContainerNetwork{Network: lan},
-		computev1alpha1.ContainerNetwork{Network: "wan", MAC: "02:00:00:00:00:02"}), file, bridge)
+		computev1alpha1.ContainerNetwork{Network: "wan", MAC: "02:00:00:00:00:02"}), file, "", bridge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,29 +39,58 @@ func TestPrepareContainer(t *testing.T) {
 		}
 	}
 
-	got, err = prepareContainer(container("lxc.arch = linux64"), Volume{Path: "/dev/drbd1", Block: true}, bridge)
+	if strings.Contains(got, "lxc.mount.entry") {
+		t.Errorf("no userData, no seed mount:\n%s", got)
+	}
+	got, err = prepareContainer(container("lxc.arch = linux64"), file, "/state/seed/ns_web", bridge)
+	if err != nil || !strings.Contains(got, "lxc.mount.entry = /state/seed/ns_web var/lib/cloud/seed/nocloud none bind,ro,create=dir 0 0\n") {
+		t.Errorf("seed must be mounted read-only: %v\n%s", err, got)
+	}
+
+	got, err = prepareContainer(container("lxc.arch = linux64"), Volume{Path: "/dev/drbd1", Block: true}, "", bridge)
 	if err != nil || !strings.Contains(got, "lxc.rootfs.path = /dev/drbd1\n") {
 		t.Errorf("block rootfs must be used directly: %v\n%s", err, got)
 	}
-	if _, err = prepareContainer(container("lxc.arch = linux64"), Volume{Path: "/p/root", Format: "qcow2"}, bridge); err == nil {
+	if _, err = prepareContainer(container("lxc.arch = linux64"), Volume{Path: "/p/root", Format: "qcow2"}, "", bridge); err == nil {
 		t.Error("a qcow2 file cannot be a rootfs")
 	}
 	broken := errors.New("no bridge")
-	if _, err = prepareContainer(container("x = 1", computev1alpha1.ContainerNetwork{Network: lan}), file,
+	if _, err = prepareContainer(container("x = 1", computev1alpha1.ContainerNetwork{Network: lan}), file, "",
 		func(string) (string, error) { return "", broken }); !errors.Is(err, broken) {
 		t.Errorf("bridge error lost: %v", err)
 	}
 }
 
+func TestWriteSeed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "seed", "ns_web")
+	c := container("")
+	c.Spec.UserData = "#cloud-config\npackages: [htop]\n"
+	if err := writeSeed(dir, c); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"meta-data": "instance-id: 0123456789abcdef\nlocal-hostname: web\n", "user-data": c.Spec.UserData} {
+		if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	c.Spec.UserData = "#cloud-config\n"
+	if err := writeSeed(dir, c); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "user-data")); string(got) != c.Spec.UserData {
+		t.Errorf("user-data not updated: %q", got)
+	}
+}
+
 func TestPrepareContainerRejectsOwnedKeys(t *testing.T) {
 	for _, line := range []string{"lxc.uts.name = x", "lxc.rootfs.path=dir:/x", "  lxc.net.0.type = veth", "lxc.net ="} {
-		_, err := prepareContainer(container("lxc.arch = linux64\n"+line+"\n"), Volume{Format: formatRaw}, nil)
+		_, err := prepareContainer(container("lxc.arch = linux64\n"+line+"\n"), Volume{Format: formatRaw}, "", nil)
 		if err == nil || !strings.Contains(err.Error(), "owned by Ayatori") {
 			t.Errorf("%q: got %v", line, err)
 		}
 	}
 	for _, line := range []string{"# lxc.net.0.type = veth", "lxc.rootfs.options = noatime", "lxc.include = /c"} {
-		if _, err := prepareContainer(container(line), Volume{Format: formatRaw}, nil); err != nil {
+		if _, err := prepareContainer(container(line), Volume{Format: formatRaw}, "", nil); err != nil {
 			t.Errorf("%q must pass through: %v", line, err)
 		}
 	}
