@@ -9,6 +9,9 @@
   [ADR-0020](0020-linstor-drbd-storage-integration.md)，本 ADR 只保留计算核心与存储能力的契约。
 - 修订：2026-11-06 domain 改为类型化设备（`disks`、`interfaces`、`firmware`）加原生 XML，Ayatori 拥有的
   元素出现在原生配置中即拒绝；新增 `Image` 资源与卷的 `source.image`（ADR-0019 §9）。
+- 修订：2026-11-12 `LibvirtDomain` 的 `domainXML` 改为由 libvirtxml 机械映射的结构化 `domain`，所有权按字段
+  由 CEL 校验，见 [ADR-0026](0026-structured-libvirt-domain-spec.md)；下文"domain：类型化设备 + 原生 XML"
+  中与之冲突的部分以 ADR-0026 为准。
 
 ## 问题
 
@@ -45,6 +48,7 @@
   换存储后端要改 domain，抽象泄漏。
 - **从 libvirt schema 生成完整的 YAML API**：CRD 过于庞大且要追随 libvirt 版本，XML↔YAML 的映射
   又是一种需要学习的方言。
+  （2026-11-12：已由 [ADR-0026](0026-structured-libvirt-domain-spec.md) 取代，spike 的结果逐条回应了这三点。）
 - **单独的 REST API 服务**：动态资源对 CRD 不构成阻碍，Pod 本身就是高频创建和销毁的对象。自建
   REST 服务要重新实现 watch、RBAC、审计、乐观并发和版本化，Agent 也就没法再用 informer watch。
 
@@ -88,10 +92,13 @@
 | `LibvirtNetwork` | 原生 network XML + `nodeSelector` | 匹配的节点 |
 | `LibvirtStorageVolume` | 一种存储后端（互斥）：`libvirt` 为 pool 引用 + 原生 volume XML 或 `size`，LINSTOR 为 `linstor`（ADR-0020）；本地存储的 `nodeName`；可选 `source.image` 从镜像创建；`reclaimPolicy`（`Retain`/`Delete`） | 共享 pool 在任一就绪节点创建一次；本地 pool 在指定节点创建 |
 | `Image` | `type`（`Disk`/`ISO`/`Rootfs`）、存放的 pool、`source`（`http` 或 `oci`），见 ADR-0019 §9 | 匹配的节点，每个节点一份 |
-| `LibvirtDomain` | 类型化的 `disks`、`interfaces`、`firmware`，加上不含这些元素的原生 `domainXML` | 候选节点 |
+| `LibvirtDomain` | 结构化的 `domain`（libvirtxml 的机械映射），`disks`/`interfaces` 按 alias 引用 Ayatori 对象（ADR-0026） | 候选节点 |
 | `LXCContainer` | `spec.config` 原生 lxc config 文本，`rootfs` 引用 volume，`networks` 引用 network | 候选节点 |
 
 #### domain：类型化设备 + 原生 XML
+
+> 2026-11-12：`domainXML` 已改为结构化的 `domain`，见 [ADR-0026](0026-structured-libvirt-domain-spec.md)。
+> 本节"按归属拆开"的动机仍然成立，具体形态以 ADR-0026 为准。
 
 最初的做法是在 domain XML 中直接写原生引用（`<source pool='…' volume='…'/>`），由 Agent 补填和改写
 少数字段。随着需求增加，要改写的字段越来越多：卷引用解析成路径（AppArmor，PoC 02）、网卡端口名
