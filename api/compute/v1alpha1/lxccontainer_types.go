@@ -29,6 +29,11 @@ type LXCContainerSpec struct {
 	// +listType=atomic
 	// +optional
 	Networks []ContainerNetwork `json:"networks,omitempty"`
+	// UserData 是 cloud-init 的 user-data（ADR-0016）。写了它，Agent 生成 NoCloud seed（meta-data 与 user-data），
+	// 只读挂载到容器的 /var/lib/cloud/seed/nocloud。不得包含密钥：每个计算节点的 Agent 都能读到它。
+	// +kubebuilder:validation:MaxLength=65536
+	// +optional
+	UserData string `json:"userData,omitempty"`
 	// NodeName 是运行容器的节点。本版本只支持显式指定。
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253

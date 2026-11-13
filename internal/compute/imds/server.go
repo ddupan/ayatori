@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"go.ddupan.top/ayatori/internal/compute/cloudinit"
 )
 
 const (
@@ -45,6 +47,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.token(w, r)
 		return
 	}
+	if file, ok := strings.CutPrefix(r.URL.Path, "/nocloud/"); ok {
+		h.nocloud(w, r, file)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -69,7 +75,30 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case key == "":
 		_, _ = io.WriteString(w, "instance-id\nlocal-hostname\nkind\nnamespace\nname\nnode")
 	case meta[key] != "":
+		// nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- 纯文本（上面设置了 text/plain 与 nosniff），读取方是实例内的程序，不是浏览器
 		_, _ = io.WriteString(w, meta[key])
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// nocloud 提供 cloud-init 的 NoCloud seed（ADR-0016）。cloud-init 以 HTTP 读取 seed 时不会先换取 token，这些路径因此
+// 不要求 token：user-data 按约定不含密钥，响应仍受 IP TTL=1 与按端口识别实例的保护。vendor-data 为空；没有
+// network-config，cloud-init 按默认在第一块网卡上用 DHCP。
+func (h *handler) nocloud(w http.ResponseWriter, r *http.Request, file string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	inst := h.instance.Load()
+	switch file {
+	case "meta-data":
+		// nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- 纯文本（ServeHTTP 设置了 text/plain 与 nosniff），读取方是 cloud-init，不是浏览器
+		_, _ = io.WriteString(w, cloudinit.MetaData(inst.UID, inst.Name))
+	case "user-data":
+		// nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- 同上
+		_, _ = io.WriteString(w, inst.UserData)
+	case "vendor-data":
 	default:
 		http.NotFound(w, r)
 	}
@@ -103,6 +132,7 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 	h.tokens[token] = now.Add(time.Duration(seconds) * time.Second)
 	h.mu.Unlock()
 	w.Header().Set(tokenTTLHeader, strconv.Itoa(seconds))
+	// nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter -- token 是本函数生成的十六进制串
 	_, _ = io.WriteString(w, token)
 }
 

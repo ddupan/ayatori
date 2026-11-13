@@ -16728,6 +16728,13 @@ spec:
                 - Running
                 - Stopped
                 type: string
+              userData:
+                description: |-
+                  UserData 是 cloud-init 的 user-data，原样交给实例（ADR-0016）。写了它，Ayatori 就在 SMBIOS 的 system serial 中
+                  写入 ds=nocloud;s=http://169.254.169.254/nocloud/，cloud-init 从元数据服务读取 meta-data 与 user-data。
+                  不得包含密钥：每个计算节点的 Agent 都能读到它，实例内的任何进程也能不带 token 读到它。
+                maxLength: 65536
+                type: string
             required:
             - domain
             - nodeName
@@ -16768,6 +16775,12 @@ spec:
               rule: '!has(self.interfaces) || self.interfaces.all(b, has(self.domain.devices)
                 && has(self.domain.devices.interfaces) && self.domain.devices.interfaces.exists(i,
                 has(i.alias) && i.alias.name == b.alias))'
+            - message: with userData, os.smBios and the SMBIOS system serial are set
+                by Ayatori to point cloud-init at the metadata service
+              rule: '!has(self.userData) || ((!has(self.domain.os) || !has(self.domain.os.smBios))
+                && (!has(self.domain.sysInfo) || self.domain.sysInfo.all(s, !has(s.smbios)
+                || !has(s.smbios.system) || !has(s.smbios.system.entry) || s.smbios.system.entry.all(e,
+                e.name != ''serial''))))'
           status:
             properties:
               message:

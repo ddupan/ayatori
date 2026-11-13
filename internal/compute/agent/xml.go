@@ -12,6 +12,7 @@ import (
 	"libvirt.org/go/libvirtxml"
 
 	computev1alpha1 "go.ddupan.top/ayatori/api/compute/v1alpha1"
+	"go.ddupan.top/ayatori/internal/compute/cloudinit"
 	"go.ddupan.top/ayatori/internal/compute/domainspec"
 	"go.ddupan.top/ayatori/internal/compute/naming"
 )
@@ -91,6 +92,9 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha
 			nic.MAC = &libvirtxml.DomainInterfaceMAC{Address: macAddress(string(d.UID), n)}
 		}
 	}
+	if d.Spec.UserData != "" {
+		pointCloudInit(dom)
+	}
 	// 控制台不对外暴露端口，只监听本机 unix socket，由 Agent 中继（ADR-0016）。
 	socket := []libvirtxml.DomainGraphicListener{{Socket: &libvirtxml.DomainGraphicListenerSocket{}}}
 	for _, g := range dom.Devices.Graphics {
@@ -106,6 +110,25 @@ func prepareDomain(d *computev1alpha1.LibvirtDomain, resolve func(computev1alpha
 		return "", fmt.Errorf("spec.domain: %w", err)
 	}
 	return xml, nil
+}
+
+// pointCloudInit 在 SMBIOS 的 system serial 中写入 NoCloud seed 的地址，cloud-init 从元数据服务读取 meta-data 与
+// user-data（ADR-0016）。用户的其他 SMBIOS 内容保留；os.smBios 与 system serial 在有 userData 时归 Ayatori（CEL 校验）。
+func pointCloudInit(dom *libvirtxml.Domain) {
+	if dom.OS == nil {
+		dom.OS = &libvirtxml.DomainOS{}
+	}
+	dom.OS.SMBios = &libvirtxml.DomainSMBios{Mode: "sysinfo"}
+	i := slices.IndexFunc(dom.SysInfo, func(s libvirtxml.DomainSysInfo) bool { return s.SMBIOS != nil })
+	if i < 0 {
+		dom.SysInfo = append(dom.SysInfo, libvirtxml.DomainSysInfo{SMBIOS: &libvirtxml.DomainSysInfoSMBIOS{}})
+		i = len(dom.SysInfo) - 1
+	}
+	smbios := dom.SysInfo[i].SMBIOS
+	if smbios.System == nil {
+		smbios.System = &libvirtxml.DomainSysInfoSystem{}
+	}
+	smbios.System.Entry = append(smbios.System.Entry, libvirtxml.DomainSysInfoEntry{Name: "serial", Value: cloudinit.SMBIOSSerial})
 }
 
 // prepareNetwork 与 preparePool 把 name 与 uuid 填为对象名与 UID：各节点上同名，domain 按名字引用。

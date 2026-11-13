@@ -108,6 +108,27 @@ func TestPrepareDomain(t *testing.T) {
 	if _, err := prepareDomain(bad, resolve); err == nil || !strings.Contains(err.Error(), "read-only cdrom") {
 		t.Errorf("image on a writable disk: err = %v", err)
 	}
+	if strings.Contains(out, "sysinfo") || strings.Contains(out, "smbios") {
+		t.Errorf("no userData, no SMBIOS pointer:\n%s", out)
+	}
+
+	// userData：SMBIOS system serial 指向元数据服务上的 NoCloud seed，保留用户的其他 SMBIOS 内容。
+	ci := d.DeepCopy()
+	ci.Spec.UserData = "#cloud-config\n"
+	ci.Spec.Domain = spec(t, strings.Replace(native, "<os>", `<sysinfo type='smbios'><bios><entry name='vendor'>Retro</entry></bios></sysinfo><os>`, 1))
+	if out, err = prepareDomain(ci, resolve); err != nil {
+		t.Fatal(err)
+	}
+	out = regexp.MustCompile(`>\s+<`).ReplaceAllString(out, "><")
+	for _, want := range []string{
+		`<sysinfo type="smbios"><bios><entry name="vendor">Retro</entry></bios><system><entry name="serial">ds=nocloud;s=http://169.254.169.254/nocloud/</entry></system></sysinfo>`,
+		`<smbios mode="sysinfo"></smbios>`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prepared XML lacks %s:\n%s", want, out)
+		}
+	}
+
 	bad = d.DeepCopy()
 	bad.Spec.Disks, bad.Spec.Interfaces = nil, nil
 	bad.Spec.Domain.Raw = []byte(`{"type":"kvm","devices":{"graphics":[{"vnc":{},"spice":{}}]}}`)

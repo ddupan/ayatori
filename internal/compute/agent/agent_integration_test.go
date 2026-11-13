@@ -859,6 +859,16 @@ func (s *suite) validatesDomains(t *testing.T, cd string) {
 		"vnc port":                             vm(raw(`{"type":"test","devices":{"graphics":[{"vnc":{"port":5900}}]}}`), nil, nil),
 		"union with two branches":              vm(raw(`{"type":"test","devices":{"graphics":[{"vnc":{},"spice":{}}]}}`), nil, nil),
 		"unknown field":                        vm(raw(`{"type":"test","bogus":2}`), nil, nil),
+		"own SMBIOS serial with userData": func() *computev1alpha1.LibvirtDomain {
+			d := vm(raw(`{"type":"test","sysInfo":[{"smbios":{"system":{"entry":[{"name":"serial","value":"x"}]}}}]}`), nil, nil)
+			d.Spec.UserData = "#cloud-config\n"
+			return d
+		}(),
+		"smbios mode with userData": func() *computev1alpha1.LibvirtDomain {
+			d := vm(raw(`{"type":"test","os":{"smBios":{"mode":"host"}}}`), nil, nil)
+			d.Spec.UserData = "#cloud-config\n"
+			return d
+		}(),
 	} {
 		if err := s.k.Create(ctx, bad, client.FieldValidation("Strict")); err == nil {
 			_ = s.k.Delete(ctx, bad)

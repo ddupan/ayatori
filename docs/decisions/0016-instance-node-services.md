@@ -5,6 +5,8 @@
 - 依据：维护者讨论；建立在 [ADR-0015](0015-libvirt-lxc-compute-backend.md) 的计算后端之上，与
   [ADR-0010](0010-credential-delivery-ends-at-openbao.md)、[ADR-0013](0013-api-only-control-plane-on-lxc.md)、
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
+- 修订：2026-11-12 VM 的 cloud-init 改为经元数据服务读取 NoCloud seed，不再生成 `cidata` ISO；LXC 的 seed 改为
+  只读挂载，不写入 rootfs。
 
 ## 问题
 
@@ -38,10 +40,27 @@
 
 ### cloud-init：NoCloud seed
 
-- **VM**：Agent 根据 `spec.userData` 和 Ayatori 生成的 meta-data（`instance-id` 取对象 UID）
-  生成 `cidata` ISO，作为只读光驱挂载。PoC 02 中 Alpine 的 SSH key 就是这样注入的。
-- **LXC**：启动前把 seed 写入 rootfs 的 `/var/lib/cloud/seed/nocloud/`，与 Incus 的做法相同。
-- seed 由 Agent 从本地状态生成，冷启动不依赖网络和控制面。
+- **内容**：`spec.userData` 原样作为 user-data；meta-data 由 Ayatori 生成，`instance-id` 取对象 UID，
+  `local-hostname` 取对象名。
+- **VM：经元数据服务读取。** 写了 `userData` 时，Agent 在 SMBIOS 的 system serial 中写入
+  `ds=nocloud;s=http://169.254.169.254/nocloud/`（`os.smBios` 与这一项因此归 Ayatori，ADR-0026）。cloud-init 的
+  ds-identify 据此选用 NoCloud，从元数据服务读取 `meta-data`、`user-data`、`vendor-data`。
+  - 不再生成 `cidata` ISO：不用在节点上生成和清理镜像文件，也不占用一个光驱；user-data 修改后，下次读取即是
+    新内容，冷启动换节点后由新节点的元数据服务提供。
+  - 元数据服务只依赖节点本地状态，冷启动同样不依赖控制面。
+  - cloud-init 以 HTTP 读取 seed 时不会先换取 token，`/nocloud/` 下的路径因此**不要求 IMDSv2 token**。这些内容
+    按约定不含密钥，响应仍受 IP TTL=1 与按端口识别实例的保护；身份等敏感内容仍要求 token。
+  - 没有 `network-config`：cloud-init 默认在第一块网卡上用 DHCP。需要静态地址时再加。
+- **LXC：只读挂载。** 容器能看到宿主机的 DMI，SMBIOS 的做法不适用。Agent 把 seed 写入本地状态目录，以
+  `lxc.mount.entry` 只读挂载到容器的 `/var/lib/cloud/seed/nocloud`，不写入 rootfs：rootfs 是用户的数据，
+  Ayatori 不修改其中的内容。容器删除时 seed 一并删除。
+- 2026-11-12 在 compute-dev1 上验证：
+  - VM（Debian 13 genericcloud）：cloud-init 识别为 `DataSourceNoCloudNet [seed=dmi,http://169.254.169.254/nocloud/]`，
+    按 user-data 设置了 root 密码并写入文件，主机名取对象名；
+  - LXC（images.linuxcontainers.org 的 Debian trixie `cloud` rootfs）：seed 挂载生效，`DataSourceNoCloud
+    [seed=/var/lib/cloud/seed/nocloud]`，instance-id 为对象 UID。但这个 rootfs 自带 `/etc/cloud/cloud-init.disabled`，
+    主机名也是模板占位符 `LXCNAME`：它依赖 Incus 在创建时套用镜像模板。去掉标记后 cloud-init 正常运行。Ayatori
+    不修改 rootfs，要用 cloud-init 的 LXC 镜像必须本身启用了它。
 - `userData` 不得包含密钥，密钥一律通过下文的 SPIFFE 身份向 Bao 取用。
 
 ### 元数据服务：169.254.169.254

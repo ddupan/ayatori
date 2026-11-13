@@ -13,7 +13,7 @@ import (
 	"go.ddupan.top/ayatori/internal/compute/agent/state"
 )
 
-const ns, ct = "infra", "ct1"
+const ns, ct, userData = "infra", "ct1", "#cloud-config\n"
 
 func TestReadPorts(t *testing.T) {
 	dir := t.TempDir()
@@ -29,7 +29,7 @@ func TestReadPorts(t *testing.T) {
 	}
 	const vmUID, ctUID = "11111111-0000-4000-8000-000000000001", "22222222-0000-4000-8000-000000000002"
 	put("LibvirtDomain", ns+"/vm1", vmUID, computev1alpha1.LibvirtDomain{Namespace: ns, Name: "vm1", UID: vmUID,
-		Spec: computev1alpha1.LibvirtDomainSpec{NodeName: "n1", Interfaces: []computev1alpha1.DomainInterface{{Network: "a"}, {Network: "b"}}}})
+		Spec: computev1alpha1.LibvirtDomainSpec{NodeName: "n1", UserData: userData, Interfaces: []computev1alpha1.DomainInterface{{Network: "a"}, {Network: "b"}}}})
 	put("LXCContainer", ns+"/"+ct, ctUID, computev1alpha1.LXCContainer{Namespace: ns, Name: ct, UID: ctUID,
 		Spec: computev1alpha1.LXCContainerSpec{NodeName: "n1", Networks: []computev1alpha1.ContainerNetwork{{Network: "a"}}}})
 	put("LXCContainer", ns+"/gone", "33333333-0000-4000-8000-000000000003", computev1alpha1.LXCContainer{
@@ -49,6 +49,9 @@ func TestReadPorts(t *testing.T) {
 	want := "ay11111111n0=LibvirtDomain:infra/vm1@n1 ay11111111n1=LibvirtDomain:infra/vm1@n1 ay22222222n0=LXCContainer:infra/ct1@n1"
 	if strings.Join(got, " ") != want {
 		t.Errorf("ports = %v, want %s (deleted instances excluded)", got, want)
+	}
+	if ports[0].Instance.UserData != userData {
+		t.Errorf("user-data = %q", ports[0].Instance.UserData)
 	}
 }
 
@@ -70,7 +73,7 @@ func TestRenderRules(t *testing.T) {
 
 func TestHandler(t *testing.T) {
 	now := time.Unix(1000, 0)
-	h := newHandler(Instance{Kind: "LXCContainer", Namespace: ns, Name: ct, UID: "uid-1", Node: "n1"})
+	h := newHandler(Instance{Kind: "LXCContainer", Namespace: ns, Name: ct, UID: "uid-1", Node: "n1", UserData: userData})
 	h.now = func() time.Time { return now }
 	do := func(method, path string, header map[string]string) (int, string) {
 		r := httptest.NewRequest(method, path, nil)
@@ -120,6 +123,22 @@ func TestHandler(t *testing.T) {
 	}
 	if code, _ := do(http.MethodGet, "/latest/meta-data/instance-id", map[string]string{tokenHeader: "forged"}); code != http.StatusUnauthorized {
 		t.Errorf("forged token = %d", code)
+	}
+	// NoCloud seed：cloud-init 读取时不带 token。
+	for path, want := range map[string]string{
+		"/nocloud/meta-data":   "instance-id: uid-1\nlocal-hostname: " + ct + "\n",
+		"/nocloud/user-data":   userData,
+		"/nocloud/vendor-data": "",
+	} {
+		if code, body := do(http.MethodGet, path, nil); code != http.StatusOK || body != want {
+			t.Errorf("GET %s = %d %q, want %q", path, code, body, want)
+		}
+	}
+	if code, _ := do(http.MethodGet, "/nocloud/network-config", nil); code != http.StatusNotFound {
+		t.Errorf("network-config = %d", code)
+	}
+	if code, _ := do(http.MethodPut, "/nocloud/user-data", nil); code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT user-data = %d", code)
 	}
 	now = now.Add(61 * time.Second)
 	if code, _ := do(http.MethodGet, "/latest/meta-data/instance-id", auth); code != http.StatusUnauthorized {

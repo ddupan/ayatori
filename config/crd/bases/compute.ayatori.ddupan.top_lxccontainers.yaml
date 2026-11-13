@@ -92,6 +92,12 @@ spec:
                 - Running
                 - Stopped
                 type: string
+              userData:
+                description: |-
+                  UserData 是 cloud-init 的 user-data（ADR-0016）。写了它，Agent 生成 NoCloud seed（meta-data 与 user-data），
+                  只读挂载到容器的 /var/lib/cloud/seed/nocloud。不得包含密钥：每个计算节点的 Agent 都能读到它。
+                maxLength: 65536
+                type: string
             required:
             - config
             - nodeName

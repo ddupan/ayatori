@@ -17,6 +17,8 @@ type Instance struct {
 	Name      string
 	UID       string
 	Node      string
+	// UserData 是 cloud-init 的 user-data，经 NoCloud seed 提供（ADR-0016）。
+	UserData string
 }
 
 // Port 是实例的一块网卡在宿主机上的端口。
@@ -44,7 +46,7 @@ func readPorts(stateDir string) ([]Port, error) {
 			return nil, err
 		}
 		if !r.Deleted {
-			add(Instance{Kind: r.Kind, Namespace: d.Namespace, Name: d.Name, UID: string(d.UID), Node: d.Spec.NodeName}, len(d.Spec.Interfaces))
+			add(Instance{Kind: r.Kind, Namespace: d.Namespace, Name: d.Name, UID: string(d.UID), Node: d.Spec.NodeName, UserData: d.Spec.UserData}, len(d.Spec.Interfaces))
 		}
 	}
 	for _, r := range store.List("LXCContainer") {
@@ -53,7 +55,7 @@ func readPorts(stateDir string) ([]Port, error) {
 			return nil, err
 		}
 		if !r.Deleted {
-			add(Instance{Kind: r.Kind, Namespace: c.Namespace, Name: c.Name, UID: string(c.UID), Node: c.Spec.NodeName}, len(c.Spec.Networks))
+			add(Instance{Kind: r.Kind, Namespace: c.Namespace, Name: c.Name, UID: string(c.UID), Node: c.Spec.NodeName, UserData: c.Spec.UserData}, len(c.Spec.Networks))
 		}
 	}
 	return ports, nil

@@ -58,6 +58,7 @@ type DomainInterface struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.domain.devices) || !has(self.domain.devices.graphics) || self.domain.devices.graphics.all(g, (!has(g.vnc) || !(has(g.vnc.socket) || has(g.vnc.port) || has(g.vnc.autoPort) || has(g.vnc.webSocket) || has(g.vnc.listen) || has(g.vnc.listeners))) && (!has(g.spice) || !(has(g.spice.port) || has(g.spice.tlsPort) || has(g.spice.autoPort) || has(g.spice.listen) || has(g.spice.listeners))))",message="VNC and SPICE listen on a local unix socket set by Ayatori"
 // +kubebuilder:validation:XValidation:rule="!has(self.disks) || self.disks.all(b, has(self.domain.devices) && has(self.domain.devices.disks) && self.domain.devices.disks.exists(d, has(d.alias) && d.alias.name == b.alias))",message="every spec.disks alias must name a disk in domain.devices.disks"
 // +kubebuilder:validation:XValidation:rule="!has(self.interfaces) || self.interfaces.all(b, has(self.domain.devices) && has(self.domain.devices.interfaces) && self.domain.devices.interfaces.exists(i, has(i.alias) && i.alias.name == b.alias))",message="every spec.interfaces alias must name an interface in domain.devices.interfaces"
+// +kubebuilder:validation:XValidation:rule="!has(self.userData) || ((!has(self.domain.os) || !has(self.domain.os.smBios)) && (!has(self.domain.sysInfo) || self.domain.sysInfo.all(s, !has(s.smbios) || !has(s.smbios.system) || !has(s.smbios.system.entry) || s.smbios.system.entry.all(e, e.name != 'serial'))))",message="with userData, os.smBios and the SMBIOS system serial are set by Ayatori to point cloud-init at the metadata service"
 type LibvirtDomainSpec struct {
 	// Domain 是 libvirtxml.Domain 按 ADR-0026 的规则映射成的对象，schema 由 internal/compute/domainspec 生成。
 	// 默认 UEFI、ACPI，并带一个 alias 为 ua-ayatori-console 的串口作为控制台。
@@ -76,6 +77,12 @@ type LibvirtDomainSpec struct {
 	// +listMapKey=alias
 	// +optional
 	Interfaces []DomainInterface `json:"interfaces,omitempty"`
+	// UserData 是 cloud-init 的 user-data，原样交给实例（ADR-0016）。写了它，Ayatori 就在 SMBIOS 的 system serial 中
+	// 写入 ds=nocloud;s=http://169.254.169.254/nocloud/，cloud-init 从元数据服务读取 meta-data 与 user-data。
+	// 不得包含密钥：每个计算节点的 Agent 都能读到它，实例内的任何进程也能不带 token 读到它。
+	// +kubebuilder:validation:MaxLength=65536
+	// +optional
+	UserData string `json:"userData,omitempty"`
 	// NodeName 是运行实例的节点。本版本只支持显式指定，候选节点与冷切换在后续版本加入。
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
