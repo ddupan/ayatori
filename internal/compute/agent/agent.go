@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -73,6 +75,18 @@ type Config struct {
 	MetricsAddress string `json:"metricsAddress"`
 	// ResyncInterval 是没有变化时重新收敛的间隔，也是发现带外修改的最长延迟。
 	ResyncInterval metav1.Duration `json:"resyncInterval"`
+	// Console 是控制台中继（ADR-0016）；为空时不监听。
+	Console *ConsoleConfig `json:"console"`
+}
+
+// ConsoleConfig 是控制台中继的配置。中继以本机 SPIRE agent 签发的 SVID 提供 mTLS。
+type ConsoleConfig struct {
+	// Address 是监听地址，例如 :9812。
+	Address string `json:"address"`
+	// ProxyID 是唯一允许连接的控制台代理的 SPIFFE ID。
+	ProxyID string `json:"proxyID"`
+	// WorkloadAPI 是 SPIRE Workload API 的地址，缺省为 unix:///run/spire/agent-sockets/spire-agent.sock。
+	WorkloadAPI string `json:"workloadAPI"`
 }
 
 // LoadConfig 读取配置并补默认值。
@@ -92,6 +106,15 @@ func LoadConfig(path string) (Config, error) {
 		c.ResyncInterval.Duration = 30 * time.Second
 	}
 	var errs []error
+	if c.Console != nil {
+		c.Console.WorkloadAPI = cmp.Or(c.Console.WorkloadAPI, "unix:///run/spire/agent-sockets/spire-agent.sock")
+		if c.Console.Address == "" {
+			errs = append(errs, errors.New("console.address is required"))
+		}
+		if _, err := spiffeid.FromString(c.Console.ProxyID); err != nil {
+			errs = append(errs, fmt.Errorf("console.proxyID: %w", err))
+		}
+	}
 	if c.NodeName == "" {
 		errs = append(errs, errors.New("nodeName is required"))
 	}

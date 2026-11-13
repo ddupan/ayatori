@@ -81,6 +81,7 @@ func eventually(t *testing.T, timeout time.Duration, check func() error) {
 func free(f func() error) { _ = f() }
 
 type runningAgent struct {
+	*agent.Agent
 	cancel   func()
 	done     chan struct{}
 	registry *prometheus.Registry
@@ -103,7 +104,7 @@ func runAgent(t *testing.T, config agent.Config) runningAgent {
 	done := make(chan struct{})
 	a.Containers = containers
 	go func() { a.Run(ctx); close(done) }()
-	return runningAgent{cancel, done, registry}
+	return runningAgent{a, cancel, done, registry}
 }
 
 // metric 返回名为 name、标签恰好为 labels 的 gauge 或 counter 的值；不存在时 ok 为 false。
@@ -209,6 +210,7 @@ func TestAgent(t *testing.T) {
 		NodeName: node, Domain: domainSpec(t, nicXML), Interfaces: []computev1alpha1.DomainInterface{{Alias: lanAlias, Network: lan}}}}
 	create(t, s.k, s.vm2)
 	s.waitState(t, s.vm2, func(st computev1alpha1.LibvirtDomainStatus) bool { return st.State == running })
+	t.Run("relays consoles only of its own running instances", s.relaysConsoles)
 	t.Run("converges from local state when the control plane is unreachable", s.convergesOffline)
 	t.Run("removes objects only once the API confirms deletion", s.removesAfterConfirmation)
 	s.agent.stop()

@@ -27,3 +27,29 @@ func TestLoadConfigRejectsInvalidNodeLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfigConsole(t *testing.T) {
+	load := func(console string) (agent.Config, error) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte("nodeName: n\nkubeconfig: k\nstateDir: s\nconsole:\n"+console), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return agent.LoadConfig(path)
+	}
+	c, err := load("  address: :9812\n  proxyID: spiffe://example.org/console-proxy\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Console.WorkloadAPI != "unix:///run/spire/agent-sockets/spire-agent.sock" {
+		t.Errorf("workloadAPI default: %q", c.Console.WorkloadAPI)
+	}
+	for name, console := range map[string]string{
+		"no address":       "  proxyID: spiffe://example.org/console-proxy\n",
+		"no proxy":         "  address: :9812\n",
+		"invalid proxy ID": "  address: :9812\n  proxyID: https://example.org/console-proxy\n",
+	} {
+		if _, err := load(console); err == nil || !strings.Contains(err.Error(), "console.") {
+			t.Errorf("%s: want a console error, got %v", name, err)
+		}
+	}
+}
