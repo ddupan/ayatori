@@ -5,6 +5,8 @@ package libvirt
 import (
 	"errors"
 	"fmt"
+	"io"
+	"sync"
 
 	golibvirt "libvirt.org/go/libvirt"
 	"libvirt.org/go/libvirtxml"
@@ -350,6 +352,7 @@ func (c *Client) DeleteVolume(pool, name string) error {
 // Domain 是实例的现状；State 与 Reason 与 `virsh domstate --reason` 的写法一致。
 type Domain struct {
 	Found  bool
+	UUID   string
 	XML    string
 	State  string
 	Reason string
@@ -373,8 +376,94 @@ func (c *Client) Domain(name string) (Domain, error) {
 	if err != nil {
 		return Domain{}, err
 	}
+	uuid, err := d.GetUUIDString()
+	if err != nil {
+		return Domain{}, err
+	}
 	s, r := stateNames(state, reason)
-	return Domain{Found: true, XML: xml, State: s, Reason: r}, nil
+	return Domain{Found: true, UUID: uuid, XML: xml, State: s, Reason: r}, nil
+}
+
+// LiveDomain 返回运行中实例的 live 配置：libvirt 填写的设备 alias、控制台 socket 路径等只在其中。
+func (c *Client) LiveDomain(name string) (*libvirtxml.Domain, error) {
+	d, err := c.conn.LookupDomainByName(name)
+	if err != nil {
+		return nil, err
+	}
+	defer free(d.Free)
+	xml, err := d.GetXMLDesc(0)
+	if err != nil {
+		return nil, err
+	}
+	var dom libvirtxml.Domain
+	if err := dom.Unmarshal(xml); err != nil {
+		return nil, err
+	}
+	return &dom, nil
+}
+
+// Console 是实例字符设备的字节流（阻塞模式）。读写可以在两个 goroutine 中并发进行，Close 可以与它们并发。
+type Console struct {
+	s *golibvirt.Stream
+	// mu：读写持读锁；Close 先中止流让阻塞的读写返回，再持写锁释放流，不会释放仍在使用的流。
+	mu     sync.RWMutex
+	closed bool
+}
+
+func (c *Console) Read(p []byte) (int, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return 0, io.EOF
+	}
+	return c.s.Recv(p)
+}
+
+func (c *Console) Write(p []byte) (int, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return 0, io.ErrClosedPipe
+	}
+	return c.s.Send(p)
+}
+
+// Close 中止并释放流，可以重复调用。
+func (c *Console) Close() error {
+	c.mu.RLock()
+	closed := c.closed
+	c.mu.RUnlock()
+	if closed {
+		return nil
+	}
+	err := c.s.Abort()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	free(c.s.Free)
+	return err
+}
+
+// OpenConsole 打开实例上 alias 对应的串口或 console。已有会话（包括 virsh console）时由新会话接管，
+// 旧会话的流随之结束：避免残留的会话把控制台永久占住。
+func (c *Client) OpenConsole(name, alias string) (*Console, error) {
+	d, err := c.conn.LookupDomainByName(name)
+	if err != nil {
+		return nil, err
+	}
+	defer free(d.Free)
+	s, err := c.conn.NewStream(0)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.OpenConsole(alias, s, golibvirt.DOMAIN_CONSOLE_FORCE); err != nil {
+		free(s.Free)
+		return nil, err
+	}
+	return &Console{s: s}, nil
 }
 
 // DefineDomain 定义实例并关闭 autostart：实例只由 Agent 或 drbd-reactor 启动（ADR-0015）。

@@ -6,7 +6,7 @@
   [ADR-0010](0010-credential-delivery-ends-at-openbao.md)、[ADR-0013](0013-api-only-control-plane-on-lxc.md)、
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
 - 修订：2026-11-12 VM 的 cloud-init 改为经元数据服务读取 NoCloud seed，不再生成 `cidata` ISO；LXC 的 seed 改为
-  只读挂载，不写入 rootfs。
+  只读挂载，不写入 rootfs。2026-11-13 补充 Agent 控制台中继的协议与实现约束。
 
 ## 问题
 
@@ -180,6 +180,17 @@
 - **节点不对外暴露控制台端口。** QEMU 只监听本机 unix socket（`<listen type='socket'/>`），由 Agent
   中继。中继只接受控制台代理的 SPIFFE ID，并且只在本节点是实例 DRBD Primary 时服务，避免连到
   失去 Primary 后残留的 QEMU（PoC 05）。
+- **Agent 中继的协议**：HTTP/1.1 升级。代理发 `GET /v1/consoles/<namespace>/<name>/<serial|vnc|spice>`，带
+  `Connection: Upgrade`、`Upgrade: ayatori-console`；中继回 `101` 后连接上是控制台的原始字节流，错误用普通状态码
+  （实例不在本节点或没有这种控制台为 404，未运行为 409）。路径带版本，是 Agent 的强类型契约，不是任意转发。
+  - 中继只服务 Agent 本地状态中的实例，并核对 libvirt 中同名 domain 的 UUID 等于对象 UID；
+  - 串口经 libvirt console stream（`virDomainOpenConsole`，按 alias `ua-ayatori-console`）。新会话**接管**已有
+    会话，与 `virsh console --force` 相同：残留的会话不会把控制台永久占住，break-glass 的
+    `virsh console --force` 也能从中继手里接管；
+  - VNC/SPICE 连接 live XML 中 libvirt 生成的 unix socket；
+  - SVID 来自本机 SPIRE agent 的 Workload API；Agent 拿到 SVID 之前中继不监听，不影响其他工作。Agent 退出时
+    结束所有会话。
+  - 在 DRBD 接入（ADR-0020）之前，"实例在本节点"以本节点 libvirt 中正在运行为准；接入后加上 Primary 检查。
 - **中央控制台代理**，参照 OpenStack nova-novncproxy：
   - 用户通过 iam-login（OIDC）登录；
   - 代理向 Ayatori apiserver 发起 **SubjectAccessReview**，检查用户对 `libvirtdomains/console`
@@ -242,6 +253,12 @@
    **部分完成（2026-10-31）**：SubjectAccessReview、Event 审计、SPIFFE mTLS 中继和换节点后
    自动跟随通过，见 PoC 05；串口与 SPICE 通过，见 [PoC 15](../compute/poc-15-serial-spice-floppy.md)；
    OIDC 登录未测。
+   正式实现的 Agent 中继（2026-11-13）在 compute-dev1 上验证：临时 SPIRE（独立 trust domain，join token）为
+   Agent 与客户端签发 SVID；Debian 13 的 QEMU 10.0 上串口（OVMF 输出经中继读回，按键送达）与 VNC（`RFB 003.008`）
+   通过；同 trust domain 的其他身份在 TLS 握手被拒；新会话接管旧会话，`virsh console --force` 接管中继会话；
+   Agent 重启时会话关闭；20 次会话后 libvirtd 的客户端数与 Agent 的文件描述符数不变。SPICE 未测：Debian 的
+   QEMU 不带 SPICE 模块（`qemu-system-modules-spice`，连带约 200 个图形与多媒体包），中继对 SPICE 与 VNC 走同一
+   路径。计算节点接入生产 SPIRE（x509pop 登记与注册条目）和中央代理是后续工作。
 4. `change-media --live` 在客户机重启后保留、在冷启动后回到配置。
    **已完成（2026-10-31）**：光驱见 PoC 04，软驱见 PoC 15。
 5. 电源意图标记：有意关机的实例在原节点故障后不会被其他节点开机。
