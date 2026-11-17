@@ -36,8 +36,8 @@ Event——这是在把 Kubernetes 当成 Ayatori 的产品界面。
 2. **用 Ayatori 的概念说话。** 命令、输出、错误提示面向 Database、LoadBalancer、实例、节点这些资源；
    kubeconfig、namespace 之外的 Kubernetes 概念（field manager、owner reference、Pod 等）不出现在常规
    输出里。
-3. **只用公开 API，不开后门。** CLI 只调用 apiserver 与 BFF（见下）的 API，都以用户自己的身份经 RBAC /
-   SubjectAccessReview 授权；其他后端（OpenBao、节点上的中继）对 CLI 透明。CLI 能做的，任何持有同样权限的客户端都能做；
+3. **只用公开 API，不开后门。** CLI 只调用 apiserver 的 API（含聚合子资源），以用户自己的身份经 RBAC
+   授权；其他后端（OpenBao、节点上的中继）对 CLI 透明。CLI 能做的，任何持有同样权限的客户端都能做；
    CLI 不持有任何服务端没有授予用户的能力。
 4. **不与 GitOps 抢所有权。** spec 由 git 管理的对象（Flux 应用的），CLI 不修改，提示去改 git；
    运行时操作（ADR-0016 的"配置与运行时分离"）不改 spec，不受此限制。
@@ -97,32 +97,39 @@ LibvirtDomain、`ct` 对应 LXCContainer，后端换成别的实现时命令不�
 - 有明确完成条件的操作（开机、迁移、疏散）默认等到完成并显示进度，`--async` 立即返回；等待用 watch，
   不轮询。
 
-### apiserver 之外的操作经 BFF
+### 非 CRUD 操作是聚合子资源
 
-有些面向人的操作不是对象的 CRUD：控制台、换盘、电源（ADR-0016 的运行时操作），读取凭据。CRD 不能有
-自定义子资源，也不为此引入聚合 API（AGENTS.md）。这些操作由一个面向人的后端（BFF）提供，CLI 与 Web
-控制台共用它带版本的 HTTP API（`/v1/...`）。
+有些面向人的操作不是对象的 CRUD：控制台、换盘、电源（ADR-0016 的运行时操作），读取凭据。从产品看
+API 应当是一个整体，这些操作不另开一套端点，而是参照 KubeVirt（`virt-api` 以聚合 API
+`subresources.kubevirt.io` 提供 `virtualmachineinstances/console`、`virtualmachines/start` 等）做成
+apiserver 上的子资源。
 
-- **边界：** BFF 以用户的 OIDC token 认证（与 apiserver 同一 issuer 与 aud），每个请求先以
-  SubjectAccessReview 授权、在相关对象上记录 Event，再以**自己的身份**调用后端：节点中继（SPIFFE mTLS）、
-  OpenBao。
-- **不是第二个控制面：** 不存状态、不拥有资源、不做调和；领域状态只在 apiserver 里，由 controller 收敛。
-  能用对象 CRUD 表达的不进 BFF，BFF 也不转发或包装 apiserver 的 API。
-- ADR-0016 的"中央控制台代理"是 BFF 的控制台功能，不再是单独组件；中继本身不变。
-- BFF 与 Web 控制台是否同一进程、同一仓库，随 Web 控制台的 ADR 决定。
+- **`ayatori-console-api`** 是一个聚合 API server，只提供子资源，不存储任何对象：主资源仍是 CRD，存储、
+  watch、版本迁移都不变。这正是 AGENTS.md 所说的例外——CRD 只支持 `status`/`scale` 子资源，这是已验证的
+  扩展能力阻碍；它不为减少 controller 而引入，也不接管存储。
+- **认证、授权、审计都在 apiserver：** apiserver 认证用户（OIDC），以 front-proxy 头把身份转给
+  `ayatori-console-api`；后者用 `k8s.io/apiserver` 的委托授权按 RBAC 判断（例如
+  `libvirtdomains/console`、`postgresqldatabases/credentials`），请求进 apiserver 审计日志，必要时
+  在对象上记 Event。然后以**自己的身份**调用后端：节点中继（SPIFFE mTLS）、OpenBao。
+- **不是第二个控制面：** 不存状态、不拥有资源、不做调和；能用对象 CRUD 表达的不做成子资源。
+- 控制台类子资源是 Upgrade 流，经 apiserver 的聚合层透传（KubeVirt 的 console/VNC 同样如此）。
+- API group、版本与路径实现时确定，不在本 ADR 固定；只要求挂在 apiserver 上、以子资源授权。
+- ADR-0016 的"中央控制台代理"即控制台子资源，不再是单独组件；中继本身不变。
+- 部署前在 Dev 验证：控制面没有 kube-proxy，APIService 需要无 selector 的 Service 加手写
+  EndpointSlice 与 apiserver 的 `--enable-aggregator-routing`；k0s 的 front-proxy（requestheader）CA
+  是否默认就绪。
 
 ### 凭据经 API 返回
 
-`ayatori db credentials <name>` 从 BFF 拿到凭据，OpenBao 对 CLI 透明：CLI 不知道 Bao 的地址、
-路径，也不需要另外登录 Bao。
+`ayatori db credentials <name>` 读 `postgresqldatabases/credentials` 子资源（形如
+`serviceaccounts/token`），OpenBao 对 CLI 透明：CLI 不知道 Bao 的地址、路径，也不需要另外登录 Bao。
 
-- 端点形如 `/v1/.../databases/<name>/credentials`，形状实现时确定。
-- 授权在 Ayatori：BFF 以 SubjectAccessReview 检查用户对 `postgresqldatabases/credentials` 的 `get`，
-  通过后以自己的身份读 Bao，并在 Database 上记录 Event。权限只看 RBAC 一处，不需要与 Bao policy
-  保持同步。
-- BFF 的 Bao role 只能读 Ayatori 自己交付的凭据路径（ADR-0010 的写入位置），不能读其他 secret；每次读取
+- 授权在 Ayatori：RBAC 对该子资源的授权通过后，`ayatori-console-api` 以自己的身份读 Bao。权限只看 RBAC
+  一处，不需要与 Bao policy 保持同步。
+- 它的 Bao role 只能读 Ayatori 自己交付的凭据路径（ADR-0010 的写入位置），不能读其他 secret；每次读取
   同时留在 Bao 的审计日志里。
-- 不采用"BFF 把用户的 token 换成 Bao token、由 Bao policy 授权"：BFF 不持有特权，但权限要在 RBAC 与
+- apiserver 的审计策略对该子资源只记 `Metadata` 级别，响应体（密码）不得进审计日志。
+- 不采用"把用户的 token 换成 Bao token、由 Bao policy 授权"：不持有特权，但权限要在 RBAC 与
   Bao policy 两处维护，容易漂移。
 - 不采用"ESO 把凭据同步成控制面里的 Secret、CLI 直接读 Secret"：控制面的 etcd 与每日备份会成为全部
   数据库密码的第二个存放处，轮换要等刷新周期，`list secrets` 的授权也比按 Database 粗。这与 #22 被否
@@ -150,7 +157,7 @@ LibvirtDomain、`ct` 对应 LXCContainer，后端换成别的实现时命令不�
 2. **节点 join 是否收进 `ayatori adm node join`。** 现在由 homelab-infra 的 Ansible playbook 完成（建
    bootstrap token、写入节点、批准 CSR），当时的考虑是不为一次性操作新造 CLI。有了 CLI 之后这个前提
    变了，但 join 需要在节点上写文件，CLI 只能负责控制面一侧；是否迁移、怎么拆分需要单独决定。
-3. **Web 控制台**的范围、技术栈、是否另开仓库，另立 ADR；它只能是 apiserver 与 BFF 的另一个客户端。
+3. **Web 控制台**的范围、技术栈、是否另开仓库，另立 ADR；它只能是 apiserver 的另一个客户端。
 4. **隧道**（经中继访问实例内的端口，类似 IAP tunnel）。只有在出现真实、重复的需要时再评估
    （AGENTS.md：需求驱动）。
 
@@ -158,7 +165,7 @@ LibvirtDomain、`ct` 对应 LXCContainer，后端换成别的实现时命令不�
 
 1. apiserver 接受 iam-login 的 token（homelab-cookbooks `homelab_ayatori` 0.2.0），在 Dev 验证。
 2. `ayatori login`/`whoami`/`config` 与 `db`、`lb`、`vm`、`ct` 的 `list`/`describe`。
-3. BFF（先只有控制台功能）与 `ayatori vm console`。
+3. `ayatori-console-api`（先只有控制台子资源）与 `ayatori vm console`。
 4. 换盘、电源、`db credentials` 与 `task`。
 5. `adm node`。
 
