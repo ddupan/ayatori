@@ -64,11 +64,17 @@ Ayatori 取 oc 的"自带登录与上下文、`adm` 分区"，取云 CLI 的"名
 
 ### 登录与配置档
 
-- `ayatori login <API 地址>`：经 iam-login（`https://sso.ddupan.top`）OIDC 登录。默认浏览器（public
-  client、PKCE、本机回环端口），无浏览器时 `--device`。客户端按环境区分（`ayatori-dev`、`ayatori-prod`），
-  apiserver 只认本环境的 aud。
-- 登录结果写进 CLI 自己的配置（`$XDG_CONFIG_HOME/ayatori/`），以配置档区分环境，`ayatori config use dev`
-  切换，`--profile` 单次指定。token 与 refresh token 放在同目录、仅本人可读；CLI 自动刷新。
+- **环境由 CLI 自己的配置文件管理**（`~/.ayatori/config.yaml`），不用 kubeconfig：
+  `ayatori config add <名字> <API 地址>`、`list`、`use`、`remove`，`--profile` 单次指定。
+- **`config add` 从服务端发现登录信息**：未登录时读 `kube-public/ayatori-login`（issuer、clientID、集群 CA），
+  apiserver 只对这一个路径允许匿名请求（AuthenticationConfiguration 的 `anonymous.conditions` 加 RBAC，
+  由 homelab-cookbooks `homelab_ayatori` 发布）。第一次读不校验证书，只用来取得 CA；CLI 显示 CA 的指纹
+  （`sha256:` + SubjectPublicKeyInfo 摘要，与 kubeadm 相同），用户确认或以 `--ca-fingerprint` 比对后固定该
+  CA，再以它校验证书重新读取。
+- **`ayatori login`** 登录当前环境：经 iam-login OIDC，默认浏览器（public client、PKCE、本机回环端口），无浏览器
+  时 `--device`。客户端按环境区分（`ayatori-dev`、`ayatori-prod`），apiserver 只认本环境的 aud。
+- ID token 与 refresh token 放在 `~/.ayatori/tokens/`，仅本人可读；ID token 快过期时 CLI 自动刷新。
+  iam-login 对公共客户端轮换 refresh token，刷新在文件锁内进行，同时运行的多个 CLI 只有一个去换。
 - `ayatori logout`、`ayatori whoami`（显示 apiserver 认定的用户与组）。
 - 不导出 kubeconfig 作为常规用法；需要 break-glass 时 `ayatori config kubeconfig` 生成一份以
   `ayatori` 自身为 exec credential plugin 的 kubeconfig。
