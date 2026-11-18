@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/int128/oauth2cli"
 	"golang.org/x/oauth2"
 )
 
@@ -24,9 +24,9 @@ var ErrNotLoggedIn = errors.New("not logged in")
 // scopes：groups 给 RBAC 用，offline_access 换来 refresh token。
 var scopes = []string{"openid", "profile", "groups", "offline_access"}
 
-// redirectAddrs 是 iam-login 为 ayatori-* 客户端登记的回环地址（homelab-infra
-// apps/iam-login/terraform/clients.tf），按顺序尝试。
-var redirectAddrs = []string{"localhost:8000", "localhost:18000"}
+// callbackAddrs 对应 iam-login 为 ayatori-* 客户端登记的 redirect URI http://localhost:8000 与
+// :18000（homelab-infra apps/iam-login/terraform/clients.tf），按顺序尝试。
+var callbackAddrs = []string{"127.0.0.1:8000", "127.0.0.1:18000"}
 
 type tokens struct {
 	IDToken      string `json:"idToken"`
@@ -219,58 +219,28 @@ func deviceLogin(ctx context.Context, config *oauth2.Config, opts LoginOptions) 
 	return config.DeviceAccessToken(ctx, auth)
 }
 
+// browserLogin 由 oauth2cli（kubelogin 所用）在本机回环端口完成授权码 + PKCE。redirect URI 为
+// http://localhost:<端口>，与 iam-login 登记的一致。
 func browserLogin(ctx context.Context, config *oauth2.Config, opts LoginOptions) (*oauth2.Token, error) {
-	var listener net.Listener
-	var err error
-	for _, addr := range redirectAddrs {
-		host, port, _ := net.SplitHostPort(addr)
-		if listener, err = net.Listen("tcp", net.JoinHostPort("127.0.0.1", port)); err == nil {
-			config.RedirectURL = "http://" + net.JoinHostPort(host, port)
-			break
-		}
-	}
-	if listener == nil {
-		return nil, fmt.Errorf("no free callback port (%s); try --device: %w", strings.Join(redirectAddrs, ", "), err)
-	}
-	verifier, state := oauth2.GenerateVerifier(), oauth2.GenerateVerifier()
-	type result struct {
-		code string
-		err  error
-	}
-	done := make(chan result, 1)
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		var res result
-		switch {
-		case q.Get("state") != state:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-			return
-		case q.Get("error") != "":
-			res.err = fmt.Errorf("login failed: %s %s", q.Get("error"), q.Get("error_description"))
-		default:
-			res.code = q.Get("code")
-		}
-		_, _ = fmt.Fprintln(w, "Ayatori login finished, you can close this tab.")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ready := make(chan string, 1)
+	go func() {
 		select {
-		case done <- res:
-		default:
+		case url := <-ready:
+			_, _ = fmt.Fprintf(opts.Out, "Open %s\n", url)
+			if opts.Open != nil {
+				_ = opts.Open(url) // 打不开浏览器时，用户照上面的地址手动打开
+			}
+		case <-ctx.Done():
 		}
-	})}
-	go server.Serve(listener) //nolint:errcheck // 关闭时返回 ErrServerClosed
-	defer func() { _ = server.Close() }()
-
-	url := config.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
-	_, _ = fmt.Fprintf(opts.Out, "Open %s\n", url)
-	if opts.Open != nil {
-		_ = opts.Open(url) // 打不开浏览器时，用户照上面的地址手动打开
-	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case res := <-done:
-		if res.err != nil {
-			return nil, res.err
-		}
-		return config.Exchange(ctx, res.code, oauth2.VerifierOption(verifier))
-	}
+	}()
+	verifier := oauth2.GenerateVerifier()
+	return oauth2cli.GetToken(ctx, oauth2cli.Config{
+		OAuth2Config:           *config,
+		AuthCodeOptions:        []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)},
+		TokenRequestOptions:    []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)},
+		LocalServerBindAddress: callbackAddrs,
+		LocalServerReadyChan:   ready,
+	})
 }
