@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"k8s.io/client-go/rest"
 
 	"go.ddupan.top/ayatori/internal/cli"
 )
@@ -35,6 +36,10 @@ func root() *cobra.Command {
 	cmd := &cobra.Command{Use: "ayatori", Short: "Ayatori command line", SilenceUsage: true, SilenceErrors: true}
 	cmd.PersistentFlags().StringVar(&profile, "profile", "", "environment to use instead of the current one")
 	cmd.AddCommand(configCmd(), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile))
+	// 名词在前、动词在后（ADR-0027），参照云 CLI，不是 kubectl 的动词在前。
+	for _, r := range cli.Resources {
+		cmd.AddCommand(resourceCmd(r, &profile))
+	}
 	return cmd
 }
 
@@ -275,4 +280,62 @@ func openBrowser(url string) error {
 	cmd := exec.Command(opener, url) //nolint:gosec // 打开 issuer 给出的登录地址
 	cmd.Stdout, cmd.Stderr = nil, nil
 	return cmd.Start()
+}
+
+// connect 以当前（或 --profile 指定的）环境与已保存的登录连接 apiserver。
+func connect(ctx context.Context, profile string) (*rest.Config, error) {
+	s, c, err := store()
+	if err != nil {
+		return nil, err
+	}
+	name, p, err := c.Profile(profile)
+	if err != nil {
+		return nil, err
+	}
+	return s.RESTConfig(ctx, name, p)
+}
+
+func resourceCmd(r cli.Resource, profile *string) *cobra.Command {
+	var namespace string
+	var all bool
+	cmd := &cobra.Command{Use: r.Noun, Short: r.Short}
+	cmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "default", "namespace")
+
+	var output string
+	list := &cobra.Command{
+		Use:   "list [NAME]",
+		Short: "List " + r.Short,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			config, err := connect(cmd.Context(), *profile)
+			if err != nil {
+				return err
+			}
+			opts := cli.ListOptions{Namespace: namespace, Output: output}
+			if all {
+				opts.Namespace = ""
+			}
+			if len(args) == 1 {
+				opts.Name = args[0]
+			}
+			return cli.List(cmd.Context(), config, r, opts, cmd.OutOrStdout())
+		},
+	}
+	list.Flags().BoolVarP(&all, "all-namespaces", "A", false, "list across all namespaces")
+	list.Flags().StringVarP(&output, "output", "o", "", "wide, json, yaml or jsonpath=<template>")
+
+	describe := &cobra.Command{
+		Use:   "describe NAME",
+		Short: "Show one of the " + r.Short + " with its conditions and events",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			config, err := connect(cmd.Context(), *profile)
+			if err != nil {
+				return err
+			}
+			return cli.Describe(cmd.Context(), config, r, namespace, args[0], cmd.OutOrStdout())
+		},
+	}
+	cmd.AddCommand(list, describe)
+	return cmd
 }
