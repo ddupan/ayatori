@@ -218,8 +218,8 @@ apiserver 的客户端（含上面的子资源），技术栈与是否另开仓�
 | HA 健康：副本和 tiebreaker 的连接、quorum、最近的重启和 evict | 告警（见 ADR-0015、ADR-0020"可观测性"） |
 
 - **一律用用户自己的身份**：读取与运行时操作都以用户的 OIDC token 调用 apiserver，由 apiserver 做
-  RBAC，前端不需要 impersonation 权限，也不自行做 SubjectAccessReview。前提是 Ayatori apiserver 接受
-  iam-login 签发的 token，待确认。
+  RBAC，前端不需要 impersonation 权限，也不自行做 SubjectAccessReview。Ayatori apiserver 接受 iam-login
+  签发的 token（结构化认证配置，homelab-cookbooks `homelab_ayatori` 0.2.0），2026-11-18 在 Dev 验证。
 - **不采用 Headlamp 插件**：它能通用地展示 CRD，但控制台、换盘和电源仍要自己实现，还多一套插件和
   一个部署组件；需要的是以单台实例为中心、类似 PVE 的页面。
 
@@ -255,7 +255,8 @@ apiserver 的客户端（含上面的子资源），技术栈与是否另开仓�
    `.vv` 经代理连接。
    **部分完成（2026-10-31）**：SubjectAccessReview、Event 审计、SPIFFE mTLS 中继和换节点后
    自动跟随通过，见 PoC 05；串口与 SPICE 通过，见 [PoC 15](../compute/poc-15-serial-spice-floppy.md)；
-   OIDC 登录未测。
+   OIDC 登录 2026-11-18 在 Dev 验证：kubelogin 以 device code 经 iam-login 登录（客户端 `ayatori-dev`），apiserver
+   认定为 `oidc:<用户名>`，组带 `oidc:` 前缀，`platform-admins` 绑定 cluster-admin。
    正式实现的 Agent 中继（2026-11-13）在 compute-dev1 上验证：临时 SPIRE（独立 trust domain，join token）为
    Agent 与客户端签发 SVID；Debian 13 的 QEMU 10.0 上串口（OVMF 输出经中继读回，按键送达）与 VNC（`RFB 003.008`）
    通过；同 trust domain 的其他身份在 TLS 握手被拒；新会话接管旧会话，`virsh console --force` 接管中继会话；
