@@ -16,7 +16,7 @@ func (s Store) RESTConfig(ctx context.Context, name string, p Profile) (*rest.Co
 		return nil, err
 	}
 	return &rest.Config{Host: p.Server, BearerToken: token, UserAgent: "ayatori",
-		TLSClientConfig: rest.TLSClientConfig{CAData: []byte(p.CertificateAuthority)}}, nil //nolint:modernize // 写明是 TLS 配置更清楚
+		CAData: []byte(p.CertificateAuthority)}, nil
 }
 
 // WhoAmI 返回 apiserver 认定的用户与组（SelfSubjectReview）。
