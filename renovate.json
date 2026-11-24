@@ -2,6 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "postUpdateOptions": ["gomodTidy"],
+  "gitIgnoredAuthors": ["360661234+ddupan-bot[bot]@users.noreply.github.com"],
   "customManagers": [
     {
       "description": "Makefile 里 go install / 下载的工具版本：在 `<NAME>_VERSION ?=` 上一行写 `# renovate: datasource=<ds> depName=<name>`。",
@@ -27,11 +28,6 @@
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang"],
       "rangeStrategy": "bump"
-    },
-    {
-      "description": "生成器升级会改变生成物。Mend 托管的 Renovate 不执行 postUpgradeTasks，Verify 的 git diff 检查会失败，需要人在分支上重新生成后提交。",
-      "matchDepNames": ["sigs.k8s.io/controller-tools", "github.com/oapi-codegen/oapi-codegen/v2"],
-      "prBodyNotes": ["⚠ 需要手动步骤：在本分支执行 `make manifests generate generate-dataplaneapi`，提交生成物后再合并。"]
     }
   ]
 }
