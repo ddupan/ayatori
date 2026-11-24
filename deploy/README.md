@@ -23,9 +23,11 @@ deploy/
 1. 攒够一批变更再发版：功能 PR 不修改版本号。未发版的变更在 Dev 以本地构建的镜像（policy 中按
    digest 引用）验证。
 2. release-please（`.github/workflows/release-please.yml`）把 main 上的 conventional commits 累积成
-   一个 release PR：版本号按提交类型推算（0.x 期间 breaking change 也只升 minor），`CHANGELOG.md`
-   与发布说明由 `feat`、`fix` 等提交生成。合并前在 PR 说明里该版本的那一节中补上部署注意事项与「agent：无变化」或
-   agent 的变更（ADR-0024）；之后 main 上有新提交时 PR 会被重新生成，补充要在合并前最后做。
+   一个 release PR：版本号按提交类型推算（0.x 期间 breaking change 也只升 minor）。`CHANGELOG.md`
+   与发布说明由 GitHub 按合并的 PR 生成，每个 PR 一条（以 PR 标题为准，分组见 `.github/release.yml`）；
+   合并时保留 merge commit，dev/<feature> 分支的提交历史不压缩。生成的说明不单列 breaking change：
+   合并前在 PR 说明里该版本的那一节中补上 breaking change、部署注意事项与「agent：无变化」或 agent 的
+   变更（ADR-0024）；之后 main 上有新提交时 PR 会被重新生成，补充要在合并前最后做。
 3. 合并 release PR 即创建 tag `vX.Y.Z` 与 GitHub Release。tag push 触发 Release 工作流：在 GitHub
    托管 runner 上用 buildx 构建 manager 镜像，以同名 tag 推送 `ghcr.io/ddupan/ayatori-manager`，在
    Release 上追加镜像 digest 与 lb-agent 附件；随后 homelab runner 按 digest 原样复制到内网
