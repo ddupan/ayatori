@@ -12,7 +12,7 @@ jobs:
   # GitHub 托管 runner：构建 manager 镜像推到 ghcr（带 provenance/SBOM），构建 lb-agent，
   # 以 annotated tag 的说明创建 GitHub Release 并附上 lb-agent。不需要内网。
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write   # GitHub Release

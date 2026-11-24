@@ -24,7 +24,7 @@ jobs:
       github.event.pull_request.user.login == 'renovate[bot]' &&
       startsWith(github.head_ref, 'renovate/') &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       # owner/repositories 不填：token 只对当前仓库有效。
       - id: token
