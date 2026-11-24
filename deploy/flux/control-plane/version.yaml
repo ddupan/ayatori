@@ -1,0 +1,56 @@
+# manager 在 kube-public/ayatori-version 公布自身版本，登录的用户都可读，ayatori CLI 据此检查版本
+# 偏差（ADR-0027）。不对匿名开放：检查只在登录之后。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori-version
+  namespace: kube-public
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [ayatori-version]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-version
+  namespace: kube-public
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori-version
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:authenticated
+---
+# manager 以 server-side apply 写入：对象不存在时还要 create，而 create 不能按 resourceNames 限制，
+# 所以 create 放开到 kube-public 的 ConfigMap，patch 只限这一个。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori-version-publisher
+  namespace: kube-public
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [ayatori-version]
+  verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-version-publisher
+  namespace: kube-public
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori-version-publisher
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-controller

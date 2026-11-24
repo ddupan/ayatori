@@ -7,6 +7,8 @@ ARG TARGETARCH
 # CI 传入内网 Go 模块缓存；未传时为空，go 使用默认的 proxy.golang.org。
 ARG GOPROXY
 ARG GOPRIVATE
+# 发布构建传入 tag（release.yml）；manager 在 kube-public/ayatori-version 公布它。
+ARG VERSION=dev
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -24,7 +26,7 @@ COPY . .
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o manager ./cmd
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o manager ./cmd
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o client-credentials ./cmd/client-credentials
 
 # Use distroless as minimal base image to package the manager binary

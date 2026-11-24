@@ -14,8 +14,8 @@ import (
 
 var setupLog = ctrl.Log.WithName("setup")
 
-// Run 只编排启动顺序；命令行参数与信号处理在进程中初始化一次。
-func Run() error {
+// Run 只编排启动顺序；命令行参数与信号处理在进程中初始化一次。version 是 manager 自身的版本。
+func Run(version string) error {
 	var options options
 	options.bindFlags(flag.CommandLine)
 	flag.Parse()
@@ -42,7 +42,11 @@ func Run() error {
 		return fmt.Errorf("set up client certificate renewal approver: %w", err)
 	}
 
-	setupLog.Info("Starting manager")
+	if err := manager.Add(versionPublisher{client: manager.GetClient(), version: version}); err != nil {
+		return fmt.Errorf("set up version publisher: %w", err)
+	}
+
+	setupLog.Info("Starting manager", "version", version)
 	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {
 		return fmt.Errorf("run controller manager: %w", err)
 	}

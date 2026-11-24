@@ -40,6 +40,7 @@ jobs:
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
           docker buildx create --name ci-builder --driver docker-container --use >/dev/null
           docker buildx build --platform linux/amd64 --tag "${IMAGE}:${TAG}" \
+            --build-arg "VERSION=${TAG}" \
             --provenance=mode=max --sbom=true --metadata-file metadata.json --push .
           digest="$(jq -er '."containerimage.digest"' metadata.json)"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
