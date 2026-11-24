@@ -32,9 +32,10 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
+      # make test 会重新生成 CRD/deepcopy；Data Plane API 客户端不在其中，单独生成后一并检查。
       - name: Verify generated files and tests
         run: |
-          make test
+          make test generate-dataplaneapi
           git diff --exit-code
 
       # make test 已完成 manifests/generate/fmt/vet，这里直接编译，不再经 make build 重跑一遍。

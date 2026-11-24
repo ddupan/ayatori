@@ -1,0 +1,62 @@
+name: Regenerate
+
+# Renovate 升级生成器（controller-tools、oapi-codegen）或 k8s 依赖后，生成物会变；Mend 托管的 Renovate
+# 不执行 postUpgradeTasks，这里代替它：在 Renovate 的分支上重新生成，有变化就以 ddupan-bot 提交回去。
+# 用 App token 推送，新提交才会触发 Verify（GITHUB_TOKEN 推送的提交不触发 workflow）；推回后本 workflow
+# 再跑一次，没有变化就结束。renovate.json 的 gitIgnoredAuthors 让 Renovate 继续管理被 bot 改过的分支。
+#
+# 这一步执行的是升级后的生成器，同时持有写本仓库 contents 的 token：只对 Renovate 自己开的同仓库分支
+# 触发；App（ddupan-bot）没有 workflows 权限，改不了 workflow 文件。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    if: >-
+      github.event.pull_request.user.login == 'renovate[bot]' &&
+      startsWith(github.head_ref, 'renovate/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      # owner/repositories 不填：token 只对当前仓库有效。
+      - id: token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      - name: Regenerate
+        # 与 Verify 检查的生成物一致（make test 含 manifests generate fmt）。
+        run: make manifests generate generate-dataplaneapi fmt
+
+      - name: Commit and push
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "生成物没有变化"
+            exit 0
+          fi
+          git config user.name 'ddupan-bot[bot]'
+          git config user.email '360661234+ddupan-bot[bot]@users.noreply.github.com'
+          git commit -qam 'chore: 重新生成代码'
+          git push origin "HEAD:${BRANCH}"
+          git show --stat --format='%h %s' HEAD >> "$GITHUB_STEP_SUMMARY"
