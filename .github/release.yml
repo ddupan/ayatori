@@ -6,6 +6,7 @@ changelog:
     labels:
       - "autorelease: pending"
       - "autorelease: tagged"
+      - skip-changelog   # pr-labels.yml：ci/docs/test/chore 等不影响使用者的 PR
   categories:
     - title: ⚠ Breaking changes
       labels:
