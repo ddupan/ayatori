@@ -62,7 +62,7 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 | [0017](docs/decisions/0017-lb-host-local-announcement.md) | VIP 宣告由 LB 主机本地决定 | Accepted |
 | [0018](docs/decisions/0018-lb-backend-and-host-resources.md) | 后端与 LB 主机成为 API 资源 | Accepted |
 | [0021](docs/decisions/0021-client-certificates-via-csr.md) | 控制面客户端凭据以 CSR 签发与自行续签 | Accepted（续签待到期观察） |
-| [0022](docs/decisions/0022-lb-agent-joins-control-plane.md) | LB agent 加入控制面，watch 资源并在本机收敛 | Proposed |
+| [0022](docs/decisions/0022-lb-agent-joins-control-plane.md) | LB agent 加入控制面，watch 资源并在本机收敛 | Accepted |
 | [0023](docs/decisions/0023-lb-endpoint-health-in-status.md) | LoadBalancer 与 Backend 的 status 呈现后端健康 | Proposed |
 | [0024](docs/decisions/0024-unified-version-with-skew.md) | 组件共用版本号，部署允许有限的版本偏差 | Proposed |
 | [0025](docs/decisions/0025-lb-agent-bgp-graceful-restart.md) | LB agent 开启 BGP graceful restart | Accepted |
