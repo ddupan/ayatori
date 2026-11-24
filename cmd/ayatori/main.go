@@ -39,7 +39,7 @@ func root() *cobra.Command {
 	cmd := &cobra.Command{Use: "ayatori", Short: "Ayatori command line", Version: version,
 		SilenceUsage: true, SilenceErrors: true}
 	cmd.PersistentFlags().StringVar(&profile, "profile", "", "environment to use instead of the current one")
-	cmd.AddCommand(configCmd(), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile))
+	cmd.AddCommand(configCmd(), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile), versionCmd(&profile))
 	// 名词在前、动词在后（ADR-0027），参照云 CLI，不是 kubectl 的动词在前。
 	for _, r := range cli.Resources {
 		cmd.AddCommand(resourceCmd(r, &profile))
@@ -206,11 +206,21 @@ func loginCmd(profile *string) *cobra.Command {
 			if err := s.Login(cmd.Context(), name, p, opts); err != nil {
 				return err
 			}
-			user, err := whoami(cmd.Context(), s, name, p)
+			config, err := s.RESTConfig(cmd.Context(), name, p)
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", name, user)
+			user, err := cli.WhoAmI(cmd.Context(), config)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", name, user.Username)
+			// 登录时检查版本偏差（ADR-0027），只警告；读不到版本不影响登录。
+			if v, err := cli.ServerVersion(cmd.Context(), config); err == nil {
+				if warning := cli.SkewWarning(version, v.Ayatori); warning != "" {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), warning)
+				}
+			}
 			return nil
 		},
 	}
@@ -233,6 +243,53 @@ func logoutCmd(profile *string) *cobra.Command {
 				return err
 			}
 			return s.Logout(name)
+		},
+	}
+}
+
+// versionCmd 与 kubectl version 相同：先打印客户端，再连接环境打印服务端，并检查版本偏差。没有配置
+// 环境时只打印客户端。
+func versionCmd(profile *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show the CLI and server versions",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "Client\t%s\nclient-go\t%s\n", version, cli.ClientGoVersion())
+			s, c, err := store()
+			if err != nil {
+				return err
+			}
+			if c.Current == "" && *profile == "" {
+				return w.Flush()
+			}
+			name, p, err := c.Profile(*profile)
+			if err != nil {
+				return err
+			}
+			config, err := s.RESTConfig(cmd.Context(), name, p)
+			if err != nil {
+				_ = w.Flush()
+				return err
+			}
+			v, err := cli.ServerVersion(cmd.Context(), config)
+			if err != nil {
+				_ = w.Flush()
+				return err
+			}
+			server := v.Ayatori
+			if server == "" {
+				server = "unknown (the server does not publish its version)"
+			}
+			_, _ = fmt.Fprintf(w, "Server (%s)\t%s\nKubernetes\t%s\n", name, server, v.Kubernetes)
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			if warning := cli.SkewWarning(version, v.Ayatori); warning != "" {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), warning)
+			}
+			return nil
 		},
 	}
 }
@@ -265,15 +322,6 @@ func whoamiCmd(profile *string) *cobra.Command {
 			return w.Flush()
 		},
 	}
-}
-
-func whoami(ctx context.Context, s cli.Store, name string, p cli.Profile) (string, error) {
-	config, err := s.RESTConfig(ctx, name, p)
-	if err != nil {
-		return "", err
-	}
-	user, err := cli.WhoAmI(ctx, config)
-	return user.Username, err
 }
 
 func openBrowser(url string) error {
