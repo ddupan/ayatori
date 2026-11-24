@@ -1,6 +1,6 @@
 # ADR-0022：LB agent 加入控制面，watch 资源并在本机收敛
 
-- 状态：Proposed（已实现于 `dev/lb-agent`，Dev 已切换；Accepted 之前还剩下文「待验证」中未勾选的三项）
+- 状态：Accepted（v0.5.0；Dev 与 Prod 于 2026-11-24 完成迁移，见「待验证」）
 - 日期：2026-11-03
 - 依据：维护者讨论（compute 节点改为以 CSR 加入控制面之后，LB 也对齐同一做法）。
 - 部分取代：[ADR-0018](0018-lb-backend-and-host-resources.md) 中以下几点：
@@ -258,7 +258,12 @@ agent 以 SSA 写自己那台 LoadBalancerHost 的 status：
    与 LB 主机之间已没有任何入站连接。
    - [x] 2026-11-04 以本地构建切换（join、manager 开关、主机 `converge`），每秒探测 VIP 共 1550 次无一失败；
      agent 上报的摘要与 controller 一致，临时 LoadBalancer 的新建与删除经 agent 在本机完成。
-   - [ ] 关闭 `:5555`：Prod 仍远程收敛，随迁移第 3 步在两个环境都切换后进行。
+   - [x] 迁移第 3、4 步（两个环境）：Prod 的 GitOps 不再声明 LoadBalancerHost（先 `prune: disabled`）；
+     homelab_loadbalancer 0.5.x 关闭 `:5555`，dataplaneapi 只监听 `127.0.0.1:5556`，ACME 服务端证书与
+     client CA 一并清理；v0.5.0 删除 manager 的远程收敛、Data Plane API 凭据与 `dataPlaneURL`；
+     Bao 删除 `pki-loadbalancer-<env>` 与 `kv/infra/loadbalancer/<env>`。
+   - [x] 2026-11-24 核对：四台 LB 主机均未监听 `:5555`；与控制面之间只有 agent 到 apiserver `:6443` 的
+     出站连接（另有经 VIP 的业务流量，如 ayatori-prod 访问 pg-prod），没有控制面发起的管理连接。
 
 ## 测试合同
 

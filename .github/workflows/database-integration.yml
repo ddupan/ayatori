@@ -28,7 +28,7 @@ concurrency:
 jobs:
   # 都在 GitHub 托管 runner 上运行：自带 Docker，后端容器直接从 Docker Hub 拉取，不需要内网。
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,7 +44,7 @@ jobs:
         run: make lint-database-integration
 
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60  # 冷缓存全量编译较慢；缓存只在成功时保存
     steps:
       - name: Checkout

@@ -135,12 +135,11 @@ func TestAgentJoins(t *testing.T) {
 	}
 	t.Run("准入只允许 agent 写自己的 status", func(t *testing.T) { onlyOwnStatus(t, k, self) })
 
-	// 管理员加上 spec、controller 加上 finalizer 之后，agent 的注册照常通过准入。
+	// controller 加上 finalizer 之后，agent 的注册照常通过准入。
 	host := &networkv1alpha1.LoadBalancerHost{}
 	if err := k.Get(t.Context(), client.ObjectKey{Name: lbHost}, host); err != nil {
 		t.Fatal(err)
 	}
-	host.Spec.DataPlaneURL = "https://" + lbHost + ".example.test:5555"
 	host.Finalizers = []string{"network.ayatori.ddupan.top/loadbalancerhost"}
 	if err := k.Update(t.Context(), host); err != nil {
 		t.Fatal(err)
@@ -189,11 +188,6 @@ func onlyOwnStatus(t *testing.T, admin, self client.Client) {
 			}
 			host.Status.VIPs = []networkv1alpha1.AgentVIPStatus{{Address: "10.62.0.9", Announced: true}}
 			return self.Status().Update(t.Context(), host)
-		},
-		"改 spec": func() error {
-			host := own()
-			host.Spec.DataPlaneURL = "https://evil.example.test:5555"
-			return self.Update(t.Context(), host)
 		},
 		"改 finalizer": func() error {
 			host := own()

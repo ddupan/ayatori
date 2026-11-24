@@ -22,7 +22,7 @@ concurrency:
 # test 与 lint 在 GitHub 托管 runner 上运行：不需要内网；envtest 与 golangci-lint 从 GitHub release 下载。
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
           ./bin/manager --help
 
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

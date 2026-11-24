@@ -1,0 +1,25 @@
+# GitHub 自动生成发布说明的分组（release-please 的 changelog-type: github 调用同一个 API）：
+# 每个合并的 PR 一条，以 PR 标题为准；dev/<feature> 分支合入 main 只算一条，分支上的提交历史保留。
+# 标签由 pr-labels.yml 按 PR 标题打；Renovate 的 PR 带 dependencies。PR 按第一个匹配的分组归类。
+changelog:
+  exclude:
+    labels:
+      - "autorelease: pending"
+      - "autorelease: tagged"
+      - skip-changelog   # pr-labels.yml：ci/docs/test/chore 等不影响使用者的 PR
+  categories:
+    - title: ⚠ Breaking changes
+      labels:
+        - breaking
+    - title: 依赖更新
+      labels:
+        - dependencies
+    - title: 新功能
+      labels:
+        - feature
+    - title: 修复
+      labels:
+        - fix
+    - title: 其他变更
+      labels:
+        - "*"

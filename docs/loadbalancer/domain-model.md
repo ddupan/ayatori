@@ -163,7 +163,7 @@ VIP 的唯一性由 API server 的对象名唯一性保证，不在领域中实�
 | Reconciler | 职责 |
 | --- | --- |
 | `LoadBalancerReconciler` | 加 finalizer、认领 Address、逐 Host 收敛与删除、写 status |
-| `LoadBalancerHostReconciler` | 加 finalizer、探测 Data Plane API（`DataPlaneReachable`）；agent 的 Lease `<主机>-loadbalancer` 超过 `--loadbalancer-agent-stale-after` 未续约时把 `AgentReady` 置为 `Unknown`（`AgentStale`）并清空 `status.vips`，按 Lease 到期时间排下一次检查；删除时清理主机上全部 `lb_` section，确认运行中的进程不再服务后放行 |
+| `LoadBalancerHostReconciler` | 加 finalizer；agent 的 Lease `<主机>-loadbalancer` 超过 `--loadbalancer-agent-stale-after` 未续约时把 `AgentReady` 置为 `Unknown`（`AgentStale`）并清空 `status.vips`，按 Lease 到期时间排下一次检查；删除时等 agent 在本机清除全部配置并报告 `Purged` 后放行（ADR-0022） |
 | `AddressReconciler` | 按孤儿规则回收无主 Address |
 | `BackendReconciler` | Backend status 的唯一写入方：从引用它的 LoadBalancer 汇总各 Host 的观察 |
 
@@ -410,5 +410,7 @@ namespace（见 `deploy/README.md`）。LB 主机由 homelab-cookbooks 的 `home
   改按 Lease 判定 `AgentStale`。
 - ADR-0022 切片 3a（`dev/lb-agent`）：agent 在本机收敛并写 `status.loadBalancers[]`；controller 尚未
   读取它，仍远程收敛。
+- ADR-0022 迁移第 3 步（v0.5.0）：删除 manager 的远程收敛与 Data Plane API 凭据；LoadBalancerHost 去掉
+  `dataPlaneURL`，`spec` 目前为空。
 - ADR-0022 切片 3b（`dev/lb-agent`）：manager 的 `--loadbalancer-agent-convergence` 开关，开启后只汇总
   agent 报告；agent 在自己的 LoadBalancerHost 删除中时清除本机全部配置（`Hosts.Purge`）并报告 `Purged`。

@@ -24,13 +24,13 @@ jobs:
       github.event.pull_request.user.login == 'renovate[bot]' &&
       startsWith(github.head_ref, 'renovate/') &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       # owner/repositories 不填：token 只对当前仓库有效。
       - id: token
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          app-id: ${{ vars.BOT_APP_ID }}  # org variable（App ID 不是机密）
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
 
       - name: Checkout

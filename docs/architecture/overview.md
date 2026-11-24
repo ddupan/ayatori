@@ -62,8 +62,7 @@ Makefile 与 Dockerfile 均继续构建 `cmd/main.go`。
 
 `Run` 只编排解析配置、创建 manager、显式装配组件、启动与退出清理。
 `options.go` 组织配置和通用 flags；`manager.go` 处理 scheme、metrics、webhook、TLS 与探针；
-`database.go`、`loadbalancer.go`、`openbao.go` 各自维护组件参数及装配细节，
-`loadbalancer_certificate.go` 负责 Data Plane API 客户端证书的加载与轮换。新增组件不向 `Run` 堆叠参数和内部
+`database.go`、`loadbalancer.go`、`openbao.go` 各自维护组件参数及装配细节。新增组件不向 `Run` 堆叠参数和内部
 条件分支，也不为此引入插件注册框架。组件启动失败时释放已装配资源，正常退出则先停止
 manager worker，再释放连接。
 

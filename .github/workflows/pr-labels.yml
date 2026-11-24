@@ -1,0 +1,46 @@
+name: PR labels
+
+# 按 conventional 的 PR 标题打标签，GitHub 生成发布说明时据此分组（.github/release.yml）：
+# feat → feature，fix/perf → fix，类型后带 ! → breaking；ci/docs/test/chore/style/build → skip-changelog
+# （不进发布说明），但 scope 为 deps 的除外：追上游的 Renovate PR（chore(deps)）要列在依赖更新里。
+# 标题改了会重新打。
+# pull_request_target：只读标题、不 checkout PR 的代码，fork 的 PR 也能打标签。
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write   # 创建标签
+
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          want=()
+          if [[ "$TITLE" =~ ^([a-z]+)(\([^\)]*\))?(!)?:\  ]]; then
+            case "${BASH_REMATCH[1]}" in
+              feat) want+=(feature) ;;
+              fix|perf) want+=(fix) ;;
+              ci|docs|test|chore|style|build) [[ "${BASH_REMATCH[2]}" == "(deps)" ]] || want+=(skip-changelog) ;;
+            esac
+            [[ -n "${BASH_REMATCH[3]}" ]] && want+=(breaking)
+          fi
+          args=()
+          for label in feature fix breaking skip-changelog; do
+            gh label create "$label" --force >/dev/null   # 已存在时不变，移除不存在的标签会失败
+            if [[ " ${want[*]-} " == *" $label "* ]]; then
+              args+=(--add-label "$label")
+            else
+              args+=(--remove-label "$label")
+            fi
+          done
+          gh pr edit "$PR" "${args[@]}"
