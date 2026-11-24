@@ -17,12 +17,6 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.dataPlaneURL
-      name: Data Plane
-      type: string
-    - jsonPath: .status.conditions[?(@.type=='DataPlaneReachable')].status
-      name: Reachable
-      type: string
     - jsonPath: .status.conditions[?(@.type=='AgentReady')].status
       name: Agent
       type: string
@@ -55,17 +49,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
-            properties:
-              dataPlaneURL:
-                description: |-
-                  DataPlaneURL 已废弃、不再使用：manager 不再连接 LB 主机（ADR-0022）。只为仍在 GitOps 中声明它的
-                  环境保留，下一个 minor 删除。
-                maxLength: 253
-                type: string
-                x-kubernetes-validations:
-                - message: dataPlaneURL must be an https URL
-                  rule: isURL(self) && url(self).getScheme() == 'https'
+            description: |-
+              LoadBalancerHostSpec 目前没有字段：主机由 agent 注册，配置在主机上由 agent 收敛，manager 不连接主机
+              （ADR-0022）。
             type: object
           status:
             properties:
