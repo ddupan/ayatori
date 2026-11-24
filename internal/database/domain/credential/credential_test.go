@@ -23,9 +23,9 @@ import (
 	"strings"
 	"testing"
 
-	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	credentialdomain "go.ddupan.top/ayatori/internal/database/domain/credential"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 func TestApplicationCredential(t *testing.T) {

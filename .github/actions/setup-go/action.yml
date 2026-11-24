@@ -1,34 +1,18 @@
 name: Setup Go
-description: 各 Go job 共用的准备步骤：Go 工具链与依赖走 Artifact Keeper（云端 runner 走公共源），缓存 Go 模块、构建缓存与 bin 工具
+description: 各 Go job 共用的准备步骤：Go 工具链，以及 Go 模块、构建缓存与 bin 工具的缓存
 inputs:
-  cloud:
-    description: 云端 runner（runs-on 含 cloud）连不上内网 Artifact Keeper，工具链与模块改走公共源
-    default: 'false'
-  docker:
-    description: Docker Hub 镜像也走 Artifact Keeper（集成测试的后端容器）
-    default: 'false'
   lint:
     description: 恢复并保存 golangci-lint 的分析缓存（lint job 用）
     default: 'false'
 runs:
   using: composite
   steps:
-    # Go 工具链与模块走 Artifact Keeper 的 pull-through 缓存，不直连外网。
-    - uses: https://git.ddupan.top/panxiao81/ci-actions/setup-artifact-keeper@v1
-      if: inputs.cloud != 'true'
-      with:
-        go: 'true'
-        go-version-file: go.mod
-        docker: ${{ inputs.docker }}
-
-    # 云端 runner：工具链与模块走 go.dev 和 proxy.golang.org。缓存仍由下面的 actions/cache 负责。
     - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-      if: inputs.cloud == 'true'
       with:
         go-version-file: go.mod
         cache: false
 
-    # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint）直接从 GitHub 下载，一并缓存。
+    # 代替 setup-go 的缓存；bin 里的工具（envtest 二进制、golangci-lint）从 GitHub release 下载，一并缓存。
     # 各 job 编译的包与构建标签不同，按 job 分开缓存。缓存只在 job 成功时保存，
     # go.sum/Makefile 变化后用 restore-keys 先恢复上一份再增量构建，避免冷缓存全量编译。
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -13,26 +13,22 @@ on:
       - 'internal/testenv/**'
       - 'hack/integration-test.sh'
       - 'hack/apiserver/**'
-      - '.gitea/workflows/database-integration.yml'
-      - '.gitea/actions/setup-go/**'
+      - '.github/workflows/database-integration.yml'
+      - '.github/actions/setup-go/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 # 同一 PR 推新提交时取消旧的运行。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # envtest 与 golangci-lint 走 Artifact Keeper 的缓存，不直连 GitHub。
-  GITHUB_RELEASES: https://artifacts.lab.ddupan.top/api/v1/repositories/github-releases/download
-
 jobs:
-  # lint 在云端池（GKE Autopilot）运行，不需要 Docker 和内网；golangci-lint 直接从 GitHub release 下载，
-  # 在 job 级覆盖上面的 Artifact Keeper 前缀。test 要起 Docker 后端容器，留在 homelab。
+  # 都在 GitHub 托管 runner 上运行：自带 Docker，后端容器直接从 Docker Hub 拉取，不需要内网。
   lint:
-    runs-on: [cloud]
-    env:
-      GITHUB_RELEASES: https://github.com
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,30 +36,26 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: ./.gitea/actions/setup-go
+        uses: ./.github/actions/setup-go
         with:
           lint: 'true'
-          cloud: 'true'
 
       - name: Lint integration build
         run: make lint-database-integration
 
   test:
-    runs-on: [self-hosted, pod]
-    timeout-minutes: 60  # 2 核 runner 冷缓存全量编译很慢；缓存只在成功时保存
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60  # 冷缓存全量编译较慢；缓存只在成功时保存
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # Docker Hub 镜像（集成测试的后端容器）同样走 Artifact Keeper。
       - name: Set up Go
-        uses: ./.gitea/actions/setup-go
-        with:
-          docker: 'true'
+        uses: ./.github/actions/setup-go
 
-      # Runner 提供本 job 可用的 Docker；workflow 只验证，不重复启动 daemon。
+      # 托管 runner 自带 Docker；这里只确认可用。
       - name: Verify Docker availability
         shell: bash
         run: |

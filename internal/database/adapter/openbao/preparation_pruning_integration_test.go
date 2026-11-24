@@ -10,7 +10,7 @@ import (
 	bao "github.com/openbao/openbao/api/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
 )
 
 // 在 API 边界模拟旧 schema 裁剪位置字段；剩余写入仍由真实 API server 处理。

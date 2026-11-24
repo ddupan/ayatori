@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"slices"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
 )
 
 // Frontend 是运行中的 HAProxy 里一个 bind 的事实：绑定地址与是否处于 OPEN。

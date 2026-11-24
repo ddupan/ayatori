@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
 )
 
 const namespace = "team"

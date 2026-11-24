@@ -1,10 +1,10 @@
 package controller
 
 import (
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	"go.ddupan.top/ayatori/internal/database/domain/binding"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"

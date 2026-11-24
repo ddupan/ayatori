@@ -10,9 +10,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/infra/node"
+	"go.ddupan.top/ayatori/internal/loadbalancer/controller"
 )
 
 const (

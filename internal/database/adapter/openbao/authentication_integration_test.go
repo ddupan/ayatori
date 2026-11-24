@@ -49,8 +49,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/infra/openbao"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

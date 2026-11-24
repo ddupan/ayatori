@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // listenerType 是 show stat 中 bind 行的 type；frontend 开启 socket-stats 后每个 bind 单独成行。

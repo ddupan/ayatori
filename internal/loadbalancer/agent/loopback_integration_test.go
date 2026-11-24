@@ -10,7 +10,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
+	"go.ddupan.top/ayatori/internal/loadbalancer/agent"
 )
 
 // TestLoopback 修改 lo，需要 CAP_NET_ADMIN 与独立的网络 namespace，由 make test-lb-agent-netlink

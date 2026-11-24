@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // 只返回 catalog 事实；是否构成冲突、下一步做什么由 Database 聚合判断。

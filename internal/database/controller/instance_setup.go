@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"

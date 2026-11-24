@@ -3,7 +3,7 @@ package database
 import (
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
 )
 
 // 外部操作结果分类。adapter 把后端错误翻译成这些类别，聚合据此决定状态迁移。

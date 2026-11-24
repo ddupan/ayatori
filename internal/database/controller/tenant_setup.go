@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	"go.ddupan.top/ayatori/internal/database/domain/binding"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

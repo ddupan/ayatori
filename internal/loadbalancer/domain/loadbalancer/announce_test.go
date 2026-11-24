@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
 )
 
 func TestAnnouncements(t *testing.T) {

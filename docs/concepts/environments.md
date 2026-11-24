@@ -9,9 +9,9 @@ Release 工作流的 PR 不触发 Verify；Flux 清单在 Dev 同步时验证。
 需要排障或验证直接推送的紧急修复时，可通过 workflow_dispatch 手动运行。此约定不减少代码变更
 的检查项目，也不修改分支保护设置；常规变更必须经过 PR，直接推送 main 不会自动验证。
 
-Gitea 的 PR 工作流验证分支 head，而不是合并预览提交，见
-[官方事件说明](https://docs.gitea.com/usage/actions/faq/)。合并前必须确认最新 head 检查通过，
-且与当前 main 合并不会引入未经验证的内容组合；基线有实质变化时先更新分支并重验。
+GitHub 的 `pull_request` 工作流验证的是合并预览提交（`refs/pull/<n>/merge`，即 head 与当时的
+main 合并后的结果），但只在 PR 推送新提交时重新运行，main 之后的变化不会触发。合并前必须确认最新
+head 检查通过，且与当前 main 合并不会引入未经验证的内容组合；基线有实质变化时先更新分支并重验。
 只改变基线引用且目标文件树不变时，不需要为了合并提交的 SHA 不同重复全量验证。
 
 ## 环境与制品晋级
@@ -40,7 +40,7 @@ Prod deployment of the same artifact
 ```
 
 不维护长期漂移的环境分支。一个 git tag `vX.Y.Z` 就是一个 release（Flux 清单、同名 manager 镜像
-与附在 Gitea Release 上的 lb-agent 二进制）；homelab-infra 的 Chef policy 按环境钉 release 与镜像
+与附在 GitHub Release 上的 lb-agent 二进制）；homelab-infra 的 Chef policy 按环境钉 release 与镜像
 digest，promotion 即把 Prod 改为 Dev 已验收的 tag。完全不可用的 release 不升版本，修复后删除并
 重打同名 tag。部署逻辑在 cookbook 中，按 homelab-cookbooks 自己的 tag 单独发版。
 

@@ -1,4 +1,4 @@
-module git.ddupan.top/panxiao81/ayatori
+module go.ddupan.top/ayatori
 
 go 1.27.4
 

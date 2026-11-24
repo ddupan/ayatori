@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // DropDatabase 依次阻止新登录、关闭连接入口、终止应用角色在本库的会话并删除数据库；

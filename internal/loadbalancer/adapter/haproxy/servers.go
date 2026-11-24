@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy/dataplaneapi"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/haproxy/dataplaneapi"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // drains 记录 server 开始排空的时刻。HAProxy 的 lastchg 只随健康状态变化，不能表示排空时长。

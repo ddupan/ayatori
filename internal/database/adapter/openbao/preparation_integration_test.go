@@ -8,15 +8,15 @@ import (
 	"maps"
 	"testing"
 
-	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	credentialdomain "go.ddupan.top/ayatori/internal/database/domain/credential"
 
 	bao "github.com/openbao/openbao/api/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	"go.ddupan.top/ayatori/internal/database/adapter/openbao"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	"go.ddupan.top/ayatori/internal/database/domain/binding"
 )
 
 func TestCredentialPreparationWithRealBackends(t *testing.T) {

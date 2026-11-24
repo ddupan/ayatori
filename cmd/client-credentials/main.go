@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
 )
 
 type identities []clientcert.Identity

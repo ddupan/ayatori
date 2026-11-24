@@ -21,7 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
+	"go.ddupan.top/ayatori/internal/infra/openbao"
 )
 
 func TestOpenBaoClientDoesNotUseEnvironmentIdentityOrAddress(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // Acceptance: docs/database/domain-instance.md §2: registration identity is UID + name,

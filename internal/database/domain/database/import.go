@@ -3,7 +3,7 @@ package database
 import (
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
 )
 
 // Available 是导入资源完成登记后的阶段，表示可以被 Tenant 显式申请。

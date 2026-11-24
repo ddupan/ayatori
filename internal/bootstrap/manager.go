@@ -16,9 +16,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	executionv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1"
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	executionv1alpha1 "go.ddupan.top/ayatori/api/execution/v1alpha1"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
 )
 
 func newManager(options options) (ctrl.Manager, error) {

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/binding"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 const (

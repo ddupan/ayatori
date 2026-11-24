@@ -3,8 +3,8 @@ package database_test
 import (
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
 )
 
 func importFixture(t *testing.T) (database.Snapshot, database.Dependencies, credential.ApplicationCredential) {

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

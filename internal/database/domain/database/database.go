@@ -8,9 +8,9 @@ import (
 	"slices"
 	"strings"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/binding"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/binding"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // Snapshot 是 Database 自身的持久状态，不含 resourceVersion 或 Conditions。

@@ -7,12 +7,12 @@ import (
 	"errors"
 	"testing"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"github.com/jackc/pgx/v5"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	databasedomain "go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )

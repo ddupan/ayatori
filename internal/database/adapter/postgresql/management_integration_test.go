@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	corev1 "k8s.io/api/core/v1"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 const nativeManager = "native_manager"

@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  # 版本 tag 是 Dev/Prod 共用的制品：Flux 同步该 tag 的清单，manager 镜像以同名 tag 发布。
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # GitHub 托管 runner：构建 manager 镜像推到 ghcr（带 provenance/SBOM），构建 lb-agent，
+  # 以 annotated tag 的说明创建 GitHub Release 并附上 lb-agent。不需要内网。
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write   # GitHub Release
+      packages: write   # ghcr
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/ayatori-manager
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      - name: Build and push image
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          docker buildx create --name ci-builder --driver docker-container --use >/dev/null
+          docker buildx build --platform linux/amd64 --tag "${IMAGE}:${TAG}" \
+            --provenance=mode=max --sbom=true --metadata-file metadata.json --push .
+          digest="$(jq -er '."containerimage.digest"' metadata.json)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          printf '## Published image\n\n- `%s@%s`\n' "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
+
+      # LB agent 跑在 LB 主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
+      # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
+      - name: Build lb-agent tarball and checksums
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p dist/pkg
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/lb-agent ./cmd/lb-agent
+          tar -C dist/pkg -czf "dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
+          (cd dist && sha256sum "ayatori-lb-agent_${version}_linux_amd64.tar.gz" > "ayatori_${version}_checksums.txt")
+
+      # 发布说明取自 annotated tag 的说明；同名 tag 重打后重发时覆盖已有 Release 的说明与附件。
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          # %(contents) 含签名 tag 的签名块；只取标题与正文。
+          notes="$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG")"
+          printf '%s\n\n## 制品\n\n- manager 镜像：`%s@%s`（内网 `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`）\n- Flux 清单：本 tag 的 `deploy/flux`\n' \
+            "$notes" "$IMAGE" "$DIGEST" "$DIGEST" > notes.md
+          prerelease=(); [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md "${prerelease[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md "${prerelease[@]}"
+          fi
+          gh release upload "$TAG" dist/*.tar.gz dist/*_checksums.txt --clobber
+
+  # homelab ARC runner：Dev/Prod 从内网 zot 拉取，zot 只在内网、按 SPIFFE ID 授权。按 digest 原样
+  # 复制 ghcr 上的镜像（含 provenance/SBOM），不重新构建。SPIFFE ID（…/ayatori/publish-image）来自
+  # spire-identity-exchange；homelab-infra platform/spire/github-ci.yaml 的 entry 只匹配本文件的 tag push。
+  publish-image:
+    needs: build
+    runs-on: homelab
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read    # 新建的 ghcr package 默认私有，复制前也要能读到
+      id-token: write   # GitHub OIDC token, one half of the exchange's proof
+    steps:
+      - id: svid
+        uses: ddupan/ci-actions/spiffe-jwt-svid@v1
+        with:
+          audience: zot
+      - name: Copy image to zot
+        env:
+          SVID: ${{ steps.svid.outputs.svid }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE: ghcr.io/${{ github.repository_owner }}/ayatori-manager@${{ needs.build.outputs.digest }}
+          TARGET: zot-push.lab.ddupan.top/panxiao81/ayatori-manager:${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG
+          DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          printf '%s' "$SVID" | docker login zot-push.lab.ddupan.top --username zot --password-stdin >/dev/null
+          docker buildx imagetools create --tag "$TARGET" "$SOURCE"
+          # policy 按 digest 引用镜像：zot 上的 digest 必须与 ghcr 的相同。
+          copied="$(docker buildx imagetools inspect "$TARGET" --format '{{json .Manifest}}' | jq -er .digest)"
+          [ "$copied" = "${SOURCE#*@}" ] || { echo "digest changed in copy: $copied" >&2; exit 1; }
+          printf '## zot\n\n- `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`\n' "$copied" >> "$GITHUB_STEP_SUMMARY"

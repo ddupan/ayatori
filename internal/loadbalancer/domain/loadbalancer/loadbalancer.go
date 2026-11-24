@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
 )
 
 // Snapshot 是 LoadBalancer 自身的持久状态，不含 resourceVersion 或 Conditions。
