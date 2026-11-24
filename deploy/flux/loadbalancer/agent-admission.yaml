@@ -28,15 +28,12 @@ spec:
   validations:
   - expression: "variables.node != '' && object.metadata.name == variables.node"
     messageExpression: "'node ' + variables.node + ' may only write its own LoadBalancerHost'"
-  - expression: >-
-      !variables.main || request.operation != 'CREATE' ||
-      ((!has(object.spec) || !has(object.spec.dataPlaneURL)) && size(variables.finalizers) == 0)
-    message: "agent registers LoadBalancerHost without spec or finalizers"
+  - expression: "!variables.main || request.operation != 'CREATE' || size(variables.finalizers) == 0"
+    message: "agent registers LoadBalancerHost without finalizers"
   - expression: >-
       !variables.main || request.operation != 'UPDATE' ||
-      (has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec) &&
-       variables.finalizers == (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []))
-    message: "agent may not change LoadBalancerHost spec or finalizers"
+      variables.finalizers == (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : [])
+    message: "agent may not change LoadBalancerHost finalizers"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

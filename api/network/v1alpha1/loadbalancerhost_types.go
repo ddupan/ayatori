@@ -4,15 +4,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LoadBalancerHostSpec 由管理员持有，agent 只读（ADR-0022）。
-type LoadBalancerHostSpec struct {
-	// DataPlaneURL 已废弃、不再使用：manager 不再连接 LB 主机（ADR-0022）。只为仍在 GitOps 中声明它的
-	// 环境保留，下一个 minor 删除。
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:XValidation:rule="isURL(self) && url(self).getScheme() == 'https'",message="dataPlaneURL must be an https URL"
-	// +optional
-	DataPlaneURL string `json:"dataPlaneURL,omitempty"`
-}
+// LoadBalancerHostSpec 目前没有字段：主机由 agent 注册，配置在主机上由 agent 收敛，manager 不连接主机
+// （ADR-0022）。
+type LoadBalancerHostSpec struct{}
 
 type LoadBalancerHostStatus struct {
 	// ObservedGeneration 是本 status 观察的 spec 版本。
@@ -104,8 +98,6 @@ type HostServerStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=lbhost
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') && size(self.metadata.name) <= 63",message="name must be a DNS label because it appears in LoadBalancer status"
-// +kubebuilder:printcolumn:name="Data Plane",type=string,JSONPath=`.spec.dataPlaneURL`
-// +kubebuilder:printcolumn:name="Reachable",type=string,JSONPath=`.status.conditions[?(@.type=='DataPlaneReachable')].status`
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.status.conditions[?(@.type=='AgentReady')].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type LoadBalancerHost struct {

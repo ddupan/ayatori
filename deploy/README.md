@@ -22,16 +22,22 @@ deploy/
 
 1. 攒够一批变更再发版：功能 PR 不修改版本号。未发版的变更在 Dev 以本地构建的镜像（policy 中按
    digest 引用）验证。
-2. 在 main 上打 **annotated** tag 并推送，tag 说明写本版变更（用户可见的行为、部署注意事项），
-   它就是 GitHub Release 的发布说明。Release 工作流在 GitHub 托管 runner 上用 buildx 构建 manager
-   镜像，以同名 tag 推送 `ghcr.io/ddupan/ayatori-manager`，再以 tag 说明加镜像 digest 创建（重发时
-   更新）GitHub Release；随后 homelab runner 按 digest 原样复制到内网
+2. release-please（`.github/workflows/release-please.yml`）把 main 上的 conventional commits 累积成
+   一个 release PR：版本号按提交类型推算（0.x 期间 breaking change 也只升 minor）。`CHANGELOG.md`
+   与发布说明由 GitHub 按合并的 PR 生成，每个 PR 一条（以 PR 标题为准，分组见 `.github/release.yml`）；
+   合并时保留 merge commit，dev/<feature> 分支的提交历史不压缩。分组靠 PR 标签，由 `pr-labels.yml` 按
+   PR 标题打：`feat` 为新功能，`fix`/`perf` 为修复，类型后带 `!` 为 breaking change。合并前在 PR 说明
+   里该版本的那一节中补上部署注意事项与「agent：无变化」或 agent 的变更（ADR-0024）；之后 main 上有
+   新提交时 PR 会被重新生成，补充要在合并前最后做。
+3. 合并 release PR 即创建 tag `vX.Y.Z` 与 GitHub Release。tag push 触发 Release 工作流：在 GitHub
+   托管 runner 上用 buildx 构建 manager 镜像，以同名 tag 推送 `ghcr.io/ddupan/ayatori-manager`，在
+   Release 上追加镜像 digest 与 lb-agent 附件；随后 homelab runner 按 digest 原样复制到内网
    `zot.lab.ddupan.top/panxiao81/ayatori-manager`，两处 digest 相同，Dev/Prod 从 zot 拉取。
-3. 部署方把 policy 的 `homelab_ayatori.release` 改为该 tag、`image` 改为该镜像的 digest。Promotion
+4. 部署方把 policy 的 `homelab_ayatori.release` 改为该 tag、`image` 改为该镜像的 digest。Promotion
    即把 Prod 的 policy 改为 Dev 已验收的 release。
 
-完全不可用的 release 不升版本：修复合并后删除并在修复提交上重打同名 tag，Release 覆盖同名
-镜像；镜像按 digest 引用，部署方随之更新 digest。
+完全不可用的 release 不升版本：修复合并后删除并在修复提交上手动重打同名 annotated tag（说明即发布
+说明），Release 工作流覆盖同名镜像与附件；镜像按 digest 引用，部署方随之更新 digest。
 
 环境不跟随 main：Flux GitRepository 固定到 policy 中的 release tag。
 

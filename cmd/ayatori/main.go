@@ -22,6 +22,9 @@ import (
 	"go.ddupan.top/ayatori/internal/cli"
 )
 
+// version 由发布构建以 -ldflags "-X main.version=<tag>" 写入；本地构建是 dev。
+var version = "dev"
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -33,7 +36,8 @@ func main() {
 
 func root() *cobra.Command {
 	var profile string
-	cmd := &cobra.Command{Use: "ayatori", Short: "Ayatori command line", SilenceUsage: true, SilenceErrors: true}
+	cmd := &cobra.Command{Use: "ayatori", Short: "Ayatori command line", Version: version,
+		SilenceUsage: true, SilenceErrors: true}
 	cmd.PersistentFlags().StringVar(&profile, "profile", "", "environment to use instead of the current one")
 	cmd.AddCommand(configCmd(), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile))
 	// 名词在前、动词在后（ADR-0027），参照云 CLI，不是 kubectl 的动词在前。
