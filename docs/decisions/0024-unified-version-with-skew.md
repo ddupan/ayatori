@@ -47,6 +47,7 @@ LB agent：
 - manager 与 CRD 必须兼容落后一个 minor 的 agent。做不到时拆成两个 minor：先加入新行为并保留
   旧行为，下一个 minor 再去掉旧的。
 - release notes 写明 agent 是否有变化（「agent：无变化」或变更列表），部署方据此决定是否升级 agent。
+  发布说明由 release-please 生成，这一条在合并 release PR 前补进 PR 说明。
 
 **执行。**
 
