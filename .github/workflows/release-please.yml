@@ -1,0 +1,33 @@
+name: Release Please
+
+# main 上的 conventional commits 累积成一个 release PR（版本号与 CHANGELOG）；合并它即创建 tag 与
+# GitHub Release，tag push 再触发 release.yml 构建制品。0.x 期间 breaking change 只升 minor
+# （bump-minor-pre-major），与 ADR-0024 的版本规则一致。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # 用 App token：GITHUB_TOKEN 创建的 tag 与 PR 不会触发 release.yml 与 PR 检查。
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.BOT_APP_ID }}  # org variable（App ID 不是机密）
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

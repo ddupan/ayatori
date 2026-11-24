@@ -56,7 +56,8 @@ jobs:
           tar -C dist/pkg -czf "dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
           (cd dist && sha256sum "ayatori-lb-agent_${version}_linux_amd64.tar.gz" > "ayatori_${version}_checksums.txt")
 
-      # 发布说明取自 annotated tag 的说明；同名 tag 重打后重发时覆盖已有 Release 的说明与附件。
+      # release-please 合并 release PR 时已建好 Release（说明即 CHANGELOG 的这一节）：保留它，只追加制品。
+      # 手动推送的 tag 没有 Release：说明取自 annotated tag。附件同名覆盖，重跑幂等。
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,13 +66,17 @@ jobs:
           set -euo pipefail
           git fetch --quiet --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
           # %(contents) 含签名 tag 的签名块；只取标题与正文。
-          notes="$(git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG")"
-          printf '%s\n\n## 制品\n\n- manager 镜像：`%s@%s`（内网 `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`）\n- Flux 清单：本 tag 的 `deploy/flux`\n' \
-            "$notes" "$IMAGE" "$DIGEST" "$DIGEST" > notes.md
+          artifacts="$(printf '## 制品\n\n- manager 镜像：`%s@%s`（内网 `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`）\n- Flux 清单：本 tag 的 `deploy/flux`\n' \
+            "$IMAGE" "$DIGEST" "$DIGEST")"
           prerelease=(); [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # 重跑时替换上一次追加的制品一节（digest 可能变了）。
+            gh release view "$TAG" --json body -q .body | sed '/^## 制品$/,$d' > notes.md
+            printf '\n%s\n' "$artifacts" >> notes.md
             gh release edit "$TAG" --notes-file notes.md "${prerelease[@]}"
           else
+            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG" > notes.md
+            printf '\n%s\n' "$artifacts" >> notes.md
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md "${prerelease[@]}"
           fi
           gh release upload "$TAG" dist/*.tar.gz dist/*_checksums.txt --clobber

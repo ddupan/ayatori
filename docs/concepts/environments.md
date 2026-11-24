@@ -42,7 +42,8 @@ Prod deployment of the same artifact
 不维护长期漂移的环境分支。一个 git tag `vX.Y.Z` 就是一个 release（Flux 清单、同名 manager 镜像
 与附在 GitHub Release 上的 lb-agent 二进制）；homelab-infra 的 Chef policy 按环境钉 release 与镜像
 digest，promotion 即把 Prod 改为 Dev 已验收的 tag。完全不可用的 release 不升版本，修复后删除并
-重打同名 tag。部署逻辑在 cookbook 中，按 homelab-cookbooks 自己的 tag 单独发版。
+重打同名 tag。tag 由 release-please 的 release PR 合并时创建（见 [deploy/README.md](../../deploy/README.md)）。
+部署逻辑在 cookbook 中，homelab-cookbooks 单独发版，policy 按精确版本引用。
 
 Prod 建立后，Dev 与 Prod 使用独立 API、数据库、身份和凭据。Dev 应连接真实后端，但
 使用独立地址空间和资源范围；Dev 凭据在后端权限层面不应具备修改 Prod 资源的能力。
