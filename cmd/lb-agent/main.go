@@ -16,7 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
+	"go.ddupan.top/ayatori/internal/loadbalancer/agent"
 )
 
 func main() {

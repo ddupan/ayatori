@@ -31,8 +31,8 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/database/adapter/openbao"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 // baoFixture 连接 hack/integration-test.sh 在 go test 之外启动的无持久卷 dev server（root token

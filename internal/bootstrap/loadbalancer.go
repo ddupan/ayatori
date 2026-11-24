@@ -14,9 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/powerdns"
-	lbcontroller "git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/powerdns"
+	lbcontroller "go.ddupan.top/ayatori/internal/loadbalancer/controller"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
 )
 
 type loadBalancerOptions struct {

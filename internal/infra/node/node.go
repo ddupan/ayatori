@@ -22,7 +22,7 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
 )
 
 const (

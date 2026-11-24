@@ -22,9 +22,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/node"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

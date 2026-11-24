@@ -12,8 +12,8 @@ import (
 
 	pdns "github.com/joeig/go-powerdns/v3"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/powerdns"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/powerdns"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

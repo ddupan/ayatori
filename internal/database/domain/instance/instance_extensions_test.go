@@ -19,7 +19,7 @@ package instance_test
 import (
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // Acceptance: docs/database/domain-instance.md §2/§3, extension observations are

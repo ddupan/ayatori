@@ -3,10 +3,10 @@ package postgresql
 import (
 	"context"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
 	"github.com/jackc/pgx/v5"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // 在目标库内读取服务器可用与本库已安装的扩展；使用 pg_catalog 限定名称，不依赖 search_path。

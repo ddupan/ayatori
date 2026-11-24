@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

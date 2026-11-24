@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
+	"go.ddupan.top/ayatori/internal/database/adapter/postgresql"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 

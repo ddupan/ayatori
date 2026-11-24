@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy/dataplaneapi"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/haproxy/dataplaneapi"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // Hosts 对任意 Host 执行同一套操作；HTTP 客户端负责 mTLS。

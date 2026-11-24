@@ -8,9 +8,9 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	databasebao "git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
+	databasebao "go.ddupan.top/ayatori/internal/database/adapter/openbao"
+	"go.ddupan.top/ayatori/internal/database/adapter/postgresql"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 

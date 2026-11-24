@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 func validCredentialReference() instance.CredentialReferenceValues {

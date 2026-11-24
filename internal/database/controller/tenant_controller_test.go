@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

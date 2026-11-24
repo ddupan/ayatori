@@ -20,7 +20,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 const (

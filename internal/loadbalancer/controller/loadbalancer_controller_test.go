@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"

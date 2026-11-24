@@ -5,10 +5,10 @@ package postgresql_test
 import (
 	"testing"
 
-	databasev1alpha1 "git.ddupan.top/panxiao81/ayatori/api/database/v1alpha1"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
-	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
+	databasev1alpha1 "go.ddupan.top/ayatori/api/database/v1alpha1"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	"go.ddupan.top/ayatori/internal/database/domain/credential"
+	databasedomain "go.ddupan.top/ayatori/internal/database/domain/database"
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

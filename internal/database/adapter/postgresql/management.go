@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 // 只读取当前执行角色的属性；是否满足管理要求由 instance 领域判断。

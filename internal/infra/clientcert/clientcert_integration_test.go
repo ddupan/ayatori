@@ -22,8 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 func eventually(t *testing.T, timeout time.Duration, check func() error) {

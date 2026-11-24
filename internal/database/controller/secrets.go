@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

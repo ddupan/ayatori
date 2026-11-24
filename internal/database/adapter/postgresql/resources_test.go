@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
 )
 
 func TestCreationErrorsDoNotExposeServerDetails(t *testing.T) {

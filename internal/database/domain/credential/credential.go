@@ -23,7 +23,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 var ErrApplicationCredentialInvalid = errors.New("application credential is invalid")

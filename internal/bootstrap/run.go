@@ -9,7 +9,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
 )
 
 var setupLog = ctrl.Log.WithName("setup")

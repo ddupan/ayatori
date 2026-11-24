@@ -23,11 +23,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/node"
+	"go.ddupan.top/ayatori/internal/loadbalancer/agent"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const lbHost = "lb-1"

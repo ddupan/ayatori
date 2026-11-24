@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 func TestNodeStatus(t *testing.T) {

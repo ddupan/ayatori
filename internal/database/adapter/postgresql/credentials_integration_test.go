@@ -29,9 +29,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/adapter/postgresql"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 func TestManagementSecretScopeAndMissingDependencyRecovery(t *testing.T) {

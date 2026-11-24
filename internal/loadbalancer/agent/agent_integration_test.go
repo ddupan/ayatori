@@ -27,8 +27,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/agent"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 const (

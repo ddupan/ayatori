@@ -26,11 +26,11 @@ import (
 	"slices"
 	"strings"
 
-	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	credentialdomain "go.ddupan.top/ayatori/internal/database/domain/credential"
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/database"
 )
 
 var (

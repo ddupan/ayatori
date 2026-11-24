@@ -17,11 +17,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/haproxy"
+	"go.ddupan.top/ayatori/internal/loadbalancer/controller"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 const (

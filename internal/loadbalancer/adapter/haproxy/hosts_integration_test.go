@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/haproxy"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

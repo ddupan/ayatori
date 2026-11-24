@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	databasedomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/database"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	databasedomain "go.ddupan.top/ayatori/internal/database/domain/database"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

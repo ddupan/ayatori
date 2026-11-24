@@ -14,10 +14,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/clientcert"
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/node"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/infra/clientcert"
+	"go.ddupan.top/ayatori/internal/infra/node"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // Role 是 LB 主机的角色（ADR-0022）：Node label node-role.kubernetes.io/loadbalancer，

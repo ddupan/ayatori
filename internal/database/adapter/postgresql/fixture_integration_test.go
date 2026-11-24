@@ -33,10 +33,10 @@ import (
 	"k8s.io/client-go/rest"
 	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	"go.ddupan.top/ayatori/internal/database/adapter/postgresql"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

@@ -35,8 +35,8 @@ import (
 	"testing"
 	"time"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/postgresql"
-	"git.ddupan.top/panxiao81/ayatori/internal/database/domain/instance"
+	"go.ddupan.top/ayatori/internal/database/adapter/postgresql"
+	"go.ddupan.top/ayatori/internal/database/domain/instance"
 )
 
 func fixtureCertificate(t *testing.T) (string, string) {

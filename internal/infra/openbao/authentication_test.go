@@ -34,7 +34,7 @@ import (
 	"k8s.io/client-go/rest"
 	kubeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/infra/openbao"
+	"go.ddupan.top/ayatori/internal/infra/openbao"
 )
 
 const (

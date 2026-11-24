@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	credentialdomain "git.ddupan.top/panxiao81/ayatori/internal/database/domain/credential"
+	credentialdomain "go.ddupan.top/ayatori/internal/database/domain/credential"
 )
 
 func (c *Credentials) ProvisionLocation(uid string) (credentialdomain.Location, error) {

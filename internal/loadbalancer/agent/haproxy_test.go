@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
 )
 
 // 取自 HAProxy 3.x 对 disable frontend lb_a_7001 后的 show stat（只保留用到的列）：

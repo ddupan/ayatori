@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/bootstrap"
+	"go.ddupan.top/ayatori/internal/bootstrap"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 

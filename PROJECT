@@ -8,7 +8,7 @@ layout:
 - go.kubebuilder.io/v4
 multigroup: true
 projectName: ayatori
-repo: git.ddupan.top/panxiao81/ayatori
+repo: go.ddupan.top/ayatori
 resources:
 - api:
     crdVersion: v1
@@ -16,27 +16,27 @@ resources:
   domain: ayatori.ddupan.top
   group: execution
   kind: Job
-  path: git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1
+  path: go.ddupan.top/ayatori/api/execution/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: ayatori.ddupan.top
   group: execution
   kind: JobClass
-  path: git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1
+  path: go.ddupan.top/ayatori/api/execution/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: ayatori.ddupan.top
   group: execution
   kind: KubernetesExecutionParameters
-  path: git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1
+  path: go.ddupan.top/ayatori/api/execution/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: ayatori.ddupan.top
   group: execution
   kind: OpenSandboxExecutionParameters
-  path: git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1
+  path: go.ddupan.top/ayatori/api/execution/v1alpha1
   version: v1alpha1
 version: "3"

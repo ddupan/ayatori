@@ -1,7 +1,7 @@
 package bootstrap
 
 import (
-	databasecontroller "git.ddupan.top/panxiao81/ayatori/internal/database/controller"
+	databasecontroller "go.ddupan.top/ayatori/internal/database/controller"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

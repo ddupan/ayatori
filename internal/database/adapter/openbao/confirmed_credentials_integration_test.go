@@ -8,7 +8,7 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"go.ddupan.top/ayatori/internal/database/adapter/openbao"
 )
 
 func TestConfirmedCredentialRecoveryWithRealOpenBao(t *testing.T) {

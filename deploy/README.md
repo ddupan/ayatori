@@ -23,9 +23,10 @@ deploy/
 1. 攒够一批变更再发版：功能 PR 不修改版本号。未发版的变更在 Dev 以本地构建的镜像（policy 中按
    digest 引用）验证。
 2. 在 main 上打 **annotated** tag 并推送，tag 说明写本版变更（用户可见的行为、部署注意事项），
-   它就是 Gitea Release 的发布说明。Release 工作流用 buildx 构建 manager 镜像，以同名 tag 推送
-   `zot.lab.ddupan.top/panxiao81/ayatori-manager`，再以 tag 说明加镜像 digest 创建（重发时更新）
-   Gitea Release。
+   它就是 GitHub Release 的发布说明。Release 工作流在 GitHub 托管 runner 上用 buildx 构建 manager
+   镜像，以同名 tag 推送 `ghcr.io/ddupan/ayatori-manager`，再以 tag 说明加镜像 digest 创建（重发时
+   更新）GitHub Release；随后 homelab runner 按 digest 原样复制到内网
+   `zot.lab.ddupan.top/panxiao81/ayatori-manager`，两处 digest 相同，Dev/Prod 从 zot 拉取。
 3. 部署方把 policy 的 `homelab_ayatori.release` 改为该 tag、`image` 改为该镜像的 digest。Promotion
    即把 Prod 的 policy 改为 Dev 已验收的 release。
 

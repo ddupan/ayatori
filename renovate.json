@@ -29,13 +29,9 @@
       "rangeStrategy": "bump"
     },
     {
-      "description": "生成器升级会改变生成物：由 Renovate 在分支上重新生成并一并提交。命令须与 homelab-infra 中 Renovate 全局配置的 allowedCommands 完全一致。",
+      "description": "生成器升级会改变生成物。Mend 托管的 Renovate 不执行 postUpgradeTasks，Verify 的 git diff 检查会失败，需要人在分支上重新生成后提交。",
       "matchDepNames": ["sigs.k8s.io/controller-tools", "github.com/oapi-codegen/oapi-codegen/v2"],
-      "postUpgradeTasks": {
-        "commands": ["make manifests generate generate-dataplaneapi"],
-        "installTools": {"golang": {}},
-        "executionMode": "branch"
-      }
+      "prBodyNotes": ["⚠ 需要手动步骤：在本分支执行 `make manifests generate generate-dataplaneapi`，提交生成物后再合并。"]
     }
   ]
 }

@@ -32,13 +32,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	networkv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/network/v1alpha1"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/adapter/haproxy"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/agent"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/controller"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/address"
-	"git.ddupan.top/panxiao81/ayatori/internal/loadbalancer/domain/loadbalancer"
-	"git.ddupan.top/panxiao81/ayatori/internal/testenv"
+	networkv1alpha1 "go.ddupan.top/ayatori/api/network/v1alpha1"
+	"go.ddupan.top/ayatori/internal/loadbalancer/adapter/haproxy"
+	"go.ddupan.top/ayatori/internal/loadbalancer/agent"
+	"go.ddupan.top/ayatori/internal/loadbalancer/controller"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/address"
+	"go.ddupan.top/ayatori/internal/loadbalancer/domain/loadbalancer"
+	"go.ddupan.top/ayatori/internal/testenv"
 )
 
 const (

@@ -3,7 +3,7 @@ package execution
 import (
 	"fmt"
 
-	executionv1alpha1 "git.ddupan.top/panxiao81/ayatori/api/execution/v1alpha1"
+	executionv1alpha1 "go.ddupan.top/ayatori/api/execution/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.ddupan.top/panxiao81/ayatori/internal/database/adapter/openbao"
+	"go.ddupan.top/ayatori/internal/database/adapter/openbao"
 )
 
 func credentialVersionMetadata(version int) map[string]any {
