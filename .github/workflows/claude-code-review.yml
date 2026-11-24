@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   review:
-    # Renovate 的依赖升级不审：改动是版本号，由 CI 验证。
-    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.login != 'renovate[bot]' }}
+    # bot 的 PR 不审：Renovate 的依赖升级由 CI 验证，release-please 的 release PR 只改版本与发布说明。
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
