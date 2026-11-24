@@ -1,0 +1,73 @@
+name: Compute Integration
+
+on:
+  # 只在 Compute 相关代码或本工作流变化时，以 envtest 与真实的 libvirt（进程内 test 驱动）验证 Compute Agent。
+  pull_request:
+    paths:
+      - 'api/compute/**'
+      - 'internal/compute/**'
+      - 'cmd/compute-agent/**'
+      - 'cmd/imds/**'
+      - 'hack/domainspec/**'
+      - 'config/crd/bases/compute.ayatori.ddupan.top_*.yaml'
+      - 'hack/integration-test.sh'
+      - '.github/workflows/compute-integration.yml'
+      - '.github/actions/setup-go/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一 PR 推新提交时取消旧的运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 都在 GitHub 托管 runner 上运行；libvirt 用进程内 test 驱动，不需要 libvirtd 与内网。
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          lint: 'true'
+
+      # Compute Agent 经 cgo 链接 libvirt，编译、测试与 lint 都需要其开发包。
+      - name: Install libvirt development files
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
+
+      - name: Lint integration build
+        run: make lint-compute-integration
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      # Compute Agent 经 cgo 链接 libvirt，编译、测试与 lint 都需要其开发包。
+      - name: Install libvirt development files
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
+
+      - name: Test Compute Agent with envtest and libvirt
+        run: make test-compute-integration

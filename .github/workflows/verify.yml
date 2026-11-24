@@ -32,6 +32,14 @@ jobs:
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
+      # Compute Agent 经 cgo 链接 libvirt，编译、测试与 lint 都需要其开发包。
+      - name: Install libvirt development files
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
+
       # make test 会重新生成 CRD/deepcopy；Data Plane API 客户端不在其中，单独生成后一并检查。
       - name: Verify generated files and tests
         run: |
@@ -56,6 +64,14 @@ jobs:
         uses: ./.github/actions/setup-go
         with:
           lint: 'true'
+
+      # Compute Agent 经 cgo 链接 libvirt，编译、测试与 lint 都需要其开发包。
+      - name: Install libvirt development files
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
 
       - name: Lint
         run: make lint
