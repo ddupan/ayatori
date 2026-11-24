@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   release-please:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       # 用 App token：GITHUB_TOKEN 创建的 tag 与 PR 不会触发 release.yml 与 PR 检查。
