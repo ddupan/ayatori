@@ -114,13 +114,16 @@ apiserver 上的子资源。
   API server，只提供子资源，不存储任何对象：主资源仍是 CRD，存储、watch、版本迁移都不变。这正是
   AGENTS.md 所说的例外——CRD 只支持 `status`/`scale` 子资源，这是已验证的扩展能力阻碍；它不为减少
   controller 而引入，也不接管存储。
-- **认证、授权、审计都在 apiserver：** apiserver 认证用户（OIDC），以 front-proxy 头把身份转给
-  `ayatori-api`；后者用 `k8s.io/apiserver` 的委托授权按 RBAC 判断（例如
-  `libvirtdomains/console`、`postgresqldatabases/credentials`），请求进 apiserver 审计日志，必要时
-  在对象上记 Event。然后以**自己的身份**调用后端：节点中继（SPIFFE mTLS）、OpenBao。
+- **认证、授权、审计都在 apiserver：** apiserver 认证用户，按 RBAC 授权子资源（`subresources.ayatori.ddupan.top`
+  组的 `libvirtdomains/console`、`postgresqltenants/credentials` 等），记审计日志，再经聚合层以 front-proxy
+  证书与头把身份转给 `ayatori-api`。授权在转发之前完成，`ayatori-api` 不再做 SubjectAccessReview：它只
+  接受 apiserver 公布的 requestheader CA 签发的 front-proxy 证书，能伪造这张证书的人也能伪造任何用户，
+  重复授权不增加防护。必要时在对象上记 Event。然后以**自己的身份**调用后端：节点中继（SPIFFE mTLS）、
+  OpenBao。
 - **不是第二个控制面：** 不存状态、不拥有资源、不做调和；能用对象 CRUD 表达的不做成子资源。
 - 控制台类子资源是 Upgrade 流，经 apiserver 的聚合层透传（KubeVirt 的 console/VNC 同样如此）。
-- API group、版本与路径实现时确定，不在本 ADR 固定；只要求挂在 apiserver 上、以子资源授权。
+- API group 为 `subresources.ayatori.ddupan.top`（参照 KubeVirt 的 `subresources.kubevirt.io`），与主资源
+  的组分开：能读主资源不等于能读凭据或连控制台，授权须单独给出。
 - ADR-0016 的"中央控制台代理"即控制台子资源，不再是单独组件；中继本身不变。
 - **部署方式（2026-11-25 在 Dev 验证，k0s v1.36.4）**：控制面没有 kube-proxy，APIService 引用
   `ExternalName` 类型的 Service（指向 `ayatori-api` 所在主机的名字或地址），apiserver 直接连接该地址，
@@ -132,7 +135,7 @@ apiserver 上的子资源。
 
 ### 凭据经 API 返回
 
-`ayatori db credentials <name>` 读 `postgresqldatabases/credentials` 子资源（形如
+`ayatori db credentials <name>` 读 Tenant 的 `postgresqltenants/credentials` 子资源（形如
 `serviceaccounts/token`），OpenBao 对 CLI 透明：CLI 不知道 Bao 的地址、路径，也不需要另外登录 Bao。
 
 - 授权在 Ayatori：RBAC 对该子资源的授权通过后，`ayatori-api` 以自己的身份读 Bao。权限只看 RBAC
@@ -179,8 +182,8 @@ apiserver 上的子资源。
 
 1. apiserver 接受 iam-login 的 token（homelab-cookbooks `homelab_ayatori` 0.2.0），在 Dev 验证。
 2. `ayatori login`/`whoami`/`config` 与 `db`、`lb`、`vm`、`ct` 的 `list`/`describe`。
-3. `ayatori-api`（先只有控制台子资源）与 `ayatori vm console`。
-4. 换盘、电源、`db credentials` 与 `task`。
+3. `ayatori-api` 与 `db credentials`：只依赖 main 上已有的 Database，先做。
+4. 控制台子资源与 `ayatori vm console`（随计算后端进入 main），然后换盘、电源与 `task`。
 5. `adm node`。
 
 每一步都要有对真实 apiserver 的集成测试（envtest 或 Dev）；登录流程用测试 OIDC 提供方覆盖，不依赖 iam-login。

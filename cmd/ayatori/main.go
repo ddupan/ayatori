@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -438,5 +439,47 @@ func resourceCmd(r cli.Resource, profile *string) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(list, describe)
+	if r.Noun == "db" {
+		cmd.AddCommand(credentialsCmd(profile, &namespace))
+	}
+	return cmd
+}
+
+// credentialsCmd 读数据库的应用凭据（ADR-0027 的 postgresqltenants/credentials 子资源）。
+func credentialsCmd(profile, namespace *string) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "credentials NAME",
+		Short: "Show the connection details and password of a database",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			config, err := connect(cmd.Context(), *profile)
+			if err != nil {
+				return err
+			}
+			c, err := cli.DatabaseCredentials(cmd.Context(), config, *namespace, args[0])
+			if err != nil {
+				return err
+			}
+			switch output {
+			case "json":
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(c) //nolint:gosec // 输出凭据正是这条命令的用途
+			case "":
+			default:
+				return fmt.Errorf("unknown output %q: use json or leave it out", output)
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "Host\t%s\n", c.Host)
+			if c.HostAddr != "" {
+				_, _ = fmt.Fprintf(w, "Host address\t%s\n", c.HostAddr)
+			}
+			_, _ = fmt.Fprintf(w, "Port\t%s\nSSL mode\t%s\nDatabase\t%s\nUsername\t%s\nPassword\t%s\n",
+				c.Port, c.SSLMode, c.Database, c.Username, c.Password)
+			return w.Flush()
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "", "json")
 	return cmd
 }
