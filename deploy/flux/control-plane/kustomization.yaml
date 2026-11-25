@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
 - ../../../config/rbac/role.yaml
 - rbac.yaml
+- api.yaml
 - version.yaml
 - postgresql.yaml

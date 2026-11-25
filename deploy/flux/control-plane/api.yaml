@@ -1,0 +1,95 @@
+# ayatori-api（ADR-0027）：聚合子资源，与 manager 同在控制面，以 CSR 签发的证书用户 ayatori-api 访问 API
+# （ADR-0021）。APIService 与指向它的 Service 引用部署方在本机签发的服务证书，由部署方（Chef）引导时创建。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-openbao-login
+  namespace: ayatori-system
+---
+# OpenBao 不持有 reviewer JWT，以登录 JWT 自身调用 TokenReview。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori-api-openbao-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: api-openbao-login
+  namespace: ayatori-system
+---
+# 读子资源所属的主资源；授权已由 apiserver 对请求者完成，这里只是 ayatori-api 自己的读取。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori-api
+rules:
+- apiGroups: [database.ayatori.ddupan.top]
+  resources: [postgresqltenants]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ayatori-api
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-api
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori-api
+  namespace: ayatori-system
+rules:
+- apiGroups: [""]
+  resources: [serviceaccounts/token]
+  resourceNames: [api-openbao-login]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-api
+  namespace: ayatori-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori-api
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-api
+---
+# front-proxy 的 CA 与头名（kube-system/extension-apiserver-authentication），内置 Role。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-api-authentication-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+- kind: User
+  apiGroup: rbac.authorization.k8s.io
+  name: ayatori-api
+---
+# 给用户的权限：读数据库凭据，由 GitOps 在租户 namespace 以 RoleBinding 授予。不用 aggregate-to-* 并入内置
+# 的 admin/edit：API-only 控制面的 kube-controller-manager 不运行 ClusterRole 聚合控制器。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori-database-credentials
+rules:
+- apiGroups: [subresources.ayatori.ddupan.top]
+  resources: [postgresqltenants/credentials]
+  verbs: [get]

@@ -28,6 +28,8 @@ COPY . .
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-X main.version=${VERSION}" -o manager ./cmd
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o client-credentials ./cmd/client-credentials
+# ayatori-api（ADR-0027）与 manager 同一镜像、同一版本，部署时以 --entrypoint 选用。
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o ayatori-api ./cmd/ayatori-api
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -35,6 +37,7 @@ FROM gcr.io/distroless/static:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb3
 WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/client-credentials .
+COPY --from=builder /workspace/ayatori-api .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

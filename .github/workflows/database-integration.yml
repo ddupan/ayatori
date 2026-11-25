@@ -13,6 +13,7 @@ on:
       - '!internal/bootstrap/loadbalancer*.go'
       - 'internal/subresource/**'
       - 'api/subresources/**'
+      - 'deploy/flux/control-plane/api.yaml'
       - 'internal/testenv/**'
       - 'hack/integration-test.sh'
       - 'hack/apiserver/**'
