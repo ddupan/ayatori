@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,7 +30,6 @@ func TestVersionPublisher(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = env.Stop() })
 	ctx := t.Context()
-	createAll(t, admin, filepath.Join("..", "..", "deploy", "flux", "control-plane", "version.yaml"))
 
 	as := func(name string) *rest.Config {
 		t.Helper()
@@ -44,6 +44,21 @@ func TestVersionPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := kubernetes.NewForConfigOrDie(as("someone"))
+
+	// 升级时 manager 先于新版本的 RBAC 启动：先被拒绝，RBAC 出现后重试写入。
+	done := make(chan struct{})
+	go func() { _ = (versionPublisher{client: manager, version: "v0.5.9"}).Start(ctx); close(done) }()
+	time.Sleep(time.Second)
+	createAll(t, admin, filepath.Join("..", "..", "deploy", "flux", "control-plane", "version.yaml"))
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the publisher did not publish once the RBAC appeared")
+	}
+	cm, err := reader.CoreV1().ConfigMaps(VersionNamespace).Get(ctx, VersionConfigMap, metav1.GetOptions{})
+	if err != nil || cm.Data["version"] != "v0.5.9" {
+		t.Fatalf("after retrying: %v %v", cm.Data, err)
+	}
 
 	for _, version := range []string{"v0.6.0", "v0.6.1"} {
 		if err := (versionPublisher{client: manager, version: version}).publish(ctx); err != nil {
