@@ -3,6 +3,7 @@ name: Database Integration
 on:
   # 只在 Database 相关代码或本工作流变化时运行真实后端集成测试；其余 Go 改动由 Verify 覆盖。
   # bootstrap 的集成测试同时验证 Database 装配，因此一并触发；其中只属于 LoadBalancer 装配的文件除外。
+  # ayatori-api 的凭据子资源读 Database 交付的凭据（ADR-0027），同样在这里验证。
   pull_request:
     paths:
       - 'api/database/**'
@@ -10,6 +11,9 @@ on:
       - 'internal/infra/**'
       - 'internal/bootstrap/**'
       - '!internal/bootstrap/loadbalancer*.go'
+      - 'internal/subresource/**'
+      - 'api/subresources/**'
+      - 'deploy/flux/control-plane/api.yaml'
       - 'internal/testenv/**'
       - 'hack/integration-test.sh'
       - 'hack/apiserver/**'
