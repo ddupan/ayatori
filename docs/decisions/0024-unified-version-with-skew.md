@@ -29,6 +29,11 @@ homelab-infra 的 `ayatori-<env>.rb` 固定 release（Flux 清单与 manager 镜
 **版本。** 一个 tag `vX.Y.Z` 发布全部制品，版本号相同。制品内容没变也照常产出；部署与否由
 环境的 policy 决定。
 
+**minor 是兼容边界。** 偏差规则按 minor 计算，所以 minor 只在兼容性变化时升：0.x 期间，不兼容的改动
+（`feat!`/`BREAKING CHANGE`，或下文需要"拆成两个 minor"的改动）升 minor，新功能与修复都升 patch
+（release-please `bump-minor-pre-major` 与 `bump-patch-for-minor-pre-major`）。否则每个功能都升 minor，
+各环境与 CLI 很快超出偏差而实际并不冲突。需要 minor 而提交不带 `!` 时，用 `Release-As:` footer 指定。
+
 **偏差规则。** 下文 manager 指环境固定的 release（Flux 清单、CRD 与 manager 镜像），agent 指
 LB agent：
 
