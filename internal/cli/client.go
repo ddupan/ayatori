@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	subresourcesv1alpha1 "go.ddupan.top/ayatori/api/subresources/v1alpha1"
 )
 
 // RESTConfig 以用户自己的 ID token 连接 profile 的 apiserver。
@@ -31,4 +34,22 @@ func WhoAmI(ctx context.Context, config *rest.Config) (authenticationv1.UserInfo
 		return authenticationv1.UserInfo{}, err
 	}
 	return review.Status.UserInfo, nil
+}
+
+// DatabaseCredentials 读 Tenant 的 postgresqltenants/credentials 子资源（ADR-0027）：apiserver 按 RBAC
+// 授权后由 ayatori-api 从 OpenBao 取出，CLI 不需要知道 OpenBao。
+func DatabaseCredentials(ctx context.Context, config *rest.Config, namespace, name string) (subresourcesv1alpha1.DatabaseCredentials, error) {
+	var c subresourcesv1alpha1.DatabaseCredentials
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return c, err
+	}
+	body, err := clientset.RESTClient().Get().
+		AbsPath("/apis", subresourcesv1alpha1.Group, subresourcesv1alpha1.Version,
+			"namespaces", namespace, "postgresqltenants", name, "credentials").
+		Do(ctx).Raw()
+	if err != nil {
+		return c, err
+	}
+	return c, json.Unmarshal(body, &c)
 }

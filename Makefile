@@ -70,12 +70,12 @@ lint: golangci-lint ## Run golangci-lint linter
 .PHONY: test-database-integration
 test-database-integration: setup-envtest ## 使用临时 API server、PostgreSQL 与 OpenBao 容器验证 Database 后端；API server、PostgreSQL 与 OpenBao 在 go test 外启动一次。
 	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" \
-		INTEGRATION_SERVICES="apiserver postgres openbao" hack/integration-test.sh ./internal/database/... ./internal/infra/... ./internal/bootstrap/...
+		INTEGRATION_SERVICES="apiserver postgres openbao" hack/integration-test.sh ./internal/database/... ./internal/infra/... ./internal/bootstrap/... ./internal/subresource/...
 
 .PHONY: lint-database-integration
 lint-database-integration: golangci-lint ## 检查集成测试构建标签下的 Database 代码。
 	"$(GOLANGCI_LINT)" run --build-tags=integration \
-		./internal/database/... ./internal/infra/... ./internal/bootstrap/... ./internal/testenv/...
+		./internal/database/... ./internal/infra/... ./internal/bootstrap/... ./internal/subresource/... ./internal/testenv/...
 
 .PHONY: test-loadbalancer-integration
 test-loadbalancer-integration: setup-envtest ## 使用临时 API server 与 HAProxy + Data Plane API、PowerDNS 容器验证 LoadBalancer；后两者在 go test 外启动一次。
