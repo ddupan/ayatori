@@ -122,9 +122,13 @@ apiserver 上的子资源。
 - 控制台类子资源是 Upgrade 流，经 apiserver 的聚合层透传（KubeVirt 的 console/VNC 同样如此）。
 - API group、版本与路径实现时确定，不在本 ADR 固定；只要求挂在 apiserver 上、以子资源授权。
 - ADR-0016 的"中央控制台代理"即控制台子资源，不再是单独组件；中继本身不变。
-- 部署前在 Dev 验证：控制面没有 kube-proxy，APIService 需要无 selector 的 Service 加手写
-  EndpointSlice 与 apiserver 的 `--enable-aggregator-routing`；k0s 的 front-proxy（requestheader）CA
-  是否默认就绪。
+- **部署方式（2026-11-25 在 Dev 验证，k0s v1.36.4）**：控制面没有 kube-proxy，APIService 引用
+  `ExternalName` 类型的 Service（指向 `ayatori-api` 所在主机的名字或地址），apiserver 直接连接该地址，
+  不需要 `--enable-aggregator-routing`，也不需要手写 EndpointSlice。apiserver 按
+  `<service>.<namespace>.svc` 校验 `ayatori-api` 的服务证书，服务证书须包含这个名字，APIService 的
+  `caBundle` 为签发它的 CA。k0s 默认配好 front-proxy：请求带 `CN=front-proxy-client` 的客户端证书与
+  `X-Remote-User`/`X-Remote-Group`，`ayatori-api` 以 `kube-system/extension-apiserver-authentication`
+  中的 requestheader CA 校验。HTTP Upgrade 经聚合层双向透传（控制台所需）。
 
 ### 凭据经 API 返回
 
