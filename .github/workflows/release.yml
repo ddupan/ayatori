@@ -48,14 +48,30 @@ jobs:
 
       # LB agent 跑在 LB 主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
       # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
-      - name: Build lb-agent tarball and checksums
+      - name: Build lb-agent tarball
         run: |
           set -euo pipefail
           version="${TAG#v}"
           mkdir -p dist/pkg
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/lb-agent ./cmd/lb-agent
           tar -C dist/pkg -czf "dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
-          (cd dist && sha256sum "ayatori-lb-agent_${version}_linux_amd64.tar.gz" > "ayatori_${version}_checksums.txt")
+
+      # 人用的 CLI（ADR-0027）：Linux 与 macOS 的压缩包，版本写进 `ayatori --version`。
+      - name: Build CLI tarballs
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${platform%/*}" arch="${platform#*/}"
+            out="dist/cli/${os}_${arch}"
+            mkdir -p "$out"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+              -o "$out/ayatori" ./cmd/ayatori
+            tar -C "$out" -czf "dist/ayatori_${version}_${os}_${arch}.tar.gz" ayatori
+          done
+
+      - name: Checksums
+        run: (cd dist && sha256sum -- *.tar.gz > "ayatori_${TAG#v}_checksums.txt")
 
       # release-please 合并 release PR 时已建好 Release（说明即 CHANGELOG 的这一节）：保留它，只追加制品。
       # 手动推送的 tag 没有 Release：说明取自 annotated tag。附件同名覆盖，重跑幂等。
@@ -67,7 +83,7 @@ jobs:
           set -euo pipefail
           git fetch --quiet --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
           # %(contents) 含签名 tag 的签名块；只取标题与正文。
-          artifacts="$(printf '## 制品\n\n- manager 镜像：`%s@%s`（内网 `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`）\n- Flux 清单：本 tag 的 `deploy/flux`\n' \
+          artifacts="$(printf '## 制品\n\n- manager 镜像：`%s@%s`（内网 `zot.lab.ddupan.top/panxiao81/ayatori-manager@%s`）\n- Flux 清单：本 tag 的 `deploy/flux`\n- CLI：`ayatori_<版本>_<os>_<arch>.tar.gz`（Linux、macOS），校验和见 `*_checksums.txt`\n' \
             "$IMAGE" "$DIGEST" "$DIGEST")"
           prerelease=(); [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$TAG" >/dev/null 2>&1; then
