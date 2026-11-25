@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.0 (2026-11-25)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### 依赖更新
+* chore(deps): update golang:1.27.4 docker digest to 87f49b7 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/23
+* chore(deps): update golang:1.27.4 docker digest to 5f1b98f by @renovate[bot] in https://github.com/ddupan/ayatori/pull/29
+* chore(deps): update anthropics/claude-code-action action to v1.0.290 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/30
+* fix(deps): update module github.com/go-jose/go-jose/v4 to v4.1.9 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/32
+* fix(deps): update module golang.org/x/oauth2 to v0.38.0 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/33
+* chore(deps): update dependency ubuntu to v26 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/15
+* fix(deps): update module golang.org/x/term to v0.48.0 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/38
+* fix(deps): update module google.golang.org/grpc to v1.85.0 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/39
+### 新功能
+* feat(cli): ayatori 随 release 发布 by @panxiao81 in https://github.com/ddupan/ayatori/pull/26
+* feat(cli): ayatori version，登录时检查版本偏差 by @panxiao81 in https://github.com/ddupan/ayatori/pull/27
+* feat(manager): 启动时在 kube-public/ayatori-version 公布自身版本 by @panxiao81 in https://github.com/ddupan/ayatori/pull/28
+* feat(cli): ayatori config kubeconfig by @panxiao81 in https://github.com/ddupan/ayatori/pull/31
+* feat(cli): ayatori 命令行（ADR-0027） by @panxiao81 in https://github.com/ddupan/ayatori/pull/12
+* feat(cli): 没有人参与时以 SPIFFE 身份认证 by @panxiao81 in https://github.com/ddupan/ayatori/pull/37
+* feat(api): ayatori-api 与 db credentials by @panxiao81 in https://github.com/ddupan/ayatori/pull/41
+* feat(api): ayatori-api 进 manager 镜像，加部署的 RBAC by @panxiao81 in https://github.com/ddupan/ayatori/pull/43
+* feat(api): ayatori-api 聚合子资源与 db credentials（ADR-0027） by @panxiao81 in https://github.com/ddupan/ayatori/pull/42
+### 修复
+* fix: Dev 测试发现的版本公布与错误显示问题 by @panxiao81 in https://github.com/ddupan/ayatori/pull/44
+
+
+**Full Changelog**: https://github.com/ddupan/ayatori/compare/v0.5.0...v0.6.0
+
 ## [0.5.0](https://github.com/ddupan/ayatori/compare/v0.4.0...v0.5.0) (2026-11-24)
 
 
