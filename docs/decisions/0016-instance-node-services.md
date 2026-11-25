@@ -7,8 +7,8 @@
   [ADR-0014](0014-kaas-cross-backend-node-supply.md) 保持一致。
 - 修订：2026-11-12 VM 的 cloud-init 改为经元数据服务读取 NoCloud seed，不再生成 `cidata` ISO；LXC 的 seed 改为
   只读挂载，不写入 rootfs。2026-11-13 补充 Agent 控制台中继的协议与实现约束。2026-11-18 按
-  [ADR-0027](0027-ayatori-cli.md)：中央控制台代理改为聚合子资源（`ayatori-console-api`），Web 控制台只是
-  apiserver 的客户端，SPICE 改由 CLI 在本地转接。
+  [ADR-0027](0027-ayatori-cli.md)：中央控制台代理改为聚合子资源（`ayatori-api`），Web 控制台只是
+  apiserver 的客户端，SPICE 改由 CLI 在本地转接。2026-11-25 该组件改名为 `ayatori-api`。
 
 ## 问题
 
@@ -180,9 +180,9 @@
     因此由 CLI 在本机回环地址开端口、经控制台子资源转接，再启动 `remote-viewer` 连接本机端口（与
     KubeVirt `virtctl vnc` 相同）。PoC 15 验证的 `.vv` + HTTP `CONNECT` 方式绕过 apiserver，不再采用。
 - **节点不对外暴露控制台端口。** QEMU 只监听本机 unix socket（`<listen type='socket'/>`），由 Agent
-  中继。中继只接受 `ayatori-console-api` 的 SPIFFE ID，并且只在本节点是实例 DRBD Primary 时服务，避免连到
+  中继。中继只接受 `ayatori-api` 的 SPIFFE ID，并且只在本节点是实例 DRBD Primary 时服务，避免连到
   失去 Primary 后残留的 QEMU（PoC 05）。
-- **Agent 中继的协议**：HTTP/1.1 升级。`ayatori-console-api` 发 `GET /v1/consoles/<namespace>/<name>/<serial|vnc|spice>`，带
+- **Agent 中继的协议**：HTTP/1.1 升级。`ayatori-api` 发 `GET /v1/consoles/<namespace>/<name>/<serial|vnc|spice>`，带
   `Connection: Upgrade`、`Upgrade: ayatori-console`；中继回 `101` 后连接上是控制台的原始字节流，错误用普通状态码
   （实例不在本节点或没有这种控制台为 404，未运行为 409）。路径带版本，是 Agent 的强类型契约，不是任意转发。
   - 中继只服务 Agent 本地状态中的实例，并核对 libvirt 中同名 domain 的 UUID 等于对象 UID；
@@ -195,12 +195,12 @@
   - 在 DRBD 接入（ADR-0020）之前，"实例在本节点"以本节点 libvirt 中正在运行为准；接入后加上 Primary 检查。
 - **控制台是聚合子资源**（ADR-0027，参照 KubeVirt 的 `subresources.kubevirt.io`）：
   - 用户经 apiserver 访问 `libvirtdomains/console` 等子资源；apiserver 认证（OIDC）、按 RBAC 授权、
-    记审计日志，经聚合层把 Upgrade 流转给 `ayatori-console-api`；
-  - `ayatori-console-api` 按 `status` 查到实例当前所在节点，用 SPIFFE mTLS 连接该节点 Agent 的中继。
+    记审计日志，经聚合层把 Upgrade 流转给 `ayatori-api`；
+  - `ayatori-api` 按 `status` 查到实例当前所在节点，用 SPIFFE mTLS 连接该节点 Agent 的中继。
     实例换节点后自动连到新节点，用户的请求不变；
   - 之前设想的独立代理（参照 OpenStack nova-novncproxy、自行发起 SubjectAccessReview）不再采用：API
     应当是一个整体，CRD 不支持自定义子资源是已验证的阻碍（AGENTS.md 的例外条件）。
-- **部署**：`ayatori-console-api` 无状态、不存储对象，不运行在 API-only 的控制面 LXC 上（ADR-0013），
+- **部署**：`ayatori-api` 无状态、不存储对象，不运行在 API-only 的控制面 LXC 上（ADR-0013），
   可以作为计算节点上的普通服务运行；apiserver 经 APIService 与手写 EndpointSlice 找到它，用户不直接
   访问它。
 
@@ -229,9 +229,9 @@ apiserver 的客户端（含上面的子资源），技术栈与是否另开仓�
 - **入口**：CLI（`ayatori vm media`、`start`、`stop` 等，ADR-0027）与控制台页面的工具栏，换盘的
   下拉框列出 `iso` 等 pool 中的卷。
 - **路径**：与控制台相同，是 `libvirtdomains/media`、`libvirtdomains/power` 等聚合子资源，经
-  `ayatori-console-api` 交给节点 Agent 执行。换盘使用 libvirt 原生的
+  `ayatori-api` 交给节点 Agent 执行。换盘使用 libvirt 原生的
   `change-media --live`，不加 `--config`，不改持久配置。
-- **审计**：apiserver 审计日志记录请求；`ayatori-console-api` 另在实例对象上记录 Event，
+- **审计**：apiserver 审计日志记录请求；`ayatori-api` 另在实例对象上记录 Event，
   `ayatori vm describe` 可以看到谁在什么时候做了什么操作。
 - **状态**：Agent 把当前介质和电源状态回写到 `status.media`、`status.powerState`。
 - **电源意图**：关机和强制断电写入实例状态卷上的"off"标记，开机时清除。Agent 一律**先写标记再执行**。
@@ -262,7 +262,7 @@ apiserver 的客户端（含上面的子资源），技术栈与是否另开仓�
    通过；同 trust domain 的其他身份在 TLS 握手被拒；新会话接管旧会话，`virsh console --force` 接管中继会话；
    Agent 重启时会话关闭；20 次会话后 libvirtd 的客户端数与 Agent 的文件描述符数不变。SPICE 未测：Debian 的
    QEMU 不带 SPICE 模块（`qemu-system-modules-spice`，连带约 200 个图形与多媒体包），中继对 SPICE 与 VNC 走同一
-   路径。计算节点已接入生产 SPIRE（x509pop 登记与注册条目，2026-11-13）；`ayatori-console-api` 是后续工作，
+   路径。计算节点已接入生产 SPIRE（x509pop 登记与注册条目，2026-11-13）；`ayatori-api` 是后续工作，
    PoC 中代理的 SubjectAccessReview 由聚合层的委托授权取代，`.vv` 方式由 CLI 本地转接取代，需重新验证。
 4. `change-media --live` 在客户机重启后保留、在冷启动后回到配置。
    **已完成（2026-10-31）**：光驱见 PoC 04，软驱见 PoC 15。
@@ -285,7 +285,7 @@ apiserver 的客户端（含上面的子资源），技术栈与是否另开仓�
   workload 集群中 Pod 的身份结构一致。
 - 控制台和运行时操作复用 RBAC 和审计，不改变 GitOps 对 spec 的所有权。
 - 需要自行维护一个 SPIRE 节点证明插件（server 与 agent 两侧）。
-- 新增三个组件：`ayatori-console-api`（中央，无状态的聚合 API server，提供控制台与运行时操作子资源；
+- 新增三个组件：`ayatori-api`（中央，无状态的聚合 API server，提供控制台与运行时操作子资源；
   Web 前端另行决策）；`ayatori-imds`（每台宿主机，
   元数据与 SPIFFE 代领，也可部署在 PVE 上）；Agent 中的控制台中继。
 - 元数据服务和控制台中继都在节点上运行，不依赖控制面。控制台与运行时操作经 apiserver，
