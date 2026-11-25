@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
@@ -20,15 +21,9 @@ import (
 const ns, web = "team-a", "web"
 
 // 对装了 Ayatori CRD 的真实 apiserver 验证 list 与 describe：表格列来自 CRD 的 printer columns，
-// -A 加 namespace 列，-o 输出不含 managedFields，describe 带 conditions 与 Event。
+// 不给 namespace 时跨所有 namespace 并加 namespace 列，-o 输出不含 managedFields，describe 带 conditions 与 Event。
 func TestListAndDescribe(t *testing.T) {
-	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: true}
-	config, err := env.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = env.Stop() })
+	_, config := start(t)
 	ctx := t.Context()
 	lb, db := resource(t, "lb"), resource(t, "db")
 	seed(t, ctx, config, lb, db)
@@ -122,6 +117,69 @@ func TestListAndDescribe(t *testing.T) {
 			t.Error("no error")
 		}
 	})
+}
+
+// 不给 -n 时按名字跨 namespace 查找：唯一则用它，重名要求 -n，没有集群范围 list 权限时提示 -n。
+func TestLocateAcrossNamespaces(t *testing.T) {
+	env, config := start(t)
+	ctx := t.Context()
+	lb, db := resource(t, "lb"), resource(t, "db")
+	seed(t, ctx, config, lb, db)
+
+	if err := Describe(ctx, config, db, "", "nope", &bytes.Buffer{}); !apierrors.IsNotFound(err) {
+		t.Errorf("missing: %v", err)
+	}
+	var out bytes.Buffer
+	if err := Describe(ctx, config, lb, "", web, &out); err != nil || !strings.Contains(out.String(), ns) {
+		t.Errorf("describe: %v\n%s", err, out.String())
+	}
+	out.Reset()
+	if err := List(ctx, config, lb, ListOptions{Name: web}, &out); err != nil || !strings.Contains(out.String(), "10.62.1.10") {
+		t.Errorf("list NAME: %v\n%s", err, out.String())
+	}
+
+	if _, err := kubernetes.NewForConfigOrDie(config).CoreV1().Namespaces().Create(ctx,
+		&corev1.Namespace{Name: "team-b"}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tenants := dynamic.NewForConfigOrDie(config).Resource(db.GVR)
+	app, err := tenants.Namespace(ns).Get(ctx, "app", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := &unstructured.Unstructured{Object: map[string]any{"apiVersion": app.GetAPIVersion(),
+		"kind": app.GetKind(), "spec": app.Object["spec"]}}
+	copied.SetName("app")
+	if _, err := tenants.Namespace("team-b").Create(ctx, copied, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Locate(ctx, config, db, "", "app"); err == nil || !strings.Contains(err.Error(), "team-a/app, team-b/app") {
+		t.Errorf("duplicate: %v", err)
+	}
+	if got, err := Locate(ctx, config, db, "team-b", "app"); err != nil || got != "team-b" {
+		t.Errorf("with -n: %q, %v", got, err)
+	}
+
+	bob, err := env.AddUser(envtest.User{Name: "bob"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := List(ctx, bob.Config(), lb, ListOptions{}, &bytes.Buffer{}); !apierrors.IsForbidden(err) ||
+		!strings.Contains(err.Error(), "-n") {
+		t.Errorf("forbidden: %v", err)
+	}
+}
+
+func start(t *testing.T) (*envtest.Environment, *rest.Config) {
+	t.Helper()
+	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		ErrorIfCRDPathMissing: true}
+	config, err := env.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = env.Stop() })
+	return env, config
 }
 
 func resource(t *testing.T, noun string) Resource {
