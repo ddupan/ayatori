@@ -11,6 +11,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -27,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -82,6 +85,19 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	as := func(user string) *rest.Config {
+		c := rest.CopyConfig(config)
+		c.Impersonate = rest.ImpersonationConfig{UserName: user}
+		return c
+	}
+	// 部署的 RBAC（deploy/flux/control-plane/api.yaml）：ayatori-api 以自己的证书用户读取，用户经
+	// ayatori-database-credentials 获得子资源。
+	create(t, admin, &corev1.Namespace{Name: system}, &corev1.Namespace{Name: team})
+	applyManifest(t, admin, filepath.Join("..", "..", "deploy", "flux", "control-plane", "api.yaml"))
+	apiUser, err := client.New(as("ayatori-api"), client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// OpenBao：Tenant app 的凭据在 secret/applications/<scenario>，版本 1。
 	_, port := testenv.Container(t, "openbao", 8200)
@@ -102,7 +118,7 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 	}
 
 	// ayatori-api 在本机，APIService 经 ExternalName Service 找到它（与 Dev 的部署方式相同）。
-	frontProxy, err := subresource.LoadFrontProxy(ctx, admin)
+	frontProxy, err := subresource.LoadFrontProxy(ctx, apiUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +127,7 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &http.Server{
-		Handler:           subresource.Server{Kube: admin, Credentials: credentials, FrontProxy: frontProxy, Logger: slog.New(slog.DiscardHandler)}.Handler(),
+		Handler:           subresource.Server{Kube: apiUser, Credentials: credentials, FrontProxy: frontProxy, Logger: slog.New(slog.DiscardHandler)}.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		TLSConfig:         frontProxy.TLSConfig(func() (*tls.Certificate, error) { return &serving, nil }),
 	}
@@ -120,21 +136,12 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 	apiPort := int32(listener.Addr().(*net.TCPAddr).Port) //nolint:gosec // 本机端口
 	register(t, admin, apiPort, servingCA.Raw)
 
-	// alice 能读 team-a 的凭据，bob 没有授权。
-	create(t, admin,
-		&corev1.Namespace{Name: team},
-		&rbacv1.Role{Name: "credentials", Namespace: team, Rules: []rbacv1.PolicyRule{{
-			APIGroups: []string{subresourcesv1alpha1.Group}, Resources: []string{"postgresqltenants/credentials"}, Verbs: []string{"get"}}}},
-		&rbacv1.RoleBinding{Name: "alice", Namespace: team,
-			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "credentials"},
-			Subjects: []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "User", Name: "alice"}}})
+	// alice 在 team-a 被授予 ayatori-database-credentials，bob 没有。
+	create(t, admin, &rbacv1.RoleBinding{Name: "alice", Namespace: team,
+		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "ayatori-database-credentials"},
+		Subjects: []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "User", Name: "alice"}}})
 	tenant(t, admin, ready, &databasev1alpha1.CredentialReference{Mount: "secret", Path: path}, 1)
 	tenant(t, admin, pending, nil, 0)
-	as := func(user string) *rest.Config {
-		c := rest.CopyConfig(config)
-		c.Impersonate = rest.ImpersonationConfig{UserName: user}
-		return c
-	}
 
 	t.Run("a user granted the subresource reads the published credentials", func(t *testing.T) {
 		c, err := cli.DatabaseCredentials(ctx, as("alice"), team, ready)
@@ -195,7 +202,6 @@ func register(t *testing.T, admin client.Client, port int32, caBundle []byte) {
 			"service":  map[string]any{"namespace": system, "name": "ayatori-api", "port": int64(port)}},
 	}}
 	create(t, admin,
-		&corev1.Namespace{Name: system},
 		&corev1.Service{Name: "ayatori-api", Namespace: system,
 			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeExternalName, ExternalName: "127.0.0.1",
 				Ports: []corev1.ServicePort{{Port: port}}}},
@@ -215,6 +221,28 @@ func register(t *testing.T, admin client.Client, port int32, caBundle []byte) {
 			t.Fatalf("APIService not available: %v", conditions)
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+// applyManifest 创建清单中的全部对象。
+func applyManifest(t *testing.T, admin client.Client, path string) {
+	t.Helper()
+	f, err := os.Open(path) //nolint:gosec // 仓库内的清单
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	decoder := utilyaml.NewYAMLOrJSONDecoder(f, 4096)
+	for {
+		var o unstructured.Unstructured
+		if err := decoder.Decode(&o.Object); errors.Is(err, io.EOF) {
+			return
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if len(o.Object) > 0 {
+			create(t, admin, &o)
+		}
 	}
 }
 

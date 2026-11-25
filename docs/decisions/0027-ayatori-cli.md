@@ -132,6 +132,14 @@ apiserver 上的子资源。
   `caBundle` 为签发它的 CA。k0s 默认配好 front-proxy：请求带 `CN=front-proxy-client` 的客户端证书与
   `X-Remote-User`/`X-Remote-Group`，`ayatori-api` 以 `kube-system/extension-apiserver-authentication`
   中的 requestheader CA 校验。HTTP Upgrade 经聚合层双向透传（控制台所需）。
+- **运行位置（2026-11-25 维护者决定）**：与 manager 同在控制面，修订 ADR-0016"不运行在控制面 LXC 上"。
+  它不存储对象、不运行 workload，与 manager 一样是控制面组件；控制台流量无论它在哪里都经过 apiserver。
+  二进制在 manager 镜像中（同一版本），部署方（Chef）以 podman quadlet 运行，只监听 127.0.0.1；
+  `ExternalName` Service 指向 127.0.0.1，服务证书与 APIService 的 `caBundle` 由部署方在本机签发写入，
+  不随 tag 发布。API 身份是 CSR 签发的证书用户 `ayatori-api`（ADR-0021），OpenBao 身份是只用于
+  TokenRequest 的 ServiceAccount `api-openbao-login`，其 role 只能读 Ayatori 交付的凭据路径。
+- 给用户的 ClusterRole `ayatori-database-credentials` 由 GitOps 在租户 namespace 显式绑定：控制面的
+  kube-controller-manager 不运行 ClusterRole 聚合控制器，`aggregate-to-edit` 等标签不会生效。
 
 ### 凭据经 API 返回
 
