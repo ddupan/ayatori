@@ -46,13 +46,6 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf '## Published image\n\n- `%s@%s`\n' "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
-      # compute-agent 的 cgo 构建需要 libvirt 头文件，与 Compute Integration 相同。
-      - name: Install libvirt development files
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq --no-install-recommends gcc libc6-dev pkg-config lxc-dev libvirt-dev
-
       # 节点 agent 跑在主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
       # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
       - name: Build agent tarballs
@@ -61,9 +54,13 @@ jobs:
           version="${TAG#v}"
           mkdir -p dist/pkg
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/lb-agent ./cmd/lb-agent
-          # compute-agent 经 cgo 动态链接 libvirt.so.0（ADR-0015）。在 runner 的发行版上构建：
-          # 节点（Debian 13）上的 glibc 与 libvirt 不低于构建时的版本，符号版本向后兼容。
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/compute-agent ./cmd/compute-agent
+          # compute-agent 经 cgo 动态链接 libvirt.so.0 与 liblxc（ADR-0015），只能在不比节点新的 glibc 与
+          # libvirt 上构建。runner 的 Ubuntu 会随 Renovate 升级，因此在与节点相同的 Debian 13 里构建；
+          # Go 版本取自 go.mod，随工具链一起升级。
+          docker run --rm -v "$PWD:/src" -w /src -e CGO_ENABLED=1 "golang:$(go mod edit -json | jq -er .Go)-trixie" sh -ec '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends pkg-config lxc-dev libvirt-dev >/dev/null
+            go build -buildvcs=false -trimpath -o dist/pkg/compute-agent ./cmd/compute-agent'
           # imds 单独发布：PVE 宿主机也部署它，不需要 compute-agent（ADR-0016）。
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/imds ./cmd/imds
           tar -C dist/pkg -czf "dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
