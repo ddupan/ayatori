@@ -102,6 +102,21 @@ func TestListAndDescribe(t *testing.T) {
 		}
 	})
 
+	t.Run("server versions: Kubernetes from /version, Ayatori once the manager publishes it", func(t *testing.T) {
+		v, err := ServerVersion(ctx, config)
+		if err != nil || v.Ayatori != "" || !strings.HasPrefix(v.Kubernetes, "v1.") {
+			t.Fatalf("before publishing: %+v, %v", v, err)
+		}
+		if _, err := kubernetes.NewForConfigOrDie(config).CoreV1().ConfigMaps(versionNamespace).Create(ctx,
+			&corev1.ConfigMap{Name: versionConfigMap, Namespace: versionNamespace, Data: map[string]string{"version": release}},
+			metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if v, err := ServerVersion(ctx, config); err != nil || v.Ayatori != release {
+			t.Errorf("after publishing: %+v, %v", v, err)
+		}
+	})
+
 	t.Run("describe of a missing object is an error", func(t *testing.T) {
 		if err := Describe(ctx, config, db, ns, "nope", &bytes.Buffer{}); err == nil {
 			t.Error("no error")

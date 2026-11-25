@@ -146,8 +146,11 @@ apiserver 上的子资源。
 ### 版本与发布
 
 - CLI 在本仓库（`cmd/ayatori`），与其他制品同一个 tag 发布（ADR-0024）：共用 API 类型，不需要兼容矩阵。
-- 偏差：CLI 与 manager 的 minor 相差至多 1（与 kubectl 相同，可新可旧）。CLI 登录与每次调用时比较服务端
-  版本，超出时警告，不拒绝。
+- 偏差：CLI 与 manager 的 minor 相差至多 1（与 kubectl 相同，可新可旧）。与 `kubectl version` 一样，
+  `ayatori version` 打印 CLI、client-go、环境的 Ayatori 与 Kubernetes 版本，超出时警告；`login` 也检查一次。
+  不拒绝，也不在每条命令上检查（多一次请求）。
+- 环境的 Ayatori 版本由 manager 启动时写进 `kube-public/ayatori-version`：与 kube-apiserver 的 `/version`
+  一样报告实际运行的二进制，而不是部署声明的 release。登录的用户可读，不对匿名开放。
 - 发布 Linux/macOS 的压缩包与校验和，作为 release 附件；包管理器以后再说。
 
 ## 不做
