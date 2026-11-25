@@ -2,7 +2,10 @@ package bootstrap
 
 import (
 	"context"
+	"math"
+	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -21,11 +24,17 @@ type versionPublisher struct {
 	version string
 }
 
+// Start 重试到写入成功：升级时 Chef 先换镜像，新版本的 RBAC 稍后才由 Flux 应用。写不进去只影响 CLI 的
+// 版本提示，不影响控制循环，不让 manager 因此退出。
 func (p versionPublisher) Start(ctx context.Context) error {
-	// 写不进去只影响 CLI 的版本提示，不影响控制循环，不让 manager 因此退出。
-	if err := p.publish(ctx); err != nil {
-		setupLog.Error(err, "Cannot publish the manager version", "namespace", VersionNamespace, "name", VersionConfigMap)
-	}
+	backoff := wait.Backoff{Duration: time.Second, Factor: 2, Cap: time.Minute, Steps: math.MaxInt32}
+	_ = wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+		if err := p.publish(ctx); err != nil {
+			setupLog.Error(err, "Cannot publish the manager version yet", "namespace", VersionNamespace, "name", VersionConfigMap)
+			return false, nil
+		}
+		return true, nil
+	})
 	return nil
 }
 
