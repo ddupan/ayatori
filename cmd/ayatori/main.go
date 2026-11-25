@@ -39,7 +39,7 @@ func root() *cobra.Command {
 	cmd := &cobra.Command{Use: "ayatori", Short: "Ayatori command line", Version: version,
 		SilenceUsage: true, SilenceErrors: true}
 	cmd.PersistentFlags().StringVar(&profile, "profile", "", "environment to use instead of the current one")
-	cmd.AddCommand(configCmd(), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile), versionCmd(&profile))
+	cmd.AddCommand(configCmd(&profile), loginCmd(&profile), logoutCmd(&profile), whoamiCmd(&profile), versionCmd(&profile))
 	// 名词在前、动词在后（ADR-0027），参照云 CLI，不是 kubectl 的动词在前。
 	for _, r := range cli.Resources {
 		cmd.AddCommand(resourceCmd(r, &profile))
@@ -56,7 +56,7 @@ func store() (cli.Store, cli.Config, error) {
 	return s, c, err
 }
 
-func configCmd() *cobra.Command {
+func configCmd(profile *string) *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Manage the environments this CLI connects to"}
 
 	var fingerprint string
@@ -157,7 +157,56 @@ func configCmd() *cobra.Command {
 			return s.Save(c)
 		},
 	}
-	cmd.AddCommand(add, list, use, remove)
+	kubeconfig := &cobra.Command{
+		Use:   "kubeconfig",
+		Short: "Print a kubeconfig for break-glass kubectl access, using this CLI's login",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, c, err := store()
+			if err != nil {
+				return err
+			}
+			name, p, err := c.Profile(*profile)
+			if err != nil {
+				return err
+			}
+			self, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			data, err := cli.Kubeconfig(name, p, self)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		},
+	}
+
+	// credential 由 kubeconfig 的 exec 调用，不是给人用的。
+	credential := &cobra.Command{
+		Use:    "credential",
+		Short:  "Print an ExecCredential for kubectl",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, c, err := store()
+			if err != nil {
+				return err
+			}
+			name, p, err := c.Profile(*profile)
+			if err != nil {
+				return err
+			}
+			data, err := s.ExecCredential(cmd.Context(), name, p)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		},
+	}
+	cmd.AddCommand(add, list, use, remove, kubeconfig, credential)
 	return cmd
 }
 
