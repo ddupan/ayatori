@@ -5,15 +5,18 @@ go 1.27.4
 require (
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-logr/logr v1.4.4
+	github.com/google/go-cmp v0.7.0
 	github.com/int128/oauth2cli v1.18.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/joeig/go-powerdns/v3 v3.24.0
+	github.com/lxc/go-lxc v0.0.0-20260316180011-3af4ce000ed7
 	github.com/oapi-codegen/runtime v1.9.1
 	github.com/openbao/openbao/api/auth/kubernetes/v2 v2.7.0
 	github.com/openbao/openbao/api/v2 v2.7.1
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spiffe/go-spiffe/v2 v2.9.0
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.50.0
@@ -23,6 +26,8 @@ require (
 	k8s.io/cli-runtime v0.37.2
 	k8s.io/client-go v0.37.2
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
+	libvirt.org/go/libvirt v1.12007.0
+	libvirt.org/go/libvirtxml v1.12008.0
 	sigs.k8s.io/controller-runtime v0.25.3
 	sigs.k8s.io/yaml v1.6.0
 )
@@ -31,6 +36,7 @@ require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

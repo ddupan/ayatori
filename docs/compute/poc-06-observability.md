@@ -1,7 +1,7 @@
 # PoC 06：HA 告警链路
 
 - 日期：2026-10-31
-- 对应：[ADR-0015](../decisions/0015-libvirt-lxc-compute-backend.md) 待验证第 12 项与"可观测性"一节
+- 对应：[ADR-0020](../decisions/0020-linstor-drbd-storage-integration.md) 待验证第 5 项（原 ADR-0015 第 12 项）与"可观测性"一节
 - 环境：沿用 [PoC 01](poc-01-drbd-reactor-failover.md) 的三台嵌套 VM。监控放在 tiebreaker poc-3 上，
   不跑实例，断掉 poc-1/2 时监控本身不受影响。用 Ubuntu 包的 Prometheus 2.45 和 Alertmanager
   0.26 代替中央 VictoriaMetrics；接收端是一个把告警写入日志的 webhook，代替 Telegram。

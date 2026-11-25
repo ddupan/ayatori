@@ -2,7 +2,7 @@
 
 - 日期：2026-10-31
 - 对应：[ADR-0016](../decisions/0016-instance-node-services.md) 待验证第 1、4、5 项；
-  [ADR-0015](../decisions/0015-libvirt-lxc-compute-backend.md) 第 9 项的 LXC 部分
+  [ADR-0020](../decisions/0020-linstor-drbd-storage-integration.md) 第 3 项（原 ADR-0015 第 9 项）的 LXC 部分
 - 环境：沿用 [PoC 01](poc-01-drbd-reactor-failover.md) 的三台嵌套 VM。
 - 结论：**三项都通过**。另外发现几条对设计有约束的事实：实例端口名必须固定；不能用
   `systemctl restart` 重启实例；`lxc-start -F` 的退出码区分不了崩溃和关机；tiebreaker 必须在

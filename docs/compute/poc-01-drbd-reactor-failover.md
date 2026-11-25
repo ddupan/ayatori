@@ -1,7 +1,7 @@
 # PoC 01：drbd-reactor promoter 冷启动 libvirt VM 与 LXC
 
 - 日期：2026-10-30
-- 对应：[ADR-0015](../decisions/0015-libvirt-lxc-compute-backend.md) 待验证第 1 项
+- 对应：[ADR-0020](../decisions/0020-linstor-drbd-storage-integration.md) 待验证第 1 项（原 ADR-0015 第 1 项）
 - 结论：**通过**。四个场景中都没有出现两边同时写；网络分区和断电后能自动冷启动，旧节点恢复后
   不会抢回实例。
 

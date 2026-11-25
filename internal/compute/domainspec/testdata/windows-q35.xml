@@ -1,0 +1,80 @@
+<domain type='kvm'>
+  <memory unit='GiB'>8</memory>
+  <vcpu>4</vcpu>
+  <os firmware='efi'>
+    <type arch='x86_64' machine='pc-q35-9.2'>hvm</type>
+    <firmware>
+      <feature enabled='yes' name='secure-boot'/>
+      <feature enabled='yes' name='enrolled-keys'/>
+    </firmware>
+    <loader secure='yes'/>
+    <bootmenu enable='yes' timeout='3000'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+    <hyperv mode='custom'>
+      <relaxed state='on'/>
+      <vapic state='on'/>
+      <spinlocks state='on' retries='8191'/>
+      <vpindex state='on'/>
+      <synic state='on'/>
+      <stimer state='on'/>
+      <reset state='on'/>
+      <frequencies state='on'/>
+      <tlbflush state='on'/>
+    </hyperv>
+    <vmport state='off'/>
+    <smm state='on'/>
+  </features>
+  <cpu mode='host-passthrough' check='none' migratable='on'>
+    <topology sockets='1' dies='1' cores='2' threads='2'/>
+  </cpu>
+  <clock offset='localtime'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='hypervclock' present='yes'/>
+  </clock>
+  <pm>
+    <suspend-to-mem enabled='no'/>
+    <suspend-to-disk enabled='no'/>
+  </pm>
+  <devices>
+    <disk device='disk'>
+      <driver name='qemu' discard='unmap'/>
+      <target dev='sda' bus='sata'/>
+      <boot order='2'/>
+      <alias name='ua-c'/>
+    </disk>
+    <disk device='cdrom'>
+      <target dev='sdb' bus='sata'/>
+      <readonly/>
+      <boot order='1'/>
+      <alias name='ua-install'/>
+    </disk>
+    <disk device='cdrom'>
+      <target dev='sdc' bus='sata'/>
+      <readonly/>
+      <alias name='ua-virtio-win'/>
+    </disk>
+    <interface type='network'>
+      <model type='e1000e'/>
+      <alias name='ua-lan'/>
+    </interface>
+    <graphics type='spice'>
+      <image compression='off'/>
+    </graphics>
+    <video>
+      <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
+    </video>
+    <sound model='ich9'/>
+    <tpm model='tpm-crb'>
+      <backend type='emulator' version='2.0'/>
+    </tpm>
+    <redirdev bus='usb' type='spicevmc'/>
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <source>
+        <address domain='0x0000' bus='0x03' slot='0x00' function='0x0'/>
+      </source>
+    </hostdev>
+  </devices>
+</domain>

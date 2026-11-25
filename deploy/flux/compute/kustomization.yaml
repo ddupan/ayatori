@@ -1,0 +1,7 @@
+# compute 角色的权限（ADR-0015）：只授予 system:ayatori:role:compute。节点通用的部分见 ../nodes。
+# 随 ../control-plane 同步。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- rbac.yaml
+- admission.yaml

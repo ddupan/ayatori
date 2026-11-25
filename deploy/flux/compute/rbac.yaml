@@ -1,0 +1,25 @@
+# compute Agent 读本节点相关的对象，只写它们的 status，不写 spec。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori:compute-agent
+rules:
+- apiGroups: [compute.ayatori.ddupan.top]
+  resources: [libvirtnetworks, libvirtstoragepools, libvirtstoragevolumes, libvirtdomains, lxccontainers, images]
+  verbs: [get, list, watch]
+- apiGroups: [compute.ayatori.ddupan.top]
+  resources: [libvirtnetworks/status, libvirtstoragepools/status, libvirtstoragevolumes/status, libvirtdomains/status, lxccontainers/status, images/status]
+  verbs: [patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori:compute-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ayatori:compute-agent
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: system:ayatori:role:compute

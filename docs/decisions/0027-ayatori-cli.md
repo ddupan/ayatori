@@ -110,11 +110,12 @@ API 应当是一个整体，这些操作不另开一套端点，而是参照 Kub
 `subresources.kubevirt.io` 提供 `virtualmachineinstances/console`、`virtualmachines/start` 等）做成
 apiserver 上的子资源。
 
-- **`ayatori-console-api`** 是一个聚合 API server，只提供子资源，不存储任何对象：主资源仍是 CRD，存储、
-  watch、版本迁移都不变。这正是 AGENTS.md 所说的例外——CRD 只支持 `status`/`scale` 子资源，这是已验证的
-  扩展能力阻碍；它不为减少 controller 而引入，也不接管存储。
+- **`ayatori-api`**（对应 KubeVirt 的 `virt-api`；不止控制台，也提供换盘、电源与凭据）是一个聚合
+  API server，只提供子资源，不存储任何对象：主资源仍是 CRD，存储、watch、版本迁移都不变。这正是
+  AGENTS.md 所说的例外——CRD 只支持 `status`/`scale` 子资源，这是已验证的扩展能力阻碍；它不为减少
+  controller 而引入，也不接管存储。
 - **认证、授权、审计都在 apiserver：** apiserver 认证用户（OIDC），以 front-proxy 头把身份转给
-  `ayatori-console-api`；后者用 `k8s.io/apiserver` 的委托授权按 RBAC 判断（例如
+  `ayatori-api`；后者用 `k8s.io/apiserver` 的委托授权按 RBAC 判断（例如
   `libvirtdomains/console`、`postgresqldatabases/credentials`），请求进 apiserver 审计日志，必要时
   在对象上记 Event。然后以**自己的身份**调用后端：节点中继（SPIFFE mTLS）、OpenBao。
 - **不是第二个控制面：** 不存状态、不拥有资源、不做调和；能用对象 CRUD 表达的不做成子资源。
@@ -130,7 +131,7 @@ apiserver 上的子资源。
 `ayatori db credentials <name>` 读 `postgresqldatabases/credentials` 子资源（形如
 `serviceaccounts/token`），OpenBao 对 CLI 透明：CLI 不知道 Bao 的地址、路径，也不需要另外登录 Bao。
 
-- 授权在 Ayatori：RBAC 对该子资源的授权通过后，`ayatori-console-api` 以自己的身份读 Bao。权限只看 RBAC
+- 授权在 Ayatori：RBAC 对该子资源的授权通过后，`ayatori-api` 以自己的身份读 Bao。权限只看 RBAC
   一处，不需要与 Bao policy 保持同步。
 - 它的 Bao role 只能读 Ayatori 自己交付的凭据路径（ADR-0010 的写入位置），不能读其他 secret；每次读取
   同时留在 Bao 的审计日志里。
@@ -174,7 +175,7 @@ apiserver 上的子资源。
 
 1. apiserver 接受 iam-login 的 token（homelab-cookbooks `homelab_ayatori` 0.2.0），在 Dev 验证。
 2. `ayatori login`/`whoami`/`config` 与 `db`、`lb`、`vm`、`ct` 的 `list`/`describe`。
-3. `ayatori-console-api`（先只有控制台子资源）与 `ayatori vm console`。
+3. `ayatori-api`（先只有控制台子资源）与 `ayatori vm console`。
 4. 换盘、电源、`db credentials` 与 `task`。
 5. `adm node`。
 

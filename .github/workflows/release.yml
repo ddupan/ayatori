@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  # GitHub 托管 runner：构建 manager 镜像推到 ghcr（带 provenance/SBOM），构建 lb-agent，
-  # 以 annotated tag 的说明创建 GitHub Release 并附上 lb-agent。不需要内网。
+  # GitHub 托管 runner：构建 manager 镜像推到 ghcr（带 provenance/SBOM），构建节点 agent，
+  # 以 annotated tag 的说明创建 GitHub Release 并附上 agent。不需要内网。
   build:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -46,15 +46,26 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf '## Published image\n\n- `%s@%s`\n' "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
-      # LB agent 跑在 LB 主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
+      # 节点 agent 跑在主机上而不是 k8s 里，以 release 附件发布：homelab-cookbooks 的
       # verified_release 按同一 release 中的 checksums 校验 tarball 后安装（与 lego、dataplaneapi 相同）。
-      - name: Build lb-agent tarball
+      - name: Build agent tarballs
         run: |
           set -euo pipefail
           version="${TAG#v}"
           mkdir -p dist/pkg
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/lb-agent ./cmd/lb-agent
+          # compute-agent 经 cgo 动态链接 libvirt.so.0 与 liblxc（ADR-0015），只能在不比节点新的 glibc 与
+          # libvirt 上构建。runner 的 Ubuntu 会随 Renovate 升级，因此在与节点相同的 Debian 13 里构建；
+          # Go 版本取自 go.mod，随工具链一起升级。
+          docker run --rm -v "$PWD:/src" -w /src -e CGO_ENABLED=1 "golang:$(go mod edit -json | jq -er .Go)-trixie" sh -ec '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends pkg-config lxc-dev libvirt-dev >/dev/null
+            go build -buildvcs=false -trimpath -o dist/pkg/compute-agent ./cmd/compute-agent'
+          # imds 单独发布：PVE 宿主机也部署它，不需要 compute-agent（ADR-0016）。
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/pkg/imds ./cmd/imds
           tar -C dist/pkg -czf "dist/ayatori-lb-agent_${version}_linux_amd64.tar.gz" lb-agent
+          tar -C dist/pkg -czf "dist/ayatori-compute-agent_${version}_linux_amd64.tar.gz" compute-agent
+          tar -C dist/pkg -czf "dist/ayatori-imds_${version}_linux_amd64.tar.gz" imds
 
       # 人用的 CLI（ADR-0027）：Linux 与 macOS 的压缩包，版本写进 `ayatori --version`。
       - name: Build CLI tarballs

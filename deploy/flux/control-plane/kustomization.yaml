@@ -6,3 +6,6 @@ resources:
 - rbac.yaml
 - version.yaml
 - postgresql.yaml
+# 节点 agent 的权限（ADR-0021、ADR-0022）：只有 RBAC 与准入策略，没有节点加入时不起作用。
+- ../nodes
+- ../compute

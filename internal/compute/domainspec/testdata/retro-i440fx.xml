@@ -1,0 +1,50 @@
+<domain type='kvm'>
+  <memory unit='MiB'>64</memory>
+  <vcpu>1</vcpu>
+  <os firmware='bios'>
+    <type arch='i686' machine='pc-i440fx-9.2'>hvm</type>
+    <boot dev='fd'/>
+    <boot dev='hd'/>
+    <boot dev='cdrom'/>
+  </os>
+  <features>
+    <acpi/>
+  </features>
+  <cpu mode='custom' match='exact'>
+    <model fallback='allow'>pentium3</model>
+  </cpu>
+  <clock offset='localtime'/>
+  <devices>
+    <disk device='disk'>
+      <target dev='hda' bus='ide'/>
+      <alias name='ua-c'/>
+    </disk>
+    <disk device='cdrom'>
+      <target dev='hdc' bus='ide'/>
+      <readonly/>
+      <alias name='ua-cd'/>
+    </disk>
+    <disk device='floppy'>
+      <target dev='fda' bus='fdc'/>
+      <readonly/>
+      <alias name='ua-a'/>
+    </disk>
+    <controller type='ide' index='0'/>
+    <controller type='fdc' index='0'/>
+    <interface type='network'>
+      <model type='ne2k_pci'/>
+      <alias name='ua-lan'/>
+    </interface>
+    <serial type='pty'>
+      <target port='0'/>
+      <alias name='ua-ayatori-console'/>
+    </serial>
+    <input type='mouse' bus='ps2'/>
+    <graphics type='vnc'/>
+    <sound model='sb16'/>
+    <video>
+      <model type='cirrus' vram='4096' heads='1' primary='yes'/>
+    </video>
+    <memballoon model='none'/>
+  </devices>
+</domain>
