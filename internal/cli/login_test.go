@@ -41,8 +41,8 @@ const (
 // 对真实 apiserver（envtest，以结构化认证配置接受测试 issuer 的 token）走一遍：config add 的
 // 发现与 CA 固定、device code 与浏览器登录、whoami、refresh token 轮换、logout。
 func TestLoginAgainstAPIServer(t *testing.T) {
-	issuer := newIssuer(t)
-	server, admin := startAPIServer(t, issuer)
+	issuer, spire := newIssuer(t), newIssuer(t)
+	server, admin := startAPIServer(t, issuer, spire)
 	publishDiscovery(t, admin, issuer.URL, server.caPEM)
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, issuer.Client())
 
@@ -123,6 +123,10 @@ func TestLoginAgainstAPIServer(t *testing.T) {
 		assertKubeconfig(t, ctx, store, p, server)
 	})
 
+	t.Run("SPIFFE identity without a saved login; a human login comes first", func(t *testing.T) {
+		assertWorkloadIdentity(t, ctx, store, p, spire)
+	})
+
 	t.Run("logout forgets the login", func(t *testing.T) {
 		if err := store.Logout("test"); err != nil {
 			t.Fatal(err)
@@ -167,7 +171,7 @@ func assertKubeconfig(t *testing.T, ctx context.Context, store Store, p Profile,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.Username != "oidc:alice" {
+	if user.Username != humanUser {
 		t.Errorf("user %+v", user)
 	}
 }
@@ -182,7 +186,7 @@ func assertUser(t *testing.T, ctx context.Context, s Store, p Profile) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.Username != "oidc:alice" || !slices.Contains(user.Groups, "oidc:platform-admins") {
+	if user.Username != humanUser || !slices.Contains(user.Groups, "oidc:platform-admins") {
 		t.Errorf("user %+v", user)
 	}
 }
@@ -192,10 +196,10 @@ type apiServer struct {
 	caPEM []byte
 }
 
-func startAPIServer(t *testing.T, issuer *testIssuer) (apiServer, *kubernetes.Clientset) {
+func startAPIServer(t *testing.T, issuer, spire *testIssuer) (apiServer, *kubernetes.Clientset) {
 	t.Helper()
-	// 与 homelab_ayatori 写入的 authentication.yaml 相同的形状，issuer 换成测试 issuer；/healthz 是
-	// envtest 不带凭据的就绪检查。
+	// 与 homelab_ayatori 写入的 authentication.yaml 相同的形状，issuer 换成测试 issuer，spire 代替 SPIRE
+	// 的 OIDC discovery（用户名即 SPIFFE ID）；/healthz 是 envtest 不带凭据的就绪检查。
 	config := fmt.Sprintf(`apiVersion: apiserver.config.k8s.io/v1
 kind: AuthenticationConfiguration
 jwt:
@@ -206,12 +210,18 @@ jwt:
   claimMappings:
     username: {claim: preferred_username, prefix: "oidc:"}
     groups: {claim: groups, prefix: "oidc:"}
+- issuer:
+    url: %q
+    audiences: [%s]
+    certificateAuthority: %q
+  claimMappings:
+    username: {claim: sub, prefix: ""}
 anonymous:
   enabled: true
   conditions:
   - path: %s
   - path: /healthz
-`, issuer.URL, clientID, issuer.caPEM, DiscoveryPath)
+`, issuer.URL, clientID, issuer.caPEM, spire.URL, clientID, spire.caPEM, DiscoveryPath)
 	path := filepath.Join(t.TempDir(), "authentication.yaml")
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)

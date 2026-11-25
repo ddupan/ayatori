@@ -18,6 +18,8 @@ type Profile struct {
 	CertificateAuthority string `json:"certificateAuthority"`
 	Issuer               string `json:"issuer"`
 	ClientID             string `json:"clientID"`
+	// Auth 固定认证方法（AuthMethods 之一）；为空时按 Store.Token 的顺序选用。
+	Auth string `json:"auth,omitempty"`
 }
 
 // Config 是 CLI 自己的配置文件，不是 kubeconfig。
