@@ -113,11 +113,21 @@ func TestServiceLifecycle(t *testing.T) {
 	if len(svc.Status.LoadBalancer.Ingress) != 0 {
 		t.Fatal("ingress published before Programmed")
 	}
+	// 地址被占用（池外同理）：LoadBalancer controller 拒绝，原因同步到 Service。
+	meta.SetStatusCondition(&lb.Status.Conditions, metav1.Condition{Type: programmedType, Status: metav1.ConditionFalse,
+		Reason: "AddressConflict", Message: "VIP 10.62.0.7 已被其他 LoadBalancer 占用"})
+	must(t, c.Status().Update(ctx, lb))
+	eventually(t, "rejection visible on Service", func() bool {
+		_ = c.Get(ctx, client.ObjectKeyFromObject(svc), svc)
+		cond := meta.FindStatusCondition(svc.Status.Conditions, serviceConditionType)
+		return cond != nil && cond.Reason == "AddressConflict" && len(svc.Status.LoadBalancer.Ingress) == 0
+	})
 	program(t, c, lb, vip, "apps-web.homelab.lb.lab.ddupan.top")
 	eventually(t, "ingress published", func() bool {
 		_ = c.Get(ctx, client.ObjectKeyFromObject(svc), svc)
 		in := svc.Status.LoadBalancer.Ingress
-		return len(in) == 1 && in[0].IP == vip && in[0].Hostname == "apps-web.homelab.lb.lab.ddupan.top"
+		return len(in) == 1 && in[0].IP == vip && in[0].Hostname == "apps-web.homelab.lb.lab.ddupan.top" &&
+			meta.IsStatusConditionTrue(svc.Status.Conditions, serviceConditionType)
 	})
 
 	// 节点增加：Backend 跟随。

@@ -15,9 +15,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,6 +51,8 @@ const (
 	labelExcludeNode = "node.kubernetes.io/exclude-from-external-load-balancers"
 
 	programmedType = "Programmed"
+	// serviceConditionType 是同步到 Service status 的 LoadBalancer Programmed。
+	serviceConditionType = "ayatori.ddupan.top/LoadBalancerProgrammed"
 )
 
 // ServiceReconciler 为 workload 集群中选用 LoadBalancerClass 的 Service 维护 Ayatori 中的
@@ -110,17 +114,25 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if err := r.Ayatori.Get(ctx, client.ObjectKeyFromObject(desired), lb); err != nil {
 		return ctrl.Result{}, err
 	}
-	// VIP 分配与数据面落地是异步的：LoadBalancer 的 watch 会在 Programmed 后再次触发。
-	if !meta.IsStatusConditionTrue(lb.Status.Conditions, programmedType) || lb.Status.Address == "" {
+	// VIP 分配与数据面落地是异步的：LoadBalancer 的 watch 会在状态变化时再次触发。
+	programmed := meta.FindStatusCondition(lb.Status.Conditions, programmedType)
+	if programmed == nil {
 		return ctrl.Result{}, nil
 	}
-	ingress := corev1ac.LoadBalancerIngress().WithIP(lb.Status.Address)
-	if lb.Status.Hostname != "" {
-		ingress.WithHostname(lb.Status.Hostname)
+	// 同步到 Service，地址不在池内、已被占用等拒绝原因在 Service 上可见。
+	status := corev1ac.ServiceStatus().WithConditions(metav1ac.Condition().
+		WithType(serviceConditionType).WithStatus(programmed.Status).WithReason(programmed.Reason).
+		WithMessage(programmed.Message).WithLastTransitionTime(programmed.LastTransitionTime))
+	// 首次 Programmed 后公布 ingress；address 一经记录不变，之后主机降级也不撤回。
+	if lb.Status.Address != "" && (programmed.Status == metav1.ConditionTrue || len(service.Status.LoadBalancer.Ingress) > 0) {
+		ingress := corev1ac.LoadBalancerIngress().WithIP(lb.Status.Address)
+		if lb.Status.Hostname != "" {
+			ingress.WithHostname(lb.Status.Hostname)
+		}
+		status.WithLoadBalancer(corev1ac.LoadBalancerStatus().WithIngress(ingress))
 	}
-	status := corev1ac.Service(service.Name, service.Namespace).
-		WithStatus(corev1ac.ServiceStatus().WithLoadBalancer(corev1ac.LoadBalancerStatus().WithIngress(ingress)))
-	return ctrl.Result{}, r.Client.Status().Apply(ctx, status, fieldOwner, client.ForceOwnership)
+	apply := corev1ac.Service(service.Name, service.Namespace).WithStatus(status)
+	return ctrl.Result{}, r.Client.Status().Apply(ctx, apply, fieldOwner, client.ForceOwnership)
 }
 
 // cleanup 删除 Service 对应的 Ayatori 对象。LoadBalancer 有自己的 finalizer（DNS 记录、VIP 释放），

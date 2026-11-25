@@ -35,8 +35,9 @@ VIP 的入口都要在 homelab-infra 里手写 `LoadBalancer` + `Backend`，节�
 | Service 的每个端口 | `Backend` `<lb>-<port>`：各端口 nodePort 不同，而 LB 的一个端口只引用一个 Backend |
 | 节点 InternalIP × nodePort | Backend endpoints；带 `node.kubernetes.io/exclude-from-external-load-balancers` 的节点除外 |
 | `externalTrafficPolicy: Local` | HTTP 健康检查 `healthCheckNodePort` 的 `/healthz`（kube-proxy 只在有本地 endpoint 时返回 200） |
-| `spec.loadBalancerIP` | `spec.address`，只在创建时生效（address 不可变） |
-| `status.loadBalancer.ingress` | LB 为 `Programmed` 后写入 `status.address` 与 `status.hostname` |
+| `spec.loadBalancerIP` | `spec.address`，只在创建时生效（address 不可变）。池外或已被占用的地址由 LoadBalancer controller 拒绝（`AddressOutOfPool`、`AddressConflict`），唯一性由 IPAddress 对象名保证 |
+| `status.loadBalancer.ingress` | LB 首次 `Programmed` 后写入 `status.address` 与 `status.hostname`，之后不撤回 |
+| `status.conditions` | `ayatori.ddupan.top/LoadBalancerProgrammed`，照抄 LB 的 `Programmed`（含拒绝原因） |
 
 - 首版只支持 TCP，并要求有 nodePort；不支持的 Service 记日志后不处理。
 - 派生对象带 `app.kubernetes.io/managed-by: ayatori-cloud-provider` 与来源 Service 的 namespace/name
@@ -91,14 +92,15 @@ subjects:
 
 ## 已知限制
 
-- **能申请池内任意 VIP。** 有 `loadbalancers` 创建权限就能用 `spec.address` 指定池中任一空闲地址，没有按
-  namespace 限制地址段。需要时在 Ayatori 侧加 admission（例如按 namespace 的地址段），不在 cloud-provider 里限制。
 - 派生 LB 只保证名字稳定，需要稳定 IP 的入口仍用声明的 LB（ADR-0014）。
-- 不支持 UDP、`allocateLoadBalancerNodePorts: false`、PROXY protocol 注解；出现真实需求再加。
+- 不支持 UDP：数据面 HAProxy 不转发 UDP（只在 log-forward 与 QUIC 中监听 UDP），这是 ADR-0012 首版只做
+  TCP 的原因，不是 cloud-provider 的限制。支持 UDP 要给 `LoadBalancer` 端口加协议字段，并为 UDP 端口换一个
+  包转发的数据面（如 LB 主机上的 IPVS/nftables），需另行决策。
+- 不支持 `allocateLoadBalancerNodePorts: false`、PROXY protocol 注解；出现真实需求再加。
 
 ## 待验证（Accepted 之前）
 
-已由 envtest 验证：创建、VIP 稍后分配、节点增加、端口减少、controller 重启后认领、同名对象不接管、删除
+已由 envtest 验证：创建、VIP 稍后分配、地址被拒绝时原因同步到 Service、节点增加、端口减少、controller 重启后认领、同名对象不接管、删除
 等待 LB finalizer、无 class 的 Service 不处理。
 
 在 Dev（sandbox 集群 → ayatori-dev）验证：
