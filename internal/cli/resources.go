@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,8 +42,8 @@ var Resources = []Resource{
 		GVR: schema.GroupVersionResource{Group: "network.ayatori.ddupan.top", Version: "v1alpha1", Resource: "loadbalancers"}},
 }
 
-// ListOptions：Namespace 为空表示所有 namespace；Name 非空时只列这一个；Output 为空或 wide 时打印
-// 表格，否则见 objectPrinter。
+// ListOptions：Namespace 为空表示所有 namespace；Name 非空时只列这一个（不给 namespace 时见 Locate）；
+// Output 为空或 wide 时打印表格，否则见 objectPrinter。
 type ListOptions struct {
 	Namespace string
 	Name      string
@@ -52,6 +53,13 @@ type ListOptions struct {
 // List 打印资源列表。表格由 apiserver 按 CRD 的 printer columns 生成（与 kubectl get 相同），
 // CLI 不自己定义列。
 func List(ctx context.Context, config *rest.Config, r Resource, opts ListOptions, out io.Writer) error {
+	if opts.Name != "" {
+		namespace, err := Locate(ctx, config, r, opts.Namespace, opts.Name)
+		if err != nil {
+			return err
+		}
+		opts.Namespace = namespace
+	}
 	if opts.Output != "" && opts.Output != "wide" {
 		printer, err := objectPrinter(opts.Output)
 		if err != nil {
@@ -71,13 +79,13 @@ func List(ctx context.Context, config *rest.Config, r Resource, opts ListOptions
 		}
 		list, err := resource.List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return err
+			return allNamespacesHint(err, opts.Namespace)
 		}
 		return printer.PrintObj(list, out)
 	}
 	table, err := fetchTable(ctx, config, r, opts.Namespace, opts.Name)
 	if err != nil {
-		return err
+		return allNamespacesHint(err, opts.Namespace)
 	}
 	if len(table.Rows) == 0 {
 		_, err := fmt.Fprintf(out, "No %s found.\n", r.Short)
@@ -86,6 +94,43 @@ func List(ctx context.Context, config *rest.Config, r Resource, opts ListOptions
 	return printers.NewTablePrinter(printers.PrintOptions{
 		Wide: opts.Output == "wide", WithNamespace: r.Namespaced && opts.Namespace == "",
 	}).PrintObj(table, out)
+}
+
+// Locate 返回名为 name 的对象所在的 namespace。namespace 已给出时原样返回；否则跨所有 namespace 按名字
+// 查找，唯一时用它，多个时列出候选要求 -n。namespace 是应用隔离而不是用户的工作上下文，所以 CLI 不保存
+// "当前 namespace"（ADR-0027）。
+func Locate(ctx context.Context, config *rest.Config, r Resource, namespace, name string) (string, error) {
+	if namespace != "" || !r.Namespaced {
+		return namespace, nil
+	}
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return "", err
+	}
+	list, err := client.Resource(r.GVR).List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + name})
+	if err != nil {
+		return "", allNamespacesHint(err, "")
+	}
+	switch len(list.Items) {
+	case 0:
+		return "", apierrors.NewNotFound(r.GVR.GroupResource(), name)
+	case 1:
+		return list.Items[0].GetNamespace(), nil
+	}
+	candidates := make([]string, 0, len(list.Items))
+	for _, item := range list.Items {
+		candidates = append(candidates, item.GetNamespace()+"/"+name)
+	}
+	return "", fmt.Errorf("%s %q exists in several namespaces (%s): choose one with -n",
+		r.Noun, name, strings.Join(candidates, ", "))
+}
+
+// allNamespacesHint：跨 namespace 列出需要集群范围的 list 权限，只能看部分 namespace 的用户得用 -n。
+func allNamespacesHint(err error, namespace string) error {
+	if namespace == "" && apierrors.IsForbidden(err) {
+		return fmt.Errorf("%w\nyou cannot list across all namespaces: name one with -n", err)
+	}
+	return err
 }
 
 // objectPrinter：json、yaml 与 jsonpath=<模板>，都去掉 managedFields。
@@ -145,6 +190,10 @@ func fetchTable(ctx context.Context, config *rest.Config, r Resource, namespace,
 // Describe 打印一个对象：名字、spec、status、conditions 与相关 Event。不打印 UID、resourceVersion、
 // managedFields、owner reference 这类 Kubernetes 细节（ADR-0027 原则 2），需要时用 `list NAME -o yaml`。
 func Describe(ctx context.Context, config *rest.Config, r Resource, namespace, name string, out io.Writer) error {
+	namespace, err := Locate(ctx, config, r, namespace, name)
+	if err != nil {
+		return err
+	}
 	client, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return err

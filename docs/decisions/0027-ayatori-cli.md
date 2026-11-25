@@ -121,6 +121,31 @@ ayatori adm node list | drain | uncordon | evacuate | join ...
 具体命令随各切片的实现确定，本 ADR 只定结构。名词是 Ayatori 的资源，不是 CRD 的名字：`vm` 对应
 LibvirtDomain、`ct` 对应 LXCContainer，后端换成别的实现时命令不变。
 
+### Namespace：默认跨所有 namespace，不保存当前 project
+
+namespace 在 Ayatori 里用于应用之间的隔离，不是用户的工作上下文：日常问的是"我有哪些数据库"，而不是
+"这个 namespace 里有什么"。所以 CLI 不引入 oc 式的 project 与"当前 namespace"：
+
+- `list` 默认列出所有 namespace，带 NAMESPACE 列；`-n` 只看一个。没有 `-A`。
+- `describe`、`credentials` 等按名字操作的命令不给 `-n` 时，跨 namespace 按名字查找（一次集群范围的
+  list，`metadata.name` field selector）：唯一则用它；多个 namespace 重名时报错并列出候选，要求 `-n`。
+- 以后若有写操作，必须显式 `-n`，不猜。
+
+CLI 不使用 project 这个词；以后需要跨 namespace 的归属概念时另行讨论。
+
+**负载。** 跨 namespace 的 list 是一次请求，通常由 apiserver 的 watch cache 应答，代价随对象数而不是
+namespace 数增长，比逐个 namespace 请求便宜。homelab 的规模下没有问题；对象多到表格不可读或响应变慢时
+再用 `limit`/`continue` 分页。
+
+**限制：需要集群范围的 list 权限。** 用户只能看部分 namespace 时，跨 namespace 的 list 与按名字查找都会
+被拒绝，CLI 只能提示用 `-n`，且用户必须自己知道 namespace 的名字——Kubernetes 的 RBAC 不能"列出我有权限
+的 namespace"。现在所有用户都有集群范围的读权限，这不是问题。若出现"只能看部分 namespace、又不能给集群
+范围 list 权限"的用户，参照 OpenShift 的 Project API 评估：openshift-apiserver 是聚合 API Server，
+`project.openshift.io` 的 Project 没有自己的存储，它以一个监视 namespace 与 RBAC 的授权缓存按调用者过滤
+namespace，`list`/`watch` 只返回该用户可见的部分。对 Ayatori 而言即在 ayatori-api 上加一个按调用者过滤的
+只读资源（超出现在"只做子资源"的范围，需要单独决策），CLI 的跨 namespace 操作先取这个列表再逐个查询。
+在此之前不做（AGENTS.md：需求驱动）。
+
 ### 输出与长操作
 
 - 默认人读的表格；`-o json|yaml` 输出 API 对象原样；`-o jsonpath=...`/`--query` 用于脚本（具体语法实现
@@ -202,13 +227,11 @@ apiserver 上的子资源。
 
 ## 待定
 
-1. **租户与"project"。** oc 的 project 对应 namespace；Ayatori 目前只有 Database 的 Tenant，是否需要
-   一个跨资源的归属概念、CLI 的默认上下文是什么，另行讨论。
-2. **节点 join 是否收进 `ayatori adm node join`。** 现在由 homelab-infra 的 Ansible playbook 完成（建
+1. **节点 join 是否收进 `ayatori adm node join`。** 现在由 homelab-infra 的 Ansible playbook 完成（建
    bootstrap token、写入节点、批准 CSR），当时的考虑是不为一次性操作新造 CLI。有了 CLI 之后这个前提
    变了，但 join 需要在节点上写文件，CLI 只能负责控制面一侧；是否迁移、怎么拆分需要单独决定。
-3. **Web 控制台**的范围、技术栈、是否另开仓库，另立 ADR；它只能是 apiserver 的另一个客户端。
-4. **隧道**（经中继访问实例内的端口，类似 IAP tunnel）。只有在出现真实、重复的需要时再评估
+2. **Web 控制台**的范围、技术栈、是否另开仓库，另立 ADR；它只能是 apiserver 的另一个客户端。
+3. **隧道**（经中继访问实例内的端口，类似 IAP tunnel）。只有在出现真实、重复的需要时再评估
    （AGENTS.md：需求驱动）。
 
 ## 实施顺序

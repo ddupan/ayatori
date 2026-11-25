@@ -411,9 +411,9 @@ func connect(ctx context.Context, profile string) (*rest.Config, error) {
 
 func resourceCmd(r cli.Resource, profile *string) *cobra.Command {
 	var namespace string
-	var all bool
 	cmd := &cobra.Command{Use: r.Noun, Short: r.Short}
-	cmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "default", "namespace")
+	cmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "",
+		"only this namespace (default: all namespaces; a NAME is looked up across them)")
 
 	var output string
 	list := &cobra.Command{
@@ -426,16 +426,12 @@ func resourceCmd(r cli.Resource, profile *string) *cobra.Command {
 				return err
 			}
 			opts := cli.ListOptions{Namespace: namespace, Output: output}
-			if all {
-				opts.Namespace = ""
-			}
 			if len(args) == 1 {
 				opts.Name = args[0]
 			}
 			return cli.List(cmd.Context(), config, r, opts, cmd.OutOrStdout())
 		},
 	}
-	list.Flags().BoolVarP(&all, "all-namespaces", "A", false, "list across all namespaces")
 	list.Flags().StringVarP(&output, "output", "o", "", "wide, json, yaml or jsonpath=<template>")
 
 	describe := &cobra.Command{
@@ -452,13 +448,13 @@ func resourceCmd(r cli.Resource, profile *string) *cobra.Command {
 	}
 	cmd.AddCommand(list, describe)
 	if r.Noun == "db" {
-		cmd.AddCommand(credentialsCmd(profile, &namespace))
+		cmd.AddCommand(credentialsCmd(r, profile, &namespace))
 	}
 	return cmd
 }
 
 // credentialsCmd 读数据库的应用凭据（ADR-0027 的 postgresqltenants/credentials 子资源）。
-func credentialsCmd(profile, namespace *string) *cobra.Command {
+func credentialsCmd(db cli.Resource, profile, namespace *string) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use:   "credentials NAME",
@@ -469,7 +465,11 @@ func credentialsCmd(profile, namespace *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := cli.DatabaseCredentials(cmd.Context(), config, *namespace, args[0])
+			ns, err := cli.Locate(cmd.Context(), config, db, *namespace, args[0])
+			if err != nil {
+				return err
+			}
+			c, err := cli.DatabaseCredentials(cmd.Context(), config, ns, args[0])
 			if err != nil {
 				return err
 			}
