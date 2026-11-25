@@ -28,6 +28,8 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
@@ -117,6 +119,10 @@ func TestLoginAgainstAPIServer(t *testing.T) {
 		assertUser(t, ctx, browser, p)
 	})
 
+	t.Run("the kubeconfig's exec credential authenticates as the logged-in user", func(t *testing.T) {
+		assertKubeconfig(t, ctx, store, p, server)
+	})
+
 	t.Run("logout forgets the login", func(t *testing.T) {
 		if err := store.Logout("test"); err != nil {
 			t.Fatal(err)
@@ -125,6 +131,45 @@ func TestLoginAgainstAPIServer(t *testing.T) {
 			t.Errorf("IDToken after logout = %v, want ErrNotLoggedIn", err)
 		}
 	})
+}
+
+// assertKubeconfig：kubeconfig 指向固定的 CA 并以 exec 调 ayatori；exec 的输出能以登录的用户连接。
+func assertKubeconfig(t *testing.T, ctx context.Context, store Store, p Profile, server apiServer) {
+	t.Helper()
+	data, err := Kubeconfig("test", p, "/usr/local/bin/ayatori")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := clientcmd.RESTConfigFromKubeConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Host != server.url || string(config.CAData) != string(server.caPEM) || config.BearerToken != "" ||
+		config.ExecProvider == nil || config.ExecProvider.Command != "/usr/local/bin/ayatori" ||
+		!slices.Equal(config.ExecProvider.Args, []string{"config", "credential", "--profile", "test"}) {
+		t.Fatalf("kubeconfig:\n%s", data)
+	}
+	// client-go 执行 exec 插件后用的就是这份输出：按 v1 ExecCredential 解析，拿 token 连接。
+	out, err := store.ExecCredential(ctx, "test", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cred clientauthv1.ExecCredential
+	if err := json.Unmarshal(out, &cred); err != nil {
+		t.Fatal(err)
+	}
+	if cred.Kind != "ExecCredential" || cred.APIVersion != clientauthv1.SchemeGroupVersion.String() ||
+		cred.Status.ExpirationTimestamp == nil || !cred.Status.ExpirationTimestamp.After(time.Now()) {
+		t.Fatalf("credential kind %q, apiVersion %q, expiry %v", cred.Kind, cred.APIVersion, cred.Status.ExpirationTimestamp)
+	}
+	config.ExecProvider, config.BearerToken = nil, cred.Status.Token
+	user, err := WhoAmI(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Username != "oidc:alice" {
+		t.Errorf("user %+v", user)
+	}
 }
 
 func assertUser(t *testing.T, ctx context.Context, s Store, p Profile) {
