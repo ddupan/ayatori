@@ -35,12 +35,10 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+prefix, s.discovery)
 	mux.HandleFunc("GET "+prefix+"/namespaces/{namespace}/postgresqltenants/{name}/credentials", s.credentials)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, _, err := s.FrontProxy.User(r)
-		if err != nil {
+		if _, _, err := s.FrontProxy.User(r); err != nil {
 			writeStatus(w, apierrors.NewUnauthorized(err.Error()))
 			return
 		}
-		s.Logger.Info("request", "user", user, "method", r.Method, "path", r.URL.Path)
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -59,6 +57,10 @@ func (s Server) discovery(w http.ResponseWriter, _ *http.Request) {
 
 func (s Server) credentials(w http.ResponseWriter, r *http.Request) {
 	key := types.NamespacedName{Namespace: r.PathValue("namespace"), Name: r.PathValue("name")}
+	// 谁读了哪个 Tenant 的凭据：apiserver 审计日志启用之前，这是除 OpenBao（只看到 ayatori-api 自己）外
+	// 唯一的记录。聚合层的发现与 OpenAPI 轮询不记录。
+	user, _, _ := s.FrontProxy.User(r)
+	s.Logger.Info("read credentials", "user", user, "tenant", key)
 	var tenant databasev1alpha1.PostgreSQLTenant
 	if err := s.Kube.Get(r.Context(), key, &tenant); err != nil {
 		writeStatus(w, err)

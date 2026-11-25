@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,8 +156,9 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 	})
 
 	t.Run("the apiserver refuses a user without the subresource", func(t *testing.T) {
-		if _, err := cli.DatabaseCredentials(ctx, as("bob"), team, ready); !apierrors.IsForbidden(err) {
-			t.Errorf("bob: %v, want forbidden", err)
+		_, err := cli.DatabaseCredentials(ctx, as("bob"), team, ready)
+		if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), `User "bob" cannot get resource "postgresqltenants/credentials"`) {
+			t.Errorf("bob: %v, want the apiserver's forbidden reason", err)
 		}
 	})
 
@@ -164,8 +166,9 @@ func TestDatabaseCredentialsThroughTheAggregator(t *testing.T) {
 		if _, err := cli.DatabaseCredentials(ctx, as("alice"), team, pending); !apierrors.IsConflict(err) {
 			t.Errorf("pending: %v, want conflict", err)
 		}
-		if _, err := cli.DatabaseCredentials(ctx, as("alice"), team, "missing"); !apierrors.IsNotFound(err) {
-			t.Errorf("missing: %v, want not found", err)
+		if _, err := cli.DatabaseCredentials(ctx, as("alice"), team, "missing"); !apierrors.IsNotFound(err) ||
+			!strings.Contains(err.Error(), `"missing" not found`) {
+			t.Errorf("missing: %v, want ayatori-api's not found", err)
 		}
 	})
 
