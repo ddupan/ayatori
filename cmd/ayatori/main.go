@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -59,7 +60,7 @@ func store() (cli.Store, cli.Config, error) {
 func configCmd(profile *string) *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Manage the environments this CLI connects to"}
 
-	var fingerprint string
+	var fingerprint, auth string
 	add := &cobra.Command{
 		Use:   "add NAME SERVER",
 		Short: "Add an environment, trusting its CA after you confirm the fingerprint",
@@ -70,6 +71,9 @@ func configCmd(profile *string) *cobra.Command {
 				return err
 			}
 			name := args[0]
+			if auth != "" && !slices.Contains(cli.AuthMethods, auth) {
+				return fmt.Errorf("--auth must be one of %s", strings.Join(cli.AuthMethods, ", "))
+			}
 			if _, exists := c.Profiles[name]; exists {
 				return fmt.Errorf("environment %q exists; remove it first", name)
 			}
@@ -79,6 +83,7 @@ func configCmd(profile *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			p.Auth = auth
 			if c.Profiles == nil {
 				c.Profiles = map[string]cli.Profile{}
 			}
@@ -89,12 +94,16 @@ func configCmd(profile *string) *cobra.Command {
 			if err := s.Save(c); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s). Run `ayatori login%s` to sign in.\n",
-				name, p.Server, profileFlag(c, name))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s).\n", name, p.Server)
+			if auth != cli.AuthSPIFFE {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run `ayatori login%s` to sign in, or use this machine's SPIFFE identity.\n",
+					profileFlag(c, name))
+			}
 			return nil
 		},
 	}
 	add.Flags().StringVar(&fingerprint, "ca-fingerprint", "", "expected CA fingerprint (sha256:...), instead of asking")
+	add.Flags().StringVar(&auth, "auth", "", "always authenticate with oidc or spiffe (default: saved login, then SPIFFE)")
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -250,6 +259,9 @@ func loginCmd(profile *string) *cobra.Command {
 			name, p, err := c.Profile(*profile)
 			if err != nil {
 				return err
+			}
+			if p.Auth == cli.AuthSPIFFE {
+				return fmt.Errorf("environment %s authenticates with this machine's SPIFFE identity; no login needed", name)
 			}
 			opts := cli.LoginOptions{Device: device, Out: cmd.ErrOrStderr(), Open: openBrowser}
 			if err := s.Login(cmd.Context(), name, p, opts); err != nil {

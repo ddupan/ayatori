@@ -9,9 +9,9 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// RESTConfig 以用户自己的 ID token 连接 profile 的 apiserver。
+// RESTConfig 以 Token 选出的凭据连接 profile 的 apiserver。
 func (s Store) RESTConfig(ctx context.Context, name string, p Profile) (*rest.Config, error) {
-	token, err := s.IDToken(ctx, name, p)
+	token, err := s.Token(ctx, name, p)
 	if err != nil {
 		return nil, err
 	}

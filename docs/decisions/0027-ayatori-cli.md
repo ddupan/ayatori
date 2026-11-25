@@ -6,6 +6,8 @@
   oc""永远记住 ayatori 不是 kubernetes""在 cli 设计上还能参考各大云"）。
 - 修订：[ADR-0010](0010-credential-delivery-ends-at-openbao.md)——人按需读取凭据改为经 Ayatori API
   返回，见「凭据经 API 返回」。交付给 workload 仍止于 OpenBao。
+  [ADR-0021](0021-client-certificates-via-csr.md)——没有人参与的调用方以 SPIFFE JWT-SVID 认证，见「没有人
+  参与时的认证」。2026-11-25 增补。
 - 关联：[ADR-0001](0001-kubernetes-api-machinery.md)（只复用 API machinery）、[ADR-0016](0016-instance-node-services.md)
   （控制台与运行时操作）、[ADR-0019](0019-compute-day2-operations.md)、
   [ADR-0024](0024-unified-version-with-skew.md)。
@@ -78,6 +80,29 @@ Ayatori 取 oc 的"自带登录与上下文、`adm` 分区"，取云 CLI 的"名
 - `ayatori logout`、`ayatori whoami`（显示 apiserver 认定的用户与组）。
 - 不导出 kubeconfig 作为常规用法；需要 break-glass 时 `ayatori config kubeconfig` 生成一份以
   `ayatori` 自身为 exec credential plugin 的 kubeconfig。
+
+### 没有人参与时的认证
+
+节点、实例与自动化（Chef、CI、节点上的工具、实例内取数据库凭据的 workload）长期都要调用 Ayatori API，
+而这些地方没有人去完成 OIDC 登录。它们用 SPIFFE 身份：
+
+- **认证方法是平级的**，`config add` 不假定任何一种。参照 AWS SDK 的默认凭据链与 GCP 的 ADC，按顺序选用：
+  1. 配置档以 `config add --auth oidc|spiffe` 固定了方法，就只用它；
+  2. 有已保存的登录（人显式执行过 `ayatori login`）就用 OIDC。人的显式登录优先于机器的环境身份，否则在
+     运行 spire-agent 的机器上登录的人会悄悄以机器身份操作；登录过期时报错让人重新登录，不换身份；
+  3. 有 SPIFFE Workload API（`SPIFFE_ENDPOINT_SOCKET` 或节点上 spire-agent 的默认 socket）就取 JWT-SVID；
+  4. 实例内的元数据服务（ADR-0016 的 JWT-SVID 代领）在其身份端点实现后加入，位于 SPIFFE 之后；
+  5. 都没有时报错并提示 `ayatori login`。
+- audience 都是环境的 audience（发现信息里的 clientID，如 `ayatori-dev`）：apiserver 的
+  AuthenticationConfiguration 为 SPIRE 的 OIDC discovery（`https://spire-oidc.ddupan.top`）另加一个
+  issuer，用户名取 `sub`、不加前缀——SPIFFE ID 自带 `spiffe://`，不会与 `oidc:` 用户混淆。实例经元数据
+  服务取得的是同一 issuer 的 JWT-SVID，不需要另加配置。
+- 授权照旧只在 RBAC：按调用方的 SPIFFE ID（如 `spiffe://ddupan.top/node/<name>`、
+  `spiffe://ddupan.top/ayatori/ns/<ns>/sa/<sa>`）绑定，出现真实的调用方时逐个授予。
+- **与 ADR-0021 的关系**：ADR-0021 不让控制面自己的组件以 JWT-SVID 登录，理由是 apiserver 要依赖 SPIRE 的
+  OIDC discovery，而 SPIRE 将来可能运行在计算后端管理的机器上，形成循环。这一点对控制面组件仍然成立，
+  它们继续用客户端证书。这里的调用方不同：SPIRE 不可用时只有以 SPIFFE 认证的调用失败，apiserver 的启动
+  与其他认证方式不受影响（结构化认证配置在 issuer 不可达时不阻塞启动）。
 
 ### 命令树
 

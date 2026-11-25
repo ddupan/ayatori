@@ -27,9 +27,9 @@ func Kubeconfig(name string, p Profile, command string) ([]byte, error) {
 	return clientcmd.Write(*c)
 }
 
-// ExecCredential 是 exec credential plugin 的输出：当前环境仍然有效的 ID token（需要时先刷新）。
+// ExecCredential 是 exec credential plugin 的输出：Token 选出的凭据（ID token 或 JWT-SVID）。
 func (s Store) ExecCredential(ctx context.Context, name string, p Profile) ([]byte, error) {
-	token, err := s.IDToken(ctx, name, p)
+	token, err := s.Token(ctx, name, p)
 	if err != nil {
 		return nil, err
 	}
