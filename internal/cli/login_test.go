@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -31,6 +33,8 @@ import (
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"go.ddupan.top/ayatori/internal/ayatoriclient"
 )
 
 const (
@@ -47,17 +51,34 @@ func TestLoginAgainstAPIServer(t *testing.T) {
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, issuer.Client())
 
 	t.Run("a CA the user does not trust stops discovery", func(t *testing.T) {
-		_, err := Discover(ctx, server.url, func(CA) error { return errors.New("no") })
+		_, err := ayatoriclient.Discover(ctx, server.url, func(ayatoriclient.CA) error { return errors.New("no") })
 		if err == nil || err.Error() != "no" {
 			t.Fatalf("Discover = %v, want the trust error", err)
 		}
 	})
 
+	t.Run("unattended callers trust only the configured CA", func(t *testing.T) {
+		trust, err := ayatoriclient.TrustCA(server.caPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ayatoriclient.Discover(ctx, server.url, trust); err != nil {
+			t.Errorf("Discover with the server's CA = %v", err)
+		}
+		other, err := ayatoriclient.TrustCA(issuer.caPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ayatoriclient.Discover(ctx, server.url, other); err == nil {
+			t.Error("Discover trusted a CA other than the configured one")
+		}
+	})
+
 	var p Profile
 	t.Run("discovery pins the published CA after its fingerprint is confirmed", func(t *testing.T) {
-		var seen CA
+		var seen ayatoriclient.CA
 		var err error
-		p, err = Discover(ctx, server.url+"/", func(ca CA) error { seen = ca; return nil })
+		p.Profile, err = ayatoriclient.Discover(ctx, server.url+"/", func(ca ayatoriclient.CA) error { seen = ca; return nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +242,7 @@ anonymous:
   conditions:
   - path: %s
   - path: /healthz
-`, issuer.URL, clientID, issuer.caPEM, spire.URL, clientID, spire.caPEM, DiscoveryPath)
+`, issuer.URL, clientID, issuer.caPEM, spire.URL, clientID, spire.caPEM, ayatoriclient.DiscoveryPath)
 	path := filepath.Join(t.TempDir(), "authentication.yaml")
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -274,11 +295,13 @@ func publishDiscovery(t *testing.T, admin *kubernetes.Clientset, issuer string, 
 
 func spkiFingerprint(t *testing.T, caPEM []byte) string {
 	t.Helper()
-	ca, err := parseCA(caPEM)
+	block, _ := pem.Decode(caPEM)
+	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ca.Fingerprint
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // testIssuer 是最小的 OIDC 提供方：discovery、JWKS、device code（第一次轮询 pending）、授权码 +

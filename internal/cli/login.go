@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,8 @@ import (
 
 	"github.com/int128/oauth2cli"
 	"golang.org/x/oauth2"
+
+	"go.ddupan.top/ayatori/internal/ayatoriclient"
 )
 
 // ErrNotLoggedIn：没有 token，或已过期且无法刷新。
@@ -92,7 +93,7 @@ func (s Store) IDToken(ctx context.Context, name string, p Profile) (string, err
 	if err := json.Unmarshal(data, &t); err != nil {
 		return "", err
 	}
-	if expiry(t.IDToken).After(time.Now().Add(time.Minute)) {
+	if ayatoriclient.Expiry(t.IDToken).After(time.Now().Add(time.Minute)) {
 		return t.IDToken, nil
 	}
 	if t.RefreshToken == "" {
@@ -141,25 +142,6 @@ func (s Store) lock(name string) (func(), error) {
 		return nil, err
 	}
 	return func() { _ = f.Close() }, nil
-}
-
-// expiry 读 JWT 的 exp，不验证签名：真正的验证在 apiserver。读不出来就当作已过期。
-func expiry(jwt string) time.Time {
-	parts := strings.Split(jwt, ".")
-	if len(parts) != 3 {
-		return time.Time{}
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return time.Time{}
-	}
-	var claims struct {
-		Exp int64 `json:"exp"`
-	}
-	if json.Unmarshal(payload, &claims) != nil {
-		return time.Time{}
-	}
-	return time.Unix(claims.Exp, 0)
 }
 
 // oauthConfig 从 issuer 的 OIDC discovery 取端点。HTTP client 取自 ctx（oauth2.HTTPClient），

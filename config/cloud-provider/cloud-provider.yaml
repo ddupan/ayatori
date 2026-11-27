@@ -1,8 +1,9 @@
 # workload 集群中的 Ayatori cloud-provider（ADR-0028），由消费方部署。部署方需提供：
 # - 镜像（ayatori-manager，与控制面同一 release，ADR-0024）；
 # - ConfigMap ayatori-ca：Ayatori apiserver 的 CA（kube-public/ayatori-login 公布的 CA）；
-# - 参数 --ayatori-server、--ayatori-audience、--ayatori-namespace；
+# - 参数 --ayatori-server、--ayatori-namespace（audience 取自环境的发现信息）；
 # - 本集群 SPIRE 为 ServiceAccount ayatori-cloud-provider 签发的 SPIFFE ID，并在 Ayatori 中授权（见 ADR-0028）。
+#   没有 SPIRE 的集群改用 --ayatori-kubeconfig（客户端证书等），并去掉 SPIFFE CSI 卷。
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -56,15 +56,18 @@ collector（ADR-0013），因此不依赖 ownerReference 级联。
 
 | 环节 | 做法 |
 |---|---|
-| 地址与 CA | 部署方以参数给出 API 地址，以 ConfigMap 给出 `kube-public/ayatori-login` 公布的 CA；不在运行时 TOFU |
-| 认证 | Pod 经 SPIFFE CSI driver 取 JWT-SVID，audience 为环境的 audience（`ayatori-<env>`），每个请求带上。apiserver 已信任 SPIRE 的 OIDC discovery，用户名即 SPIFFE ID（ADR-0027） |
+| 地址与 CA | 部署方以参数给出 API 地址，以 ConfigMap 给出 `kube-public/ayatori-login` 公布的 CA；启动时以该 CA 读取发现信息（issuer、clientID），不在运行时 TOFU |
+| 认证 | 与 CLI 共用 `internal/ayatoriclient` 的机器身份链（ADR-0027）：Pod 经 SPIFFE CSI driver 取 JWT-SVID，audience 为发现信息中的 clientID（`ayatori-<env>`），按 `exp` 缓存、过期前换新；compute 上线后，Ayatori 实例上的集群改由元数据服务代领。apiserver 已信任 SPIRE 的 OIDC discovery，用户名即 SPIFFE ID。两者都没有的集群以 `--ayatori-kubeconfig` 给出任意 kubeconfig（如客户端证书），凭据交付与轮换由部署方负责 |
 | 授权 | Ayatori 中每个 workload 集群一个 namespace（如 `homelab`、`sandbox`）。ClusterRole `ayatori:cloud-provider` 随 release 发布（`deploy/flux/loadbalancer`），只含 `loadbalancers`、`backends` 的 get/list/watch/create/patch/delete；部署方在该 namespace 中用 RoleBinding 绑定到该集群 cloud-provider 的 SPIFFE ID |
 | 隔离 | 一个集群的身份只能写自己的 namespace；LB 的 Hostname 是 `<svc-ns>-<svc-name>.<集群 namespace>.<zone>` |
-| 不可用 | Ayatori 或 SPIRE 不可用时只影响 Service 的变更，已生效的数据面不受影响；controller 退避重试 |
+| 不可用 | Ayatori 或 SPIRE 不可用时只影响 Service 的变更，已生效的数据面不受影响。运行中 controller 退避重试；启动时读不到发现信息或取不到 token 就退出，由 kubelet 退避重启 |
 
-不选：kubeconfig + 客户端证书（要另建交付与轮换）；把各 workload 集群的 ServiceAccount issuer 加进 Ayatori
-的 AuthenticationConfiguration（每加一个集群改一次控制面，且依赖各集群的 discovery 可达）。两个集群都已运行
-SPIRE agent 与 ClusterSPIFFEID，不需要新机制。
+不选：
+
+- cloud-provider 自己以 CSR 申请并续签客户端证书。ADR-0021 这样做是为了让控制面不依赖 SPIRE、避免循环，
+  cloud-provider 不在控制面的依赖链上；出现既无 SPIRE 也不在 Ayatori 实例上的集群时再评估。
+- 把各 workload 集群的 ServiceAccount issuer 加进 Ayatori 的 AuthenticationConfiguration：每加一个集群改一次
+  控制面，且依赖各集群的 discovery 可达。两个集群都已运行 SPIRE agent 与 ClusterSPIFFEID，不需要新机制。
 
 示例（homelab 集群，SPIFFE ID 以 homelab-infra 的 ClusterSPIFFEID 为准，sandbox 带 `/sandbox/` 前缀）：
 

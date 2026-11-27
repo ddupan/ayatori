@@ -14,16 +14,6 @@ import (
 	subresourcesv1alpha1 "go.ddupan.top/ayatori/api/subresources/v1alpha1"
 )
 
-// RESTConfig 以 Token 选出的凭据连接 profile 的 apiserver。
-func (s Store) RESTConfig(ctx context.Context, name string, p Profile) (*rest.Config, error) {
-	token, err := s.Token(ctx, name, p)
-	if err != nil {
-		return nil, err
-	}
-	return &rest.Config{Host: p.Server, BearerToken: token, UserAgent: "ayatori",
-		CAData: []byte(p.CertificateAuthority)}, nil
-}
-
 // WhoAmI 返回 apiserver 认定的用户与组（SelfSubjectReview）。
 func WhoAmI(ctx context.Context, config *rest.Config) (authenticationv1.UserInfo, error) {
 	clientset, err := kubernetes.NewForConfig(config)

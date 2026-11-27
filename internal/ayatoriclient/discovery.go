@@ -1,4 +1,4 @@
-package cli
+package ayatoriclient
 
 import (
 	"context"
@@ -28,6 +28,20 @@ type CA struct {
 
 // Trust 决定是否信任服务端声明的 CA：命令行比对 --ca-fingerprint，或请用户确认。
 type Trust func(CA) error
+
+// TrustCA 只信任部署方给出的 CA（PEM）：无人值守的调用方不 TOFU。
+func TrustCA(pinned []byte) (Trust, error) {
+	want, err := parseCA(pinned)
+	if err != nil {
+		return nil, err
+	}
+	return func(ca CA) error {
+		if ca.Fingerprint != want.Fingerprint {
+			return fmt.Errorf("server CA %s is not the configured CA %s", ca.Fingerprint, want.Fingerprint)
+		}
+		return nil
+	}, nil
+}
 
 // Discover 读取发现信息并固定 CA：第一次请求不校验证书（此时没有可信的 CA），只用来取得 CA；
 // trust 通过后以该 CA 校验证书再读一次，issuer 与 client 以第二次的结果为准。
