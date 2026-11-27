@@ -30,6 +30,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o client-credentials ./cmd/client-credentials
 # ayatori-api（ADR-0027）与 manager 同一镜像、同一版本，部署时以 --entrypoint 选用。
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o ayatori-api ./cmd/ayatori-api
+# cloud-provider（ADR-0028）由消费方部署在 workload 集群，同一镜像、同一版本。
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o cloud-provider ./cmd/cloud-provider
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -38,6 +40,7 @@ WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/client-credentials .
 COPY --from=builder /workspace/ayatori-api .
+COPY --from=builder /workspace/cloud-provider .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

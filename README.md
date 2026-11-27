@@ -66,6 +66,7 @@ Ayatori 是 `ddupan.top` homelab 的内部基础设施控制平面。它以 Kube
 | [0023](docs/decisions/0023-lb-endpoint-health-in-status.md) | LoadBalancer 与 Backend 的 status 呈现后端健康 | Proposed |
 | [0024](docs/decisions/0024-unified-version-with-skew.md) | 组件共用版本号，部署允许有限的版本偏差 | Proposed |
 | [0025](docs/decisions/0025-lb-agent-bgp-graceful-restart.md) | LB agent 开启 BGP graceful restart | Accepted |
+| [0028](docs/decisions/0028-workload-cluster-cloud-provider.md) | workload 集群的 cloud-provider 按 loadBalancerClass 接入 LoadBalancer | Proposed |
 
 0019、0020 编号由 `dev/compute` 分支上的计算后端 ADR 占用，尚未合入 main。
 

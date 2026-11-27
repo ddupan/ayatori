@@ -1,0 +1,133 @@
+# workload 集群中的 Ayatori cloud-provider（ADR-0028），由消费方部署。部署方需提供：
+# - 镜像（ayatori-manager，与控制面同一 release，ADR-0024）；
+# - ConfigMap ayatori-ca：Ayatori apiserver 的 CA（kube-public/ayatori-login 公布的 CA）；
+# - 参数 --ayatori-server、--ayatori-audience、--ayatori-namespace；
+# - 本集群 SPIRE 为 ServiceAccount ayatori-cloud-provider 签发的 SPIFFE ID，并在 Ayatori 中授权（见 ADR-0028）。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ayatori-cloud-provider
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ayatori-cloud-provider
+  namespace: ayatori-cloud-provider
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori-cloud-provider
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch, update]
+  - apiGroups: [""]
+    resources: [services/status]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ayatori-cloud-provider
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ayatori-cloud-provider
+subjects:
+  - kind: ServiceAccount
+    name: ayatori-cloud-provider
+    namespace: ayatori-cloud-provider
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ayatori-cloud-provider-leader-election
+  namespace: ayatori-cloud-provider
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ayatori-cloud-provider-leader-election
+  namespace: ayatori-cloud-provider
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ayatori-cloud-provider-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: ayatori-cloud-provider
+    namespace: ayatori-cloud-provider
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ayatori-cloud-provider
+  namespace: ayatori-cloud-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ayatori-cloud-provider
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ayatori-cloud-provider
+    spec:
+      serviceAccountName: ayatori-cloud-provider
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloud-provider
+          image: ayatori-manager
+          command: [/cloud-provider]
+          args:
+            - --ayatori-ca-file=/etc/ayatori/ca.crt
+          env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: ayatori-ca
+              mountPath: /etc/ayatori
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: ayatori-ca
+          configMap:
+            name: ayatori-ca
