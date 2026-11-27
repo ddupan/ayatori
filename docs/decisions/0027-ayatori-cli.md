@@ -99,6 +99,9 @@ Ayatori 取 oc 的"自带登录与上下文、`adm` 分区"，取云 CLI 的"名
   服务取得的是同一 issuer 的 JWT-SVID，不需要另加配置。
 - 授权照旧只在 RBAC：按调用方的 SPIFFE ID（如 `spiffe://ddupan.top/node/<name>`、
   `spiffe://ddupan.top/ayatori/ns/<ns>/sa/<sa>`）绑定，出现真实的调用方时逐个授予。
+- **实现是共享的**：发现、机器身份（第 3、4 步）与按 JWT `exp` 缓存并换新 token 的 `rest.Config` 在
+  `internal/ayatoriclient`，CLI 只在其上加配置档与人的登录（第 1、2 步）。没有人参与、不经 CLI 的组件
+  （如 ADR-0028 的 cloud-provider）直接用它，不各自实现 SPIFFE。
 - **与 ADR-0021 的关系**：ADR-0021 不让控制面自己的组件以 JWT-SVID 登录，理由是 apiserver 要依赖 SPIRE 的
   OIDC discovery，而 SPIRE 将来可能运行在计算后端管理的机器上，形成循环。这一点对控制面组件仍然成立，
   它们继续用客户端证书。这里的调用方不同：SPIRE 不可用时只有以 SPIFFE 认证的调用失败，apiserver 的启动

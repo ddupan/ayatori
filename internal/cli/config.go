@@ -9,15 +9,13 @@ import (
 	"slices"
 
 	"sigs.k8s.io/yaml"
+
+	"go.ddupan.top/ayatori/internal/ayatoriclient"
 )
 
-// Profile 是一个环境：连哪个 apiserver、信任哪个 CA、去哪里登录。由 `ayatori config add` 写入。
+// Profile 是配置文件中的一个环境，由 `ayatori config add` 写入。
 type Profile struct {
-	Server string `json:"server"`
-	// CertificateAuthority 是用户确认过指纹的集群 CA（PEM）。
-	CertificateAuthority string `json:"certificateAuthority"`
-	Issuer               string `json:"issuer"`
-	ClientID             string `json:"clientID"`
+	ayatoriclient.Profile
 	// Auth 固定认证方法（AuthMethods 之一）；为空时按 Store.Token 的顺序选用。
 	Auth string `json:"auth,omitempty"`
 }

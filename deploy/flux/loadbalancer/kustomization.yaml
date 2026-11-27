@@ -6,3 +6,4 @@ resources:
 - credentials.yaml
 - agent-rbac.yaml
 - agent-admission.yaml
+- cloud-provider-rbac.yaml

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/term"
 	"k8s.io/client-go/rest"
 
+	"go.ddupan.top/ayatori/internal/ayatoriclient"
 	"go.ddupan.top/ayatori/internal/cli"
 )
 
@@ -78,17 +79,16 @@ func configCmd(profile *string) *cobra.Command {
 			if _, exists := c.Profiles[name]; exists {
 				return fmt.Errorf("environment %q exists; remove it first", name)
 			}
-			p, err := cli.Discover(cmd.Context(), args[1], func(ca cli.CA) error {
+			p, err := ayatoriclient.Discover(cmd.Context(), args[1], func(ca ayatoriclient.CA) error {
 				return confirmCA(cmd, ca, fingerprint)
 			})
 			if err != nil {
 				return err
 			}
-			p.Auth = auth
 			if c.Profiles == nil {
 				c.Profiles = map[string]cli.Profile{}
 			}
-			c.Profiles[name] = p
+			c.Profiles[name] = cli.Profile{Profile: p, Auth: auth}
 			if c.Current == "" {
 				c.Current = name
 			}
@@ -220,7 +220,7 @@ func configCmd(profile *string) *cobra.Command {
 	return cmd
 }
 
-func confirmCA(cmd *cobra.Command, ca cli.CA, expected string) error {
+func confirmCA(cmd *cobra.Command, ca ayatoriclient.CA, expected string) error {
 	if expected != "" {
 		if !strings.EqualFold(expected, ca.Fingerprint) {
 			return fmt.Errorf("server CA fingerprint %s does not match --ca-fingerprint", ca.Fingerprint)

@@ -8,6 +8,8 @@ import (
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"go.ddupan.top/ayatori/internal/ayatoriclient"
 )
 
 // Kubeconfig 生成 break-glass 用的 kubeconfig（ADR-0027）：集群与 CA 取自 profile，凭据由 command
@@ -33,7 +35,7 @@ func (s Store) ExecCredential(ctx context.Context, name string, p Profile) ([]by
 	if err != nil {
 		return nil, err
 	}
-	exp := metav1.NewTime(expiry(token))
+	exp := metav1.NewTime(ayatoriclient.Expiry(token))
 	return json.Marshal(clientauthv1.ExecCredential{
 		APIVersion: clientauthv1.SchemeGroupVersion.String(), Kind: "ExecCredential",
 		Status: &clientauthv1.ExecCredentialStatus{Token: token, ExpirationTimestamp: &exp},
