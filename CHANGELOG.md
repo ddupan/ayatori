@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 (2026-11-27)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### 依赖更新
+* fix(deps): update kubernetes to v0.37.3 by @renovate[bot] in https://github.com/ddupan/ayatori/pull/51
+### 新功能
+* feat(cli): 默认跨所有 namespace，按名字查找 by @panxiao81 in https://github.com/ddupan/ayatori/pull/45
+
+
+**Full Changelog**: https://github.com/ddupan/ayatori/compare/v0.6.0...v0.6.1
+
 ## 0.6.0 (2026-11-25)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->
