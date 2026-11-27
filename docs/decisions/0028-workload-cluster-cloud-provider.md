@@ -58,7 +58,7 @@ collector（ADR-0013），因此不依赖 ownerReference 级联。
 |---|---|
 | 地址与 CA | 部署方以参数给出 API 地址，以 ConfigMap 给出 `kube-public/ayatori-login` 公布的 CA；不在运行时 TOFU |
 | 认证 | Pod 经 SPIFFE CSI driver 取 JWT-SVID，audience 为环境的 audience（`ayatori-<env>`），每个请求带上。apiserver 已信任 SPIRE 的 OIDC discovery，用户名即 SPIFFE ID（ADR-0027） |
-| 授权 | Ayatori 中每个 workload 集群一个 namespace（如 `homelab`、`sandbox`），Role 只授予 `loadbalancers`、`backends` 的 get/list/watch/create/patch/delete，绑定到该集群 cloud-provider 的 SPIFFE ID |
+| 授权 | Ayatori 中每个 workload 集群一个 namespace（如 `homelab`、`sandbox`）。ClusterRole `ayatori:cloud-provider` 随 release 发布（`deploy/flux/loadbalancer`），只含 `loadbalancers`、`backends` 的 get/list/watch/create/patch/delete；部署方在该 namespace 中用 RoleBinding 绑定到该集群 cloud-provider 的 SPIFFE ID |
 | 隔离 | 一个集群的身份只能写自己的 namespace；LB 的 Hostname 是 `<svc-ns>-<svc-name>.<集群 namespace>.<zone>` |
 | 不可用 | Ayatori 或 SPIRE 不可用时只影响 Service 的变更，已生效的数据面不受影响；controller 退避重试 |
 
@@ -70,17 +70,9 @@ SPIRE agent 与 ClusterSPIFFEID，不需要新机制。
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: {name: cloud-provider, namespace: homelab}
-rules:
-  - apiGroups: [network.ayatori.ddupan.top]
-    resources: [loadbalancers, backends]
-    verbs: [get, list, watch, create, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: {name: cloud-provider, namespace: homelab}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: cloud-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: "ayatori:cloud-provider"}
 subjects:
   - {apiGroup: rbac.authorization.k8s.io, kind: User, name: "spiffe://ddupan.top/ns/ayatori-cloud-provider/sa/ayatori-cloud-provider"}
 ```
@@ -88,7 +80,7 @@ subjects:
 ### 部署与版本
 
 二进制 `cloud-provider` 在 manager 镜像中，与控制面同一 release；按 ADR-0024 不新于 manager。基础清单在
-`config/cloud-provider/`，环境参数、镜像 digest、Role 与 ClusterSPIFFEID 由 homelab-infra 声明。
+`config/cloud-provider/`，环境参数、镜像 digest、namespace、RoleBinding 与 ClusterSPIFFEID 由 homelab-infra 声明。
 
 ## 已知限制
 

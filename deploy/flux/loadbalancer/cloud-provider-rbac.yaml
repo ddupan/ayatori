@@ -1,0 +1,10 @@
+# workload 集群中 cloud-provider 的权限（ADR-0028），随 release 与二进制一起变化。不在这里绑定：部署方在
+# 代表该集群的 namespace 中用 RoleBinding 绑定到它的 SPIFFE ID，一个集群只能写自己的 namespace。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ayatori:cloud-provider
+rules:
+- apiGroups: [network.ayatori.ddupan.top]
+  resources: [loadbalancers, backends]
+  verbs: [get, list, watch, create, patch, delete]
