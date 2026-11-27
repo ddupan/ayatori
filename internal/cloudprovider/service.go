@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -144,6 +145,8 @@ func (r *ServiceReconciler) cleanup(ctx context.Context, service *corev1.Service
 	lb := &networkv1alpha1.LoadBalancer{}
 	err := r.owned(ctx, loadBalancerName(service), service, lb)
 	switch {
+	case errors.Is(err, errNotOwned):
+		// 同名 LB 不是这个 Service 的（声明的对象或撞名）：不碰它，只清理自己的 Backend。
 	case err != nil:
 		return err
 	case lb.ResourceVersion != "":
@@ -169,6 +172,8 @@ func (r *ServiceReconciler) cleanup(ctx context.Context, service *corev1.Service
 	return r.Client.Update(ctx, service)
 }
 
+var errNotOwned = errors.New("exists but is not managed for this Service")
+
 // owned 读取 Ayatori 中名为 name 的对象；不存在时 object 保持为空。同名对象不属于这个 Service 时
 // 拒绝：它可能是声明的对象，或名字截断后与另一个 Service 撞名。
 func (r *ServiceReconciler) owned(ctx context.Context, name string, service *corev1.Service, object client.Object) error {
@@ -181,8 +186,7 @@ func (r *ServiceReconciler) owned(ctx context.Context, name string, service *cor
 	}
 	labels := object.GetLabels()
 	if labels[labelManagedBy] != managedBy || labels[labelServiceNamespace] != service.Namespace || labels[labelServiceName] != service.Name {
-		return fmt.Errorf("%s %s/%s exists but is not managed for Service %s/%s",
-			object.GetObjectKind().GroupVersionKind().Kind, r.Namespace, name, service.Namespace, service.Name)
+		return fmt.Errorf("%s/%s for Service %s/%s: %w", r.Namespace, name, service.Namespace, service.Name, errNotOwned)
 	}
 	return nil
 }

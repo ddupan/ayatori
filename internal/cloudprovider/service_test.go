@@ -180,6 +180,12 @@ func TestServiceLifecycle(t *testing.T) {
 	if len(plain.Finalizers) != 0 || declared.Labels[labelManagedBy] != "" || len(declared.Spec.Ports) != 1 {
 		t.Fatal("touched objects it does not own")
 	}
+	// 删除未接管的 Service：finalizer 照常移除，声明的 LB 保留。
+	must(t, c.Delete(ctx, taken))
+	eventually(t, "unowned Service released", func() bool {
+		return apierrors.IsNotFound(c.Get(ctx, client.ObjectKeyFromObject(taken), taken))
+	})
+	must(t, c.Get(ctx, client.ObjectKeyFromObject(declared), declared))
 	stop()
 }
 
